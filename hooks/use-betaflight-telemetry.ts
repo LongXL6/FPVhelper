@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  classifySerialError,
+  selectPreviouslyAuthorizedPort,
+  serialDisconnectDecision,
+  serialIssue,
+  serialPreflightIssue,
+  type SerialErrorCode,
+  type SerialIssue,
+} from "@/lib/hardware-errors";
+import {
   buildMspV1Request,
   connectionStateAfterRcSilence,
   ConnectionState,
@@ -9,9 +18,13 @@ import {
   decodeAnalog,
   decodeMotors,
   decodeRc,
+  EMPTY_MSP_PARSER_STATS,
   EMPTY_TELEMETRY,
   FlightTelemetry,
   MSP,
+  mspParserQuality,
+  MspParserQuality,
+  MspParserStats,
   MspV1StreamParser,
   RC_FIRST_FRAME_TIMEOUT_MS,
   RC_STALE_TIMEOUT_MS,
@@ -33,17 +46,12 @@ interface TelemetryController {
   connection: ConnectionState;
   source: TelemetrySource;
   error: string | null;
+  errorCode: SerialErrorCode | null;
+  parserStats: MspParserStats;
+  parserQuality: MspParserQuality;
   serialSupported: boolean;
   connectSerial: () => Promise<void>;
   useDemo: () => Promise<void>;
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function isPortSelectionCancelled(error: unknown) {
-  return error instanceof DOMException && error.name === "NotFoundError";
 }
 
 export function useBetaflightTelemetry(): TelemetryController {
@@ -53,7 +61,10 @@ export function useBetaflightTelemetry(): TelemetryController {
   const [connection, setConnection] = useState<ConnectionState>("demo");
   const [source, setSource] = useState<TelemetrySource>("demo");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<SerialErrorCode | null>(null);
+  const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
   const portRef = useRef<SerialPort | null>(null);
+  const lastAuthorizedPortRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -69,7 +80,13 @@ export function useBetaflightTelemetry(): TelemetryController {
   const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
   const rightPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: 0 }));
 
-  const recordStickMotion = useCallback((sample: Pick<FlightTelemetry, "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent">, sequence: number) => {
+  const recordStickMotion = useCallback((
+    sample: Pick<
+      FlightTelemetry,
+      "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent"
+    >,
+    sequence: number,
+  ) => {
     const left = { x: sample.yawStickPercent, y: sample.throttleStickPercent * 2 - 100 };
     const right = { x: sample.rollStickPercent, y: sample.pitchStickPercent };
     leftPeakTrackerRef.current = advanceStickPeakTracker(leftPeakTrackerRef.current, left);
@@ -145,7 +162,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     try {
       await port?.close();
     } catch {
-      // Closing is best-effort after a device disconnect.
+      // Closing is best-effort after a physical disconnect.
     }
 
     return disconnectedAttempt;
@@ -166,33 +183,29 @@ export function useBetaflightTelemetry(): TelemetryController {
     setSource("demo");
     setConnection("demo");
     setError(null);
+    setErrorCode(null);
     demoActiveRef.current = true;
     emitDemoFrame();
     demoTimerRef.current = setInterval(emitDemoFrame, 50);
   }, [emitDemoFrame, resetStickMotion, stopTimers]);
 
-  const failSerial = useCallback(async (message: string, connectionAttempt: number) => {
+  const failSerial = useCallback(async (issue: SerialIssue, connectionAttempt: number) => {
     if (connectionAttemptRef.current !== connectionAttempt) return;
     const recoveryAttempt = await disconnect();
     if (connectionAttemptRef.current !== recoveryAttempt) return;
     startDemo();
     setConnection("error");
-    setError(message);
+    setErrorCode(issue.code);
+    setError(issue.message);
   }, [disconnect, startDemo]);
 
   const useDemo = useCallback(async () => {
     const disconnectedAttempt = await disconnect();
     if (connectionAttemptRef.current !== disconnectedAttempt) return;
+    parserRef.current.reset();
+    setParserStats(EMPTY_MSP_PARSER_STATS);
     startDemo();
   }, [disconnect, startDemo]);
-
-  useEffect(() => {
-    demoActiveRef.current = true;
-    demoTimerRef.current = setInterval(emitDemoFrame, 50);
-    return () => {
-      void disconnect();
-    };
-  }, [disconnect, emitDemoFrame]);
 
   const armStaleWatchdog = useCallback((connectionAttempt: number) => {
     if (staleTimerRef.current !== null) clearTimeout(staleTimerRef.current);
@@ -244,6 +257,7 @@ export function useBetaflightTelemetry(): TelemetryController {
         setThrottleHistory([]);
         setSource("serial");
         setError(null);
+        setErrorCode(null);
       }
 
       sequenceRef.current += 1;
@@ -265,13 +279,15 @@ export function useBetaflightTelemetry(): TelemetryController {
     } else if (command === MSP.ANALOG) {
       if (!receivedRcFrameRef.current) return;
       const analog = decodeAnalog(payload);
-      if (analog) setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
+      if (analog) {
+        setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
+      }
     }
   }, [armStaleWatchdog, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
   const readLoop = useCallback(
     async (port: SerialPort, connectionAttempt: number) => {
-      if (!port.readable) throw new Error("飞控串口不可读");
+      if (!port.readable) throw new Error("serial_not_readable");
       const reader = port.readable.getReader();
       readerRef.current = reader;
 
@@ -280,12 +296,14 @@ export function useBetaflightTelemetry(): TelemetryController {
           const { value, done } = await reader.read();
           if (done) {
             if (portRef.current === port && connectionAttemptRef.current === connectionAttempt) {
-              throw new Error("飞控 USB 连接已断开");
+              throw new DOMException("", "NetworkError");
             }
             break;
           }
           if (!value) continue;
-          for (const frame of parserRef.current.push(value)) {
+          const frames = parserRef.current.push(value);
+          setParserStats(parserRef.current.getStats());
+          for (const frame of frames) {
             if (!frame.error) applyFrame(frame.command, frame.payload, connectionAttempt);
           }
         }
@@ -302,10 +320,16 @@ export function useBetaflightTelemetry(): TelemetryController {
   );
 
   const connectSerial = useCallback(async () => {
-    if (!navigator.serial) {
+    const serial = navigator.serial;
+    const preflightIssue = serialPreflightIssue({
+      secureContext: typeof window !== "undefined" && window.isSecureContext,
+      serialSupported: Boolean(serial),
+    });
+    if (preflightIssue || !serial) {
       setSource("demo");
       setConnection("error");
-      setError("当前浏览器不支持 Web Serial，请使用桌面版 Chrome 或 Edge，并通过 HTTPS 或 localhost 打开。");
+      setErrorCode(preflightIssue?.code ?? "serial_unsupported");
+      setError((preflightIssue ?? serialIssue("serial_unsupported")).message);
       return;
     }
 
@@ -314,20 +338,26 @@ export function useBetaflightTelemetry(): TelemetryController {
     startDemo();
     setConnection("connecting");
     setError(null);
+    setErrorCode(null);
 
     let port: SerialPort;
     try {
-      port = await navigator.serial.requestPort();
+      const authorizedPorts = await serial.getPorts();
+      port =
+        selectPreviouslyAuthorizedPort(authorizedPorts, lastAuthorizedPortRef.current) ??
+        (await serial.requestPort());
     } catch (requestError) {
       if (connectionAttemptRef.current !== connectionAttempt) return;
-      setConnection(isPortSelectionCancelled(requestError) ? "demo" : "error");
-      setError(isPortSelectionCancelled(requestError)
-        ? "未选择串口，已继续使用演示数据。"
-        : `无法选择飞控串口：${errorMessage(requestError, "请重试")}`);
+      const issue = classifySerialError(requestError, "picker");
+      setConnection(issue.code === "serial_picker_cancelled" ? "demo" : "error");
+      setSource("demo");
+      setErrorCode(issue.code);
+      setError(issue.message);
       return;
     }
 
     if (connectionAttemptRef.current !== connectionAttempt) return;
+    lastAuthorizedPortRef.current = port;
 
     try {
       await port.open({ baudRate: 115200, bufferSize: 4096 });
@@ -340,18 +370,26 @@ export function useBetaflightTelemetry(): TelemetryController {
         return;
       }
       portRef.current = port;
-      if (!port.writable) throw new Error("飞控串口不可写");
+      if (!port.readable) {
+        await failSerial(serialIssue("serial_not_readable"), connectionAttempt);
+        return;
+      }
+      if (!port.writable) {
+        await failSerial(serialIssue("serial_not_writable"), connectionAttempt);
+        return;
+      }
       writerRef.current = port.writable.getWriter();
       parserRef.current = new MspV1StreamParser();
+      setParserStats(EMPTY_MSP_PARSER_STATS);
       receivedRcFrameRef.current = false;
       lastRcFrameAtRef.current = null;
 
       firstFrameTimerRef.current = setTimeout(() => {
-        void failSerial("连接后 5 秒内未收到有效 RC 数据，已恢复演示；请检查飞控、接收机和串口占用。", connectionAttempt);
+        void failSerial(serialIssue("serial_no_rc_frames"), connectionAttempt);
       }, RC_FIRST_FRAME_TIMEOUT_MS);
 
       void readLoop(port, connectionAttempt).catch((readError: unknown) => {
-        void failSerial(`飞控数据读取失败：${errorMessage(readError, "请检查 USB 连接和串口占用")}`, connectionAttempt);
+        void failSerial(classifySerialError(readError, "read"), connectionAttempt);
       });
 
       let pollCount = 0;
@@ -364,18 +402,39 @@ export function useBetaflightTelemetry(): TelemetryController {
         pollCount += 1;
         const requests = [buildMspV1Request(MSP.RC)];
         if (pollCount % 10 === 0) requests.push(buildMspV1Request(MSP.ANALOG));
-        void Promise.all(requests.map((request) => writer.write(request)))
+        void (async () => {
+          for (const request of requests) await writer.write(request);
+        })()
           .catch((writeError: unknown) => {
-            void failSerial(`飞控数据写入中断：${errorMessage(writeError, "请检查 USB 连接和串口占用")}`, connectionAttempt);
+            void failSerial(classifySerialError(writeError, "write"), connectionAttempt);
           })
           .finally(() => {
             writing = false;
           });
       }, 50);
     } catch (connectError) {
-      await failSerial(`无法连接飞控：${errorMessage(connectError, "请检查 USB 连接和串口占用")}`, connectionAttempt);
+      await failSerial(classifySerialError(connectError, "open"), connectionAttempt);
     }
   }, [disconnect, failSerial, readLoop, startDemo]);
+
+  useEffect(() => {
+    demoActiveRef.current = true;
+    demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    const serial = navigator.serial;
+    const handleSerialDisconnect = (event: Event) => {
+      if (serialDisconnectDecision(portRef.current, event.target as SerialPort | null) === "ignore") {
+        return;
+      }
+      const connectionAttempt = connectionAttemptRef.current;
+      setConnection("stale");
+      void failSerial(serialIssue("serial_device_disconnected"), connectionAttempt);
+    };
+    serial?.addEventListener("disconnect", handleSerialDisconnect);
+    return () => {
+      serial?.removeEventListener("disconnect", handleSerialDisconnect);
+      void disconnect();
+    };
+  }, [disconnect, emitDemoFrame, failSerial]);
 
   return {
     telemetry,
@@ -384,6 +443,9 @@ export function useBetaflightTelemetry(): TelemetryController {
     connection,
     source,
     error,
+    errorCode,
+    parserStats,
+    parserQuality: mspParserQuality(parserStats),
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),
     connectSerial,
     useDemo,
