@@ -4,16 +4,17 @@ export type ConnectionState = "demo" | "connecting" | "live" | "error";
 
 export interface FlightTelemetry {
   timestamp: number;
+  monotonicTimestampMs: number;
   sequence: number;
-  roll: number;
-  pitch: number;
-  yaw: number;
-  throttlePercent: number;
+  rollStickPercent: number;
+  pitchStickPercent: number;
+  yawStickPercent: number;
+  throttleStickPercent: number;
   rcThrottleUs: number;
   motors: number[];
   motorAveragePercent: number | null;
-  linkQualityPercent: number | null;
-  voltage: number | null;
+  groundMspRssiPercent: number | null;
+  groundBridgeVoltage: number | null;
 }
 
 export interface MspFrame {
@@ -31,16 +32,17 @@ export const MSP = {
 
 export const EMPTY_TELEMETRY: FlightTelemetry = {
   timestamp: 0,
+  monotonicTimestampMs: 0,
   sequence: 0,
-  roll: 0,
-  pitch: 0,
-  yaw: 0,
-  throttlePercent: 0,
+  rollStickPercent: 0,
+  pitchStickPercent: 0,
+  yawStickPercent: 0,
+  throttleStickPercent: 0,
   rcThrottleUs: 1000,
   motors: [],
   motorAveragePercent: null,
-  linkQualityPercent: null,
-  voltage: null,
+  groundMspRssiPercent: null,
+  groundBridgeVoltage: null,
 };
 
 export function clamp(value: number, minimum: number, maximum: number) {
@@ -125,10 +127,10 @@ export function decodeRc(payload: Uint8Array) {
 
   const [roll, pitch, yaw, throttle] = channels;
   return {
-    roll: normalizeRcAxis(roll),
-    pitch: normalizeRcAxis(pitch),
-    yaw: normalizeRcAxis(yaw),
-    throttlePercent: normalizeThrottle(throttle),
+    rollStickPercent: normalizeRcAxis(roll),
+    pitchStickPercent: normalizeRcAxis(pitch),
+    yawStickPercent: normalizeRcAxis(yaw),
+    throttleStickPercent: normalizeThrottle(throttle),
     rcThrottleUs: throttle,
   };
 }
@@ -144,28 +146,29 @@ export function decodeMotors(payload: Uint8Array) {
 export function decodeAnalog(payload: Uint8Array) {
   if (payload.byteLength < 5) return null;
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const voltage = payload[0] / 10;
+  const groundBridgeVoltage = payload[0] / 10;
   const rawRssi = view.getUint16(3, true);
 
   return {
-    voltage,
-    linkQualityPercent: clamp((rawRssi / 1023) * 100, 0, 100),
+    groundBridgeVoltage,
+    groundMspRssiPercent: clamp((rawRssi / 1023) * 100, 0, 100),
   };
 }
 
 export function createDemoTelemetry(now: number, sequence: number): FlightTelemetry {
   const seconds = now / 1000;
-  const throttlePercent = clamp(42 + Math.sin(seconds * 0.72) * 26 + Math.sin(seconds * 2.1) * 8, 6, 92);
-  const rcThrottleUs = 1000 + throttlePercent * 10;
-  const motorAveragePercent = clamp(throttlePercent + Math.sin(seconds * 3.2) * 5, 0, 100);
+  const throttleStickPercent = clamp(42 + Math.sin(seconds * 0.72) * 26 + Math.sin(seconds * 2.1) * 8, 6, 92);
+  const rcThrottleUs = 1000 + throttleStickPercent * 10;
+  const motorAveragePercent = clamp(throttleStickPercent + Math.sin(seconds * 3.2) * 5, 0, 100);
 
   return {
     timestamp: Date.now(),
+    monotonicTimestampMs: now,
     sequence,
-    roll: Math.sin(seconds * 1.35) * 72,
-    pitch: Math.cos(seconds * 0.91) * 54,
-    yaw: Math.sin(seconds * 0.58 + 1.4) * 66,
-    throttlePercent,
+    rollStickPercent: Math.sin(seconds * 1.35) * 72,
+    pitchStickPercent: Math.cos(seconds * 0.91) * 54,
+    yawStickPercent: Math.sin(seconds * 0.58 + 1.4) * 66,
+    throttleStickPercent,
     rcThrottleUs,
     motors: [
       1000 + clamp(motorAveragePercent + 5, 0, 100) * 10,
@@ -174,7 +177,7 @@ export function createDemoTelemetry(now: number, sequence: number): FlightTeleme
       1000 + clamp(motorAveragePercent - 4, 0, 100) * 10,
     ],
     motorAveragePercent,
-    linkQualityPercent: 91 + Math.sin(seconds * 0.35) * 5,
-    voltage: 15.8 - ((seconds % 180) / 180) * 1.5,
+    groundMspRssiPercent: 91 + Math.sin(seconds * 0.35) * 5,
+    groundBridgeVoltage: 5 - ((seconds % 180) / 180) * 0.08,
   };
 }

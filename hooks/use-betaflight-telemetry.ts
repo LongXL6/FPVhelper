@@ -14,10 +14,19 @@ import {
   MspV1StreamParser,
   TelemetrySource,
 } from "@/lib/telemetry";
+import {
+  advanceStickPeakTracker,
+  appendStickMotionSample,
+  createStickPeakTracker,
+  EMPTY_STICK_MOTION,
+  visibleStickPeak,
+  type StickMotionVisualization,
+} from "@/lib/stick-motion";
 
 interface TelemetryController {
   telemetry: FlightTelemetry;
   throttleHistory: number[];
+  stickMotion: StickMotionVisualization;
   connection: ConnectionState;
   source: TelemetrySource;
   error: string | null;
@@ -29,6 +38,7 @@ interface TelemetryController {
 export function useBetaflightTelemetry(): TelemetryController {
   const [telemetry, setTelemetry] = useState(EMPTY_TELEMETRY);
   const [throttleHistory, setThrottleHistory] = useState<number[]>([]);
+  const [stickMotion, setStickMotion] = useState<StickMotionVisualization>(EMPTY_STICK_MOTION);
   const [connection, setConnection] = useState<ConnectionState>("demo");
   const [source, setSource] = useState<TelemetrySource>("demo");
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +49,26 @@ export function useBetaflightTelemetry(): TelemetryController {
   const demoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const parserRef = useRef(new MspV1StreamParser());
   const sequenceRef = useRef(0);
+  const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
+  const rightPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: 0 }));
+
+  const recordStickMotion = useCallback((sample: Pick<FlightTelemetry, "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent">, sequence: number) => {
+    const left = { x: sample.yawStickPercent, y: sample.throttleStickPercent * 2 - 100 };
+    const right = { x: sample.rollStickPercent, y: sample.pitchStickPercent };
+    leftPeakTrackerRef.current = advanceStickPeakTracker(leftPeakTrackerRef.current, left);
+    rightPeakTrackerRef.current = advanceStickPeakTracker(rightPeakTrackerRef.current, right);
+    setStickMotion((current) => ({
+      samples: appendStickMotionSample(current.samples, { sequence, left, right }),
+      leftPeak: visibleStickPeak(leftPeakTrackerRef.current),
+      rightPeak: visibleStickPeak(rightPeakTrackerRef.current),
+    }));
+  }, []);
+
+  const resetStickMotion = useCallback(() => {
+    leftPeakTrackerRef.current = createStickPeakTracker({ x: 0, y: -100 });
+    rightPeakTrackerRef.current = createStickPeakTracker({ x: 0, y: 0 });
+    setStickMotion(EMPTY_STICK_MOTION);
+  }, []);
 
   const stopTimers = useCallback(() => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -72,6 +102,7 @@ export function useBetaflightTelemetry(): TelemetryController {
 
   const startDemo = useCallback(() => {
     stopTimers();
+    resetStickMotion();
     setSource("demo");
     setConnection("demo");
     setError(null);
@@ -79,9 +110,10 @@ export function useBetaflightTelemetry(): TelemetryController {
       sequenceRef.current += 1;
       const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
       setTelemetry(nextTelemetry);
-      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttlePercent]);
+      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
+      recordStickMotion(nextTelemetry, nextTelemetry.sequence);
     }, 50);
-  }, [stopTimers]);
+  }, [recordStickMotion, resetStickMotion, stopTimers]);
 
   const useDemo = useCallback(async () => {
     await disconnect();
@@ -93,7 +125,8 @@ export function useBetaflightTelemetry(): TelemetryController {
       sequenceRef.current += 1;
       const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
       setTelemetry(nextTelemetry);
-      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttlePercent]);
+      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
+      recordStickMotion(nextTelemetry, nextTelemetry.sequence);
     }, 50);
     return () => {
       stopTimers();
@@ -102,10 +135,11 @@ export function useBetaflightTelemetry(): TelemetryController {
       writerRef.current?.releaseLock();
       void portRef.current?.close();
     };
-  }, [stopTimers]);
+  }, [recordStickMotion, stopTimers]);
 
   const applyFrame = useCallback((command: number, payload: Uint8Array) => {
-    const now = Date.now();
+    const timestamp = Date.now();
+    const monotonicTimestampMs = performance.now();
     if (command === MSP.RC) {
       const rc = decodeRc(payload);
       if (!rc) return;
@@ -113,19 +147,21 @@ export function useBetaflightTelemetry(): TelemetryController {
       setTelemetry((current) => ({
         ...current,
         ...rc,
-        timestamp: now,
+        timestamp,
+        monotonicTimestampMs,
         sequence: sequenceRef.current,
       }));
-      setThrottleHistory((current) => [...current.slice(-59), rc.throttlePercent]);
+      setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
+      recordStickMotion(rc, sequenceRef.current);
       setConnection("live");
     } else if (command === MSP.MOTOR) {
       const motors = decodeMotors(payload);
-      setTelemetry((current) => ({ ...current, ...motors, timestamp: now }));
+      setTelemetry((current) => ({ ...current, ...motors, timestamp, monotonicTimestampMs }));
     } else if (command === MSP.ANALOG) {
       const analog = decodeAnalog(payload);
-      if (analog) setTelemetry((current) => ({ ...current, ...analog, timestamp: now }));
+      if (analog) setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
     }
-  }, []);
+  }, [recordStickMotion]);
 
   const readLoop = useCallback(
     async (port: SerialPort) => {
@@ -148,11 +184,12 @@ export function useBetaflightTelemetry(): TelemetryController {
   const connectSerial = useCallback(async () => {
     if (!navigator.serial) {
       setConnection("error");
-      setError("当前浏览器不支持 Web Serial，请使用桌面版 Chrome 或 Edge，并通过 localhost 打开。 ");
+      setError("当前浏览器不支持 Web Serial，请使用桌面版 Chrome 或 Edge，并通过 HTTPS 或 localhost 打开。 ");
       return;
     }
 
     await disconnect();
+    resetStickMotion();
     setConnection("connecting");
     setSource("serial");
     setError(null);
@@ -194,11 +231,12 @@ export function useBetaflightTelemetry(): TelemetryController {
       setConnection("error");
       setError(connectError instanceof Error ? connectError.message : "无法连接飞控");
     }
-  }, [disconnect, readLoop]);
+  }, [disconnect, readLoop, resetStickMotion]);
 
   return {
     telemetry,
     throttleHistory,
+    stickMotion,
     connection,
     source,
     error,

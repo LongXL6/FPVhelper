@@ -34,17 +34,17 @@ describe("MSP v1 telemetry", () => {
 
   it("decodes sticks and keeps RC throttle separate", () => {
     expect(decodeRc(Uint8Array.from(uint16Payload([1500, 1250, 1750, 1600])))).toEqual({
-      roll: 0,
-      pitch: -50,
-      yaw: 50,
-      throttlePercent: 60,
+      rollStickPercent: 0,
+      pitchStickPercent: -50,
+      yawStickPercent: 50,
+      throttleStickPercent: 60,
       rcThrottleUs: 1600,
     });
   });
 
-  it("decodes motor output and analog link values", () => {
+  it("decodes motor output and ground bridge analog values", () => {
     expect(decodeMotors(Uint8Array.from(uint16Payload([1200, 1300, 1400, 1500]))).motorAveragePercent).toBe(35);
     const analog = decodeAnalog(Uint8Array.from([159, 0, 0, 0xff, 0x03]));
-    expect(analog).toEqual({ voltage: 15.9, linkQualityPercent: 100 });
+    expect(analog).toEqual({ groundBridgeVoltage: 15.9, groundMspRssiPercent: 100 });
   });
 });
