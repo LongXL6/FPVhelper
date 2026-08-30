@@ -44,4 +44,4 @@
 
 ## 新版本提醒的串行集成边界
 
-`hooks/use-version-check.ts` 每 5 分钟和页面重新可见时请求 `/version.json`。后续由唯一负责 Dashboard 的集成任务展示“本次记录结束后刷新”；录制中不得强制刷新。本提交只提供 hook，不修改 Dashboard，也不宣称提示已经可见。
+`hooks/use-version-check.ts` 每 5 分钟和页面重新可见时请求 `/version.json`，Dashboard 已接入版本提示。录制中只提示“本次记录结束后刷新”且不显示刷新按钮；空闲时可由操作员手动刷新。

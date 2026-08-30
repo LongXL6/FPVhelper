@@ -7,7 +7,7 @@
 ### 新增
 
 - P0 CI：锁定安装、检查与生产构建。
-- `/version.json` 版本端点与待串行接入的客户端版本检查 hook。
+- `/version.json` 版本端点、客户端版本检查 hook 与 Dashboard 更新提示。
 - 发布、试点、工作站、数据附件、DVR 对表、硬件边界和视觉计圈实验文档。
 
 ### 调整
@@ -18,4 +18,3 @@
 ### 未完成 / 不由本版本证明
 
 - 未证明 main 分支保护、CI 运行、PR 合并、Vercel Preview/Promote、生产域、独立 Supabase 或真机验收已经完成。
-- 版本检查 hook 尚未接入 Dashboard 展示。

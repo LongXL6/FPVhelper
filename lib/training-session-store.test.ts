@@ -28,6 +28,31 @@ function createDraft(id = "stored-draft") {
   return draft;
 }
 
+function requestValue<T>(request: IDBRequest<T>) {
+  return new Promise<T>((resolve, reject) => {
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  });
+}
+
+function transactionDone(transaction: IDBTransaction) {
+  return new Promise<void>((resolve, reject) => {
+    transaction.addEventListener("complete", () => resolve());
+    transaction.addEventListener("abort", () => reject(transaction.error));
+    transaction.addEventListener("error", () => reject(transaction.error));
+  });
+}
+
+async function openDatabase(factory: IDBFactory, name: string) {
+  return requestValue(factory.open(name));
+}
+
+async function putRawRecord(database: IDBDatabase, storeName: "drafts" | "sessions", record: object) {
+  const transaction = database.transaction(storeName, "readwrite");
+  transaction.objectStore(storeName).put(record);
+  await transactionDone(transaction);
+}
+
 describe("IndexedDB training session store", () => {
   it("persists and reloads a real schema v2 draft", async () => {
     const factory = new IDBFactory();
@@ -119,6 +144,43 @@ describe("IndexedDB training session store", () => {
 
     expect(await store.countUnexportedValidSessions()).toBe(0);
     expect((await store.listSessions())[0]).toMatchObject({ id: "valid-session", exportCount: 1, exportedAt: exported.exportedAt });
+    await store.close();
+  });
+
+  it("quarantines unreadable records while preserving every readable and raw record", async () => {
+    const factory = new IDBFactory();
+    const databaseName = "corrupt-record-isolation";
+    const store = createTrainingSessionStore(factory, databaseName);
+    const draft = createDraft("readable-draft");
+    const session = finishTrainingSession(createDraft("readable-session"), 1_700_000_001_000, 2_000);
+    await store.saveDraft(draft);
+    await store.saveSession(session);
+
+    const database = await openDatabase(factory, databaseName);
+    const badDraft = { id: "bad-draft", schemaVersion: 999, startedAt: "future" };
+    const badSession = { id: "bad-session", schemaVersion: 999, startedAt: "future" };
+    await putRawRecord(database, "drafts", badDraft);
+    await putRawRecord(database, "sessions", badSession);
+
+    expect(await store.getActiveDraft()).toMatchObject({ id: "readable-draft" });
+    expect(await store.listSessions()).toEqual([session]);
+    expect(await store.countSessions()).toBe(1);
+    expect(await store.countUnexportedValidSessions()).toBe(0);
+    expect(await store.getStorageIntegrity()).toEqual({
+      readableDraftCount: 1,
+      readableSessionCount: 1,
+      quarantinedDraftCount: 1,
+      quarantinedSessionCount: 1,
+    });
+
+    const draftTransaction = database.transaction("drafts", "readonly");
+    expect(await requestValue(draftTransaction.objectStore("drafts").get("bad-draft"))).toEqual(badDraft);
+    await transactionDone(draftTransaction);
+    const sessionTransaction = database.transaction("sessions", "readonly");
+    expect(await requestValue(sessionTransaction.objectStore("sessions").get("bad-session"))).toEqual(badSession);
+    await transactionDone(sessionTransaction);
+
+    database.close();
     await store.close();
   });
 

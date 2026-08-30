@@ -52,7 +52,7 @@ Pilot Radio → 该选手预绑定的 Ground ELRS RX → 该选手独立 Bridge 
 
 ## 本地运行
 
-需要 Node.js `>=22.12.0`。
+需要 Node.js `>=24`，与 `package.json` 和 CI 保持一致。
 
 ```bash
 npm ci

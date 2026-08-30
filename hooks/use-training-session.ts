@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionState, FlightTelemetry, TelemetrySource } from "@/lib/telemetry";
-import { createTrainingSessionStore, type TrainingSessionStore } from "@/lib/training-session-store";
+import {
+  createTrainingSessionStore,
+  EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
+  type TrainingSessionStorageIntegrity,
+  type TrainingSessionStore,
+} from "@/lib/training-session-store";
 import {
   appendTrainingSessionMarker,
   appendTrainingSessionSample,
   createTrainingSessionDraft,
   finishTrainingSession,
   markTrainingSessionExported,
-  normalizeAthleteCode,
   recoverInterruptedTrainingSession,
   serializeTrainingSession,
   trainingSessionFilename,
@@ -23,6 +27,7 @@ import {
   sessionsStartedOnLocalDay,
   shouldWarnBeforeTrainingExit,
 } from "@/lib/training-session-summary";
+import { canStartTrainingSession } from "./training-session-start-guard";
 
 const DRAFT_PERSIST_INTERVAL_MS = 5_000;
 
@@ -55,6 +60,7 @@ interface TrainingSessionController {
   todaySessions: TrainingSession[];
   storageReady: boolean;
   storageError: string | null;
+  storageIntegrity: TrainingSessionStorageIntegrity;
   recentSessionCount: number;
   unexportedValidCount: number;
   hasPendingSave: boolean;
@@ -113,6 +119,9 @@ export function useTrainingSession({
   const [todaySessions, setTodaySessions] = useState<TrainingSession[]>([]);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageIntegrity, setStorageIntegrity] = useState<TrainingSessionStorageIntegrity>(
+    EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
+  );
   const [unexportedValidCount, setUnexportedValidCount] = useState(0);
   const [hasPendingSave, setHasPendingSave] = useState(false);
   const [lastExport, setLastExport] = useState<TrainingSessionExportReceipt | null>(null);
@@ -139,12 +148,14 @@ export function useTrainingSession({
   }, []);
 
   const refreshSessions = useCallback(async (store: TrainingSessionStore) => {
-    const [nextSessions, nextUnexportedValidCount] = await Promise.all([
+    const [nextSessions, nextUnexportedValidCount, nextStorageIntegrity] = await Promise.all([
       store.listSessions(),
       store.countUnexportedValidSessions(),
+      store.getStorageIntegrity(),
     ]);
     applySessions(nextSessions, Date.now());
     setUnexportedValidCount(nextUnexportedValidCount);
+    setStorageIntegrity(nextStorageIntegrity);
     return nextSessions;
   }, [applySessions]);
 
@@ -207,17 +218,18 @@ export function useTrainingSession({
     };
   }, [refreshSessions]);
 
-  const canStart = useMemo(() => (
-    storageReady &&
-    storageError === null &&
-    !hasPendingSave &&
-    !isRecording &&
-    !isStarting &&
-    !isFinishing &&
-    source === "serial" &&
-    connection === "live" &&
-    normalizeAthleteCode(athleteCode).length > 0
-  ), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, source, storageError, storageReady]);
+  const canStart = useMemo(() => canStartTrainingSession({
+    storageReady,
+    storageError,
+    storageIntegrity,
+    hasPendingSave,
+    isRecording,
+    isStarting,
+    isFinishing,
+    source,
+    connection,
+    athleteCode,
+  }), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, source, storageError, storageIntegrity, storageReady]);
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
@@ -425,6 +437,7 @@ export function useTrainingSession({
     todaySessions,
     storageReady,
     storageError,
+    storageIntegrity,
     recentSessionCount: sessions.length,
     unexportedValidCount,
     hasPendingSave,

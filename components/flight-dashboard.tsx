@@ -5,6 +5,10 @@ import {
   DraggableStickOverlay,
   storeStickOverlayLayout,
 } from "@/components/draggable-stick-overlay";
+import {
+  quarantinedTrainingRecordCount,
+  TrainingStorageIntegrityNotice,
+} from "@/components/training-storage-integrity-notice";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
@@ -319,6 +323,7 @@ export function FlightDashboard() {
     ? rcSourceLabel
     : trainingSession.lastSession?.dataSources.map((dataSource) => dataSource === "ground_rc" ? "GROUND_RC" : "DEMO").join(" + ") ?? "—";
   const visibleSessionId = trainingSession.sessionId?.slice(0, 8).toUpperCase() ?? "READY";
+  const quarantinedRecordCount = quarantinedTrainingRecordCount(trainingSession.storageIntegrity);
   const startRequirement = !trainingSession.storageReady
     ? "正在准备浏览器本地存储"
     : trainingSession.storageError
@@ -704,7 +709,9 @@ export function FlightDashboard() {
           </label>
           <div>
             <b>{startRequirement}</b>
-            <small>{trainingSession.storageReady ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条记录` : "正在检查草稿与历史记录"}</small>
+            <small>{trainingSession.storageReady
+              ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条可读记录${quarantinedRecordCount > 0 ? ` · 隔离 ${quarantinedRecordCount} 条` : ""}`
+              : "正在检查草稿与历史记录"}</small>
           </div>
           <label className="session-toggle">
             <input
@@ -719,6 +726,8 @@ export function FlightDashboard() {
             <span>结束成功后自动下载 JSON</span>
           </label>
         </div>
+
+        <TrainingStorageIntegrityNotice integrity={trainingSession.storageIntegrity} />
 
         <div className="session-stats">
           <span>独立样本<b>{trainingSession.uniqueSampleCount.toLocaleString()}</b></span>

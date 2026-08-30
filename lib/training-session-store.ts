@@ -10,6 +10,20 @@ const DATABASE_VERSION = 1;
 const DRAFTS_STORE = "drafts";
 const SESSIONS_STORE = "sessions";
 
+export interface TrainingSessionStorageIntegrity {
+  readableDraftCount: number;
+  readableSessionCount: number;
+  quarantinedDraftCount: number;
+  quarantinedSessionCount: number;
+}
+
+export const EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY: TrainingSessionStorageIntegrity = {
+  readableDraftCount: 0,
+  readableSessionCount: 0,
+  quarantinedDraftCount: 0,
+  quarantinedSessionCount: 0,
+};
+
 function requestResult<T>(request: IDBRequest<T>) {
   return new Promise<T>((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
@@ -25,6 +39,32 @@ function transactionComplete(transaction: IDBTransaction) {
   });
 }
 
+function parseStoredRecords<T>(storedRecords: unknown[], parse: (raw: unknown) => T) {
+  const readableRecords: T[] = [];
+  let quarantinedRecordCount = 0;
+
+  for (const storedRecord of storedRecords) {
+    try {
+      readableRecords.push(parse(storedRecord));
+    } catch {
+      quarantinedRecordCount += 1;
+    }
+  }
+
+  return { readableRecords, quarantinedRecordCount };
+}
+
+async function readStoredRecords<T>(
+  database: IDBDatabase,
+  storeName: typeof DRAFTS_STORE | typeof SESSIONS_STORE,
+  parse: (raw: unknown) => T,
+) {
+  const transaction = database.transaction(storeName, "readonly");
+  const storedRecords = await requestResult(transaction.objectStore(storeName).getAll()) as unknown[];
+  await transactionComplete(transaction);
+  return parseStoredRecords(storedRecords, parse);
+}
+
 export interface TrainingSessionStore {
   getActiveDraft: () => Promise<TrainingSessionDraft | null>;
   saveDraft: (draft: TrainingSessionDraft) => Promise<void>;
@@ -32,6 +72,7 @@ export interface TrainingSessionStore {
   listSessions: (limit?: number) => Promise<TrainingSession[]>;
   countSessions: () => Promise<number>;
   countUnexportedValidSessions: () => Promise<number>;
+  getStorageIntegrity: () => Promise<TrainingSessionStorageIntegrity>;
   saveSession: (session: TrainingSession) => Promise<void>;
   completeSession: (session: TrainingSession) => Promise<void>;
   close: () => Promise<void>;
@@ -56,11 +97,8 @@ export function createTrainingSessionStore(
   return {
     async getActiveDraft() {
       const database = await databasePromise;
-      const transaction = database.transaction(DRAFTS_STORE, "readonly");
-      const storedDrafts = await requestResult(transaction.objectStore(DRAFTS_STORE).getAll()) as unknown[];
-      await transactionComplete(transaction);
-      const drafts = storedDrafts.map(parseTrainingSessionDraft);
-      return drafts.sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0] ?? null;
+      const { readableRecords } = await readStoredRecords(database, DRAFTS_STORE, parseTrainingSessionDraft);
+      return readableRecords.sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0] ?? null;
     },
 
     async saveDraft(draft) {
@@ -79,31 +117,37 @@ export function createTrainingSessionStore(
 
     async listSessions(limit) {
       const database = await databasePromise;
-      const transaction = database.transaction(SESSIONS_STORE, "readonly");
-      const storedSessions = await requestResult(transaction.objectStore(SESSIONS_STORE).getAll()) as unknown[];
-      await transactionComplete(transaction);
-      const sessions = storedSessions.map(parseTrainingSession);
-      const sorted = sessions.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+      const { readableRecords } = await readStoredRecords(database, SESSIONS_STORE, parseTrainingSession);
+      const sorted = readableRecords.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
       return limit === undefined ? sorted : sorted.slice(0, Math.max(0, limit));
     },
 
     async countSessions() {
       const database = await databasePromise;
-      const transaction = database.transaction(SESSIONS_STORE, "readonly");
-      const count = await requestResult(transaction.objectStore(SESSIONS_STORE).count());
-      await transactionComplete(transaction);
-      return count;
+      const { readableRecords } = await readStoredRecords(database, SESSIONS_STORE, parseTrainingSession);
+      return readableRecords.length;
     },
 
     async countUnexportedValidSessions() {
       const database = await databasePromise;
-      const transaction = database.transaction(SESSIONS_STORE, "readonly");
-      const storedSessions = await requestResult(transaction.objectStore(SESSIONS_STORE).getAll()) as unknown[];
-      await transactionComplete(transaction);
-      return storedSessions
-        .map(parseTrainingSession)
+      const { readableRecords } = await readStoredRecords(database, SESSIONS_STORE, parseTrainingSession);
+      return readableRecords
         .filter((session) => session.validity.valid && session.exportedAt === null)
         .length;
+    },
+
+    async getStorageIntegrity() {
+      const database = await databasePromise;
+      const [drafts, sessions] = await Promise.all([
+        readStoredRecords(database, DRAFTS_STORE, parseTrainingSessionDraft),
+        readStoredRecords(database, SESSIONS_STORE, parseTrainingSession),
+      ]);
+      return {
+        readableDraftCount: drafts.readableRecords.length,
+        readableSessionCount: sessions.readableRecords.length,
+        quarantinedDraftCount: drafts.quarantinedRecordCount,
+        quarantinedSessionCount: sessions.quarantinedRecordCount,
+      };
     },
 
     async saveSession(session) {
