@@ -31,6 +31,7 @@ export interface TrainingSessionStore {
   deleteDraft: (id: string) => Promise<void>;
   listSessions: (limit?: number) => Promise<TrainingSession[]>;
   countSessions: () => Promise<number>;
+  countUnexportedValidSessions: () => Promise<number>;
   saveSession: (session: TrainingSession) => Promise<void>;
   completeSession: (session: TrainingSession) => Promise<void>;
   close: () => Promise<void>;
@@ -76,13 +77,14 @@ export function createTrainingSessionStore(
       await transactionComplete(transaction);
     },
 
-    async listSessions(limit = 100) {
+    async listSessions(limit) {
       const database = await databasePromise;
       const transaction = database.transaction(SESSIONS_STORE, "readonly");
       const storedSessions = await requestResult(transaction.objectStore(SESSIONS_STORE).getAll()) as unknown[];
       await transactionComplete(transaction);
       const sessions = storedSessions.map(parseTrainingSession);
-      return sessions.sort((left, right) => right.startedAt.localeCompare(left.startedAt)).slice(0, limit);
+      const sorted = sessions.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+      return limit === undefined ? sorted : sorted.slice(0, Math.max(0, limit));
     },
 
     async countSessions() {
@@ -91,6 +93,17 @@ export function createTrainingSessionStore(
       const count = await requestResult(transaction.objectStore(SESSIONS_STORE).count());
       await transactionComplete(transaction);
       return count;
+    },
+
+    async countUnexportedValidSessions() {
+      const database = await databasePromise;
+      const transaction = database.transaction(SESSIONS_STORE, "readonly");
+      const storedSessions = await requestResult(transaction.objectStore(SESSIONS_STORE).getAll()) as unknown[];
+      await transactionComplete(transaction);
+      return storedSessions
+        .map(parseTrainingSession)
+        .filter((session) => session.validity.valid && session.exportedAt === null)
+        .length;
     },
 
     async saveSession(session) {

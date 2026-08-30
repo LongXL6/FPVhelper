@@ -63,6 +63,8 @@ export interface TrainingSession {
   id: string;
   athleteCode: string | null;
   notes: string | null;
+  exportedAt: string | null;
+  exportCount: number;
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -131,6 +133,11 @@ export function normalizeAthleteCode(value: string) {
   return normalizedAthleteCode(value) ?? "";
 }
 
+export function normalizeSessionNotes(value: string) {
+  const normalized = value.trim().replaceAll(/\r\n?/g, "\n").slice(0, 2_000);
+  return normalized || null;
+}
+
 function pad(value: number, length = 2) {
   return value.toString().padStart(length, "0");
 }
@@ -197,6 +204,25 @@ export function appendTrainingSessionSample(
   return true;
 }
 
+export function appendTrainingSessionMarker(
+  draft: TrainingSessionDraft,
+  options: {
+    id: string;
+    kind: Exclude<TrainingSessionMarkerKind, "manual">;
+    wallClockEpochMs: number;
+    monotonicMs: number;
+  },
+) {
+  const marker: TrainingSessionMarker = {
+    id: options.id,
+    kind: options.kind,
+    elapsedMs: Number(Math.max(0, options.monotonicMs - draft.startedMonotonicMs).toFixed(3)),
+    wallClockAt: toLocalWallClockTimestamp(options.wallClockEpochMs),
+  };
+  draft.markers.push(marker);
+  return marker;
+}
+
 function estimateSampleRate(samples: TrainingSessionSample[]) {
   if (samples.length < 2) return null;
   const elapsedMs = samples.at(-1)!.elapsedMs - samples[0].elapsedMs;
@@ -216,6 +242,8 @@ function finalizeTrainingSession(
     id: draft.id,
     athleteCode: normalizeAthleteCode(draft.athleteCode) || null,
     notes: null,
+    exportedAt: null,
+    exportCount: 0,
     startedAt: draft.startedAt,
     endedAt: new Date(endedAtEpochMs).toISOString(),
     durationMs: Number(Math.max(0, durationMs).toFixed(3)),
@@ -256,6 +284,18 @@ export function recoverInterruptedTrainingSession(draft: TrainingSessionDraft) {
   const durationMs = Math.max(0, draft.samples.at(-1)?.elapsedMs ?? 0);
   const startedAtEpochMs = Date.parse(draft.startedAt);
   return finalizeTrainingSession(draft, startedAtEpochMs + durationMs, durationMs, { interrupted: true });
+}
+
+export function withTrainingSessionNotes(session: TrainingSession, notes: string): TrainingSession {
+  return { ...session, notes: normalizeSessionNotes(notes) };
+}
+
+export function markTrainingSessionExported(session: TrainingSession, exportedAtEpochMs: number): TrainingSession {
+  return {
+    ...session,
+    exportedAt: new Date(exportedAtEpochMs).toISOString(),
+    exportCount: session.exportCount + 1,
+  };
 }
 
 export function assessTrainingSession(session: AssessableTrainingSession | TrainingSession): TrainingSessionAssessment {
@@ -397,13 +437,25 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
   const athleteCode = schemaVersion === 1 ? null : normalizedAthleteCode(raw.athleteCode);
   const notes = schemaVersion === 1 || raw.notes === null || raw.notes === undefined
     ? null
-    : requireString(raw.notes, "notes");
+    : normalizeSessionNotes(requireString(raw.notes, "notes"));
+  const exportedAt = schemaVersion === 1 || raw.exportedAt === null || raw.exportedAt === undefined
+    ? null
+    : requireString(raw.exportedAt, "exportedAt");
+  if (exportedAt !== null && !Number.isFinite(Date.parse(exportedAt))) {
+    throw new Error("exportedAt 不是有效日期");
+  }
+  const exportCount = schemaVersion === 1 || raw.exportCount === undefined
+    ? 0
+    : requireFiniteNumber(raw.exportCount, "exportCount");
+  if (!Number.isInteger(exportCount) || exportCount < 0) throw new Error("exportCount 必须是非负整数");
   const sessionWithoutValidity: AssessableTrainingSession = {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     ...(schemaVersion === 1 || raw.migratedFromSchemaVersion === 1 ? { migratedFromSchemaVersion: 1 as const } : {}),
     id: requireString(raw.id, "id"),
     athleteCode,
     notes,
+    exportedAt,
+    exportCount,
     startedAt,
     endedAt,
     durationMs: Math.max(0, requireFiniteNumber(raw.durationMs, "durationMs")),

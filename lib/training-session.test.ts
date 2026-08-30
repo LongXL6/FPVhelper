@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { EMPTY_TELEMETRY } from "./telemetry";
 import {
   appendTrainingSessionSample,
+  appendTrainingSessionMarker,
   createTrainingSessionDraft,
   finishTrainingSession,
+  markTrainingSessionExported,
   parseTrainingSession,
   recoverInterruptedTrainingSession,
   serializeTrainingSession,
   trainingSessionFilename,
+  withTrainingSessionNotes,
   type TrainingSessionDraft,
 } from "./training-session";
 
@@ -72,6 +75,9 @@ describe("local training session schema v2", () => {
     expect(session).toMatchObject({
       schemaVersion: 2,
       athleteCode: "PILOT-07",
+      notes: null,
+      exportedAt: null,
+      exportCount: 0,
       durationMs: 60_000,
       dataSources: ["ground_rc"],
       sampleCount: 300,
@@ -83,6 +89,34 @@ describe("local training session schema v2", () => {
     expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
     expect(serializeTrainingSession(session)).not.toContain("\n  \"");
     expect(trainingSessionFilename(session)).toMatch(/^fpv-session-\d{8}-\d{6}-PILOT-07-12345678\.json$/);
+  });
+
+  it("records typed manual markers with monotonic elapsed and local wall-clock timestamps", () => {
+    const draft = createDraft();
+
+    const marker = appendTrainingSessionMarker(draft, {
+      id: "marker-1",
+      kind: "crash",
+      wallClockEpochMs: STARTED_AT + 1_250,
+      monotonicMs: STARTED_MONOTONIC + 1_250.4567,
+    });
+
+    expect(marker).toMatchObject({ id: "marker-1", kind: "crash", elapsedMs: 1_250.457 });
+    expect(marker.wallClockAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
+    expect(draft.markers).toEqual([marker]);
+  });
+
+  it("persists normalized notes and repeatable export metadata without mutating the source session", () => {
+    const session = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const noted = withTrainingSessionNotes(session, "  第一轮\r\n压弯过早  ");
+    const firstExport = markTrainingSessionExported(noted, STARTED_AT + 61_000);
+    const secondExport = markTrainingSessionExported(firstExport, STARTED_AT + 62_000);
+
+    expect(session.notes).toBeNull();
+    expect(noted.notes).toBe("第一轮\n压弯过早");
+    expect(firstExport).toMatchObject({ exportCount: 1, exportedAt: new Date(STARTED_AT + 61_000).toISOString() });
+    expect(secondExport).toMatchObject({ exportCount: 2, exportedAt: new Date(STARTED_AT + 62_000).toISOString() });
+    expect(parseTrainingSession(serializeTrainingSession(secondExport))).toEqual(secondExport);
   });
 
   it("reports mixed, short, duplicate, non-monotonic, anonymous and interrupted records", () => {

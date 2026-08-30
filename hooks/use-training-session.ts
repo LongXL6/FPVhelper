@@ -4,16 +4,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionState, FlightTelemetry, TelemetrySource } from "@/lib/telemetry";
 import { createTrainingSessionStore, type TrainingSessionStore } from "@/lib/training-session-store";
 import {
+  appendTrainingSessionMarker,
   appendTrainingSessionSample,
   createTrainingSessionDraft,
   finishTrainingSession,
+  markTrainingSessionExported,
   normalizeAthleteCode,
   recoverInterruptedTrainingSession,
   serializeTrainingSession,
   trainingSessionFilename,
+  withTrainingSessionNotes,
   type TrainingSession,
   type TrainingSessionDraft,
+  type TrainingSessionMarkerKind,
 } from "@/lib/training-session";
+import {
+  countUniqueTrainingSamples,
+  sessionsStartedOnLocalDay,
+  shouldWarnBeforeTrainingExit,
+} from "@/lib/training-session-summary";
 
 const DRAFT_PERSIST_INTERVAL_MS = 5_000;
 
@@ -22,6 +31,7 @@ interface UseTrainingSessionOptions {
   source: TelemetrySource;
   connection: ConnectionState;
   athleteCode: string;
+  autoExport: boolean;
 }
 
 interface TrainingSessionController {
@@ -30,24 +40,47 @@ interface TrainingSessionController {
   isFinishing: boolean;
   sessionId: string | null;
   sampleCount: number;
+  uniqueSampleCount: number;
+  markerCount: number;
   elapsedMs: number;
   lastSession: TrainingSession | null;
+  todaySessions: TrainingSession[];
   storageReady: boolean;
   storageError: string | null;
   recentSessionCount: number;
+  unexportedValidCount: number;
+  hasPendingSave: boolean;
   canStart: boolean;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
-  exportLastSession: () => void;
+  retryPendingSave: () => Promise<void>;
+  addMarker: (kind: Exclude<TrainingSessionMarkerKind, "manual">) => Promise<void>;
+  updateLastSessionNotes: (notes: string) => Promise<void>;
+  exportSession: (sessionId: string) => Promise<void>;
 }
 
-function createSessionId() {
+function uniqueLocalId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `session-${Date.now()}`;
+  return `${prefix}-${Date.now()}-${performance.now().toFixed(3)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function storageErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "浏览器本地训练记录存储失败";
+  return error instanceof Error && error.message ? error.message : "浏览器本地训练记录存储失败";
+}
+
+function downloadTrainingSession(session: TrainingSession) {
+  const blob = new Blob([serializeTrainingSession(session)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = trainingSessionFilename(session);
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
 export function useTrainingSession({
@@ -55,21 +88,62 @@ export function useTrainingSession({
   source,
   connection,
   athleteCode,
+  autoExport,
 }: UseTrainingSessionOptions): TrainingSessionController {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sampleCount, setSampleCount] = useState(0);
+  const [uniqueSampleCount, setUniqueSampleCount] = useState(0);
+  const [markerCount, setMarkerCount] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [lastSession, setLastSession] = useState<TrainingSession | null>(null);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [todaySessions, setTodaySessions] = useState<TrainingSession[]>([]);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const [recentSessionCount, setRecentSessionCount] = useState(0);
+  const [unexportedValidCount, setUnexportedValidCount] = useState(0);
+  const [hasPendingSave, setHasPendingSave] = useState(false);
   const draftRef = useRef<TrainingSessionDraft | null>(null);
+  const pendingSessionRef = useRef<TrainingSession | null>(null);
   const storeRef = useRef<TrainingSessionStore | null>(null);
+  const sessionsRef = useRef<TrainingSession[]>([]);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
+
+  const applySessions = useCallback((nextSessions: TrainingSession[], localEpochMs: number) => {
+    sessionsRef.current = nextSessions;
+    setSessions(nextSessions);
+    setTodaySessions(sessionsStartedOnLocalDay(nextSessions, localEpochMs));
+    const latestSession = nextSessions[0] ?? null;
+    if (!draftRef.current && !pendingSessionRef.current) {
+      setLastSession(latestSession);
+      setSessionId(latestSession?.id ?? null);
+      setSampleCount(latestSession?.sampleCount ?? 0);
+      setUniqueSampleCount(latestSession ? countUniqueTrainingSamples(latestSession.samples) : 0);
+      setMarkerCount(latestSession?.markers.length ?? 0);
+      setElapsedMs(latestSession?.durationMs ?? 0);
+    }
+  }, []);
+
+  const refreshSessions = useCallback(async (store: TrainingSessionStore) => {
+    const [nextSessions, nextUnexportedValidCount] = await Promise.all([
+      store.listSessions(),
+      store.countUnexportedValidSessions(),
+    ]);
+    applySessions(nextSessions, Date.now());
+    setUnexportedValidCount(nextUnexportedValidCount);
+    return nextSessions;
+  }, [applySessions]);
+
+  const exportStoredSession = useCallback(async (session: TrainingSession, store: TrainingSessionStore) => {
+    const exportedSession = markTrainingSessionExported(session, Date.now());
+    downloadTrainingSession(exportedSession);
+    await store.saveSession(exportedSession);
+    await refreshSessions(store);
+    setStorageError(null);
+  }, [refreshSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,17 +156,23 @@ export function useTrainingSession({
         if (cancelled) return;
         if (activeDraft) {
           const recovered = recoverInterruptedTrainingSession(activeDraft);
-          await store.completeSession(recovered);
+          try {
+            await store.completeSession(recovered);
+          } catch (recoveryError) {
+            draftRef.current = activeDraft;
+            pendingSessionRef.current = recovered;
+            setLastSession(recovered);
+            setSessionId(recovered.id);
+            setSampleCount(recovered.sampleCount);
+            setUniqueSampleCount(countUniqueTrainingSamples(recovered.samples));
+            setMarkerCount(recovered.markers.length);
+            setElapsedMs(recovered.durationMs);
+            setHasPendingSave(true);
+            setStorageError(`恢复中断记录失败：${storageErrorMessage(recoveryError)}；请重试保存`);
+          }
         }
-        const [sessions, count] = await Promise.all([store.listSessions(1), store.countSessions()]);
-        if (cancelled) return;
-        const latestSession = sessions[0] ?? null;
-        setLastSession(latestSession);
-        setSessionId(latestSession?.id ?? null);
-        setSampleCount(latestSession?.sampleCount ?? 0);
-        setElapsedMs(latestSession?.durationMs ?? 0);
-        setRecentSessionCount(count);
-        setStorageReady(true);
+        await refreshSessions(store);
+        if (!cancelled) setStorageReady(true);
       } catch (initError) {
         if (cancelled) return;
         setStorageError(storageErrorMessage(initError));
@@ -102,18 +182,19 @@ export function useTrainingSession({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshSessions]);
 
   const canStart = useMemo(() => (
     storageReady &&
     storageError === null &&
+    !hasPendingSave &&
     !isRecording &&
     !isStarting &&
     !isFinishing &&
     source === "serial" &&
     connection === "live" &&
     normalizeAthleteCode(athleteCode).length > 0
-  ), [athleteCode, connection, isFinishing, isRecording, isStarting, source, storageError, storageReady]);
+  ), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, source, storageError, storageReady]);
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
@@ -121,7 +202,7 @@ export function useTrainingSession({
     startingRef.current = true;
     setIsStarting(true);
     setStorageError(null);
-    const id = createSessionId();
+    const id = uniqueLocalId("session");
     const draft = createTrainingSessionDraft({
       id,
       athleteCode,
@@ -133,44 +214,92 @@ export function useTrainingSession({
     try {
       await store.saveDraft(draft);
       draftRef.current = draft;
+      pendingSessionRef.current = null;
       setSessionId(id);
       setSampleCount(0);
+      setUniqueSampleCount(0);
+      setMarkerCount(0);
       setElapsedMs(0);
+      setHasPendingSave(false);
       setIsRecording(true);
     } catch (saveError) {
-      setStorageError(storageErrorMessage(saveError));
+      setStorageError(`开始记录失败：${storageErrorMessage(saveError)}`);
     } finally {
       startingRef.current = false;
       setIsStarting(false);
     }
   }, [athleteCode, canStart, source]);
 
-  const finishRecording = useCallback(async (interrupted: boolean) => {
+  const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
+    const session = pendingSessionRef.current;
     const store = storeRef.current;
-    if (!draft || !store || finishingRef.current) return;
+    if (!draft || !session || !store || finishingRef.current) return;
     finishingRef.current = true;
     setIsFinishing(true);
-    setIsRecording(false);
+    setHasPendingSave(true);
 
+    let sessionStored = false;
+    try {
+      await store.saveDraft(draft);
+      await store.completeSession(session);
+      await refreshSessions(store);
+      draftRef.current = null;
+      pendingSessionRef.current = null;
+      setHasPendingSave(false);
+      setStorageError(null);
+      sessionStored = true;
+    } catch (saveError) {
+      setStorageError(`Session 尚未安全保存：${storageErrorMessage(saveError)}；记录仍保留在本页，可重试`);
+    }
+
+    if (sessionStored && autoExport) {
+      try {
+        await exportStoredSession(session, store);
+      } catch (exportError) {
+        setStorageError(`自动下载后未能保存导出状态：${storageErrorMessage(exportError)}；Session 已在本机，可再次导出`);
+      }
+    }
+
+    finishingRef.current = false;
+    setIsFinishing(false);
+  }, [autoExport, exportStoredSession, refreshSessions]);
+
+  const finishRecording = useCallback(async (interrupted: boolean) => {
+    const draft = draftRef.current;
+    if (!draft || finishingRef.current) return;
+    setIsRecording(false);
     const session = finishTrainingSession(draft, Date.now(), performance.now(), { interrupted });
-    draftRef.current = null;
+    pendingSessionRef.current = session;
     setLastSession(session);
     setElapsedMs(session.durationMs);
     setSampleCount(session.sampleCount);
-
-    try {
-      await store.completeSession(session);
-      setRecentSessionCount(await store.countSessions());
-    } catch (saveError) {
-      setStorageError(storageErrorMessage(saveError));
-    } finally {
-      finishingRef.current = false;
-      setIsFinishing(false);
-    }
-  }, []);
+    setUniqueSampleCount(countUniqueTrainingSamples(session.samples));
+    setMarkerCount(session.markers.length);
+    await persistPendingSession();
+  }, [persistPendingSession]);
 
   const stopRecording = useCallback(() => finishRecording(false), [finishRecording]);
+  const retryPendingSave = useCallback(() => persistPendingSession(), [persistPendingSession]);
+
+  const addMarker = useCallback(async (kind: Exclude<TrainingSessionMarkerKind, "manual">) => {
+    const draft = draftRef.current;
+    const store = storeRef.current;
+    if (!isRecording || !draft || !store) return;
+    appendTrainingSessionMarker(draft, {
+      id: uniqueLocalId("marker"),
+      kind,
+      wallClockEpochMs: Date.now(),
+      monotonicMs: performance.now(),
+    });
+    setMarkerCount(draft.markers.length);
+    try {
+      await store.saveDraft(draft);
+      setStorageError(null);
+    } catch (saveError) {
+      setStorageError(`人工标记尚未写入 IndexedDB：${storageErrorMessage(saveError)}；本页内记录仍保留`);
+    }
+  }, [isRecording]);
 
   useEffect(() => {
     if (!isRecording || source !== "serial" || connection !== "live") return;
@@ -178,6 +307,7 @@ export function useTrainingSession({
     if (!draft || telemetry.monotonicTimestampMs < draft.startedMonotonicMs) return;
     if (appendTrainingSessionSample(draft, telemetry, source)) {
       setSampleCount(draft.samples.length);
+      setUniqueSampleCount(countUniqueTrainingSamples(draft.samples));
     }
   }, [connection, isRecording, source, telemetry]);
 
@@ -201,34 +331,63 @@ export function useTrainingSession({
       const draft = draftRef.current;
       const store = storeRef.current;
       if (!draft || !store) return;
-      void store.saveDraft(draft).catch((saveError: unknown) => {
-        setStorageError(storageErrorMessage(saveError));
-        void finishRecording(true);
-      });
+      void store.saveDraft(draft)
+        .then(() => setStorageError(null))
+        .catch((saveError: unknown) => {
+          setStorageError(`草稿自动保存失败：${storageErrorMessage(saveError)}；请勿关闭页面并检查本机存储`);
+        });
     }, DRAFT_PERSIST_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [finishRecording, isRecording]);
+  }, [isRecording]);
 
   useEffect(() => {
     const handlePageHide = () => {
-      if (draftRef.current) void finishRecording(true);
+      const draft = draftRef.current;
+      const store = storeRef.current;
+      if (draft && store) {
+        void store.saveDraft(draft).catch((saveError: unknown) => {
+          setStorageError(`关页前草稿保存失败：${storageErrorMessage(saveError)}`);
+        });
+      }
     };
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [finishRecording]);
+  }, []);
 
-  const exportLastSession = useCallback(() => {
-    if (!lastSession) return;
-    const blob = new Blob([serializeTrainingSession(lastSession)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = trainingSessionFilename(lastSession);
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  }, [lastSession]);
+  useEffect(() => {
+    if (!shouldWarnBeforeTrainingExit({ isRecording, hasPendingSave, unexportedValidCount })) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasPendingSave, isRecording, unexportedValidCount]);
+
+  const updateLastSessionNotes = useCallback(async (notes: string) => {
+    const store = storeRef.current;
+    const currentSession = sessionsRef.current[0];
+    if (!store || !currentSession || hasPendingSave) return;
+    const updatedSession = withTrainingSessionNotes(currentSession, notes);
+    try {
+      await store.saveSession(updatedSession);
+      await refreshSessions(store);
+      setStorageError(null);
+    } catch (saveError) {
+      setStorageError(`训练备注尚未保存：${storageErrorMessage(saveError)}`);
+    }
+  }, [hasPendingSave, refreshSessions]);
+
+  const exportSession = useCallback(async (targetSessionId: string) => {
+    const store = storeRef.current;
+    const session = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
+    if (!store || !session) return;
+    try {
+      await exportStoredSession(session, store);
+    } catch (exportError) {
+      setStorageError(`导出状态尚未保存：${storageErrorMessage(exportError)}；可以再次导出`);
+    }
+  }, [exportStoredSession]);
 
   return {
     isRecording,
@@ -236,14 +395,22 @@ export function useTrainingSession({
     isFinishing,
     sessionId,
     sampleCount,
+    uniqueSampleCount,
+    markerCount,
     elapsedMs,
     lastSession,
+    todaySessions,
     storageReady,
     storageError,
-    recentSessionCount,
+    recentSessionCount: sessions.length,
+    unexportedValidCount,
+    hasPendingSave,
     canStart,
     startRecording,
     stopRecording,
-    exportLastSession,
+    retryPendingSave,
+    addMarker,
+    updateLastSessionNotes,
+    exportSession,
   };
 }

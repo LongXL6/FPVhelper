@@ -1,16 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   DraggableStickOverlay,
   storeStickOverlayLayout,
-  type StickOverlayMode,
 } from "@/components/draggable-stick-overlay";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
 import { clamp } from "@/lib/telemetry";
-import { normalizeAthleteCode, type TrainingSessionInvalidReason } from "@/lib/training-session";
+import {
+  DEFAULT_TRAINING_SESSION_PREFERENCES,
+  loadTrainingSessionPreferences,
+  saveTrainingSessionPreferences,
+  TRAINING_SESSION_PREFERENCES_KEY,
+  type TrainingSessionPreferences,
+} from "@/lib/training-session-preferences";
+import {
+  formatDvrReviewChecklist,
+  TRAINING_MARKER_LABELS,
+  trainingSessionProgress,
+} from "@/lib/training-session-summary";
+import {
+  normalizeAthleteCode,
+  type TrainingSessionInvalidReason,
+  type TrainingSessionMarkerKind,
+} from "@/lib/training-session";
 
 const statusCopy = {
   demo: "演示数据",
@@ -34,6 +49,31 @@ const TRAIL_LEFT_STICK_LAYOUT = { xPercent: 3, yPercent: 59, size: 154 };
 const TRAIL_RIGHT_STICK_LAYOUT = { xPercent: 78, yPercent: 59, size: 154 };
 const SIMPLE_LEFT_STICK_LAYOUT = { xPercent: 3, yPercent: 74, size: 92 };
 const SIMPLE_RIGHT_STICK_LAYOUT = { xPercent: 82, yPercent: 74, size: 92 };
+const COACH_LEFT_STICK_LAYOUT = { xPercent: 3, yPercent: 57, size: 220 };
+const COACH_RIGHT_STICK_LAYOUT = { xPercent: 78, yPercent: 57, size: 220 };
+const markerKinds = Object.keys(TRAINING_MARKER_LABELS) as Exclude<TrainingSessionMarkerKind, "manual">[];
+const TRAINING_PREFERENCES_EVENT = "fpvhelper:training-preferences";
+const DEFAULT_TRAINING_PREFERENCES_SNAPSHOT = JSON.stringify(DEFAULT_TRAINING_SESSION_PREFERENCES);
+
+function subscribeToTrainingPreferences(onStoreChange: () => void) {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === TRAINING_SESSION_PREFERENCES_KEY) onStoreChange();
+  };
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(TRAINING_PREFERENCES_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(TRAINING_PREFERENCES_EVENT, onStoreChange);
+  };
+}
+
+function getTrainingPreferencesSnapshot() {
+  try {
+    return window.localStorage.getItem(TRAINING_SESSION_PREFERENCES_KEY) ?? DEFAULT_TRAINING_PREFERENCES_SNAPSHOT;
+  } catch {
+    return DEFAULT_TRAINING_PREFERENCES_SNAPSHOT;
+  }
+}
 
 function formatSigned(value: number) {
   const rounded = Math.round(value);
@@ -52,6 +92,19 @@ function formatLocalTimecode(timestamp: number) {
   const date = new Date(timestamp);
   const pad = (value: number, length = 2) => value.toString().padStart(length, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function formatSessionStart(wallClockStartedAt: string) {
+  return wallClockStartedAt.slice(11, 19);
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
 }
 
 function SignalMark({ active }: { active: boolean }) {
@@ -154,9 +207,24 @@ function ThrottleTimeline({ samples }: { samples: number[] }) {
 }
 
 export function FlightDashboard() {
-  const [showStickOverlays, setShowStickOverlays] = useState(true);
-  const [stickOverlayMode, setStickOverlayMode] = useState<StickOverlayMode>("trail");
+  const preferencesSnapshot = useSyncExternalStore(
+    subscribeToTrainingPreferences,
+    getTrainingPreferencesSnapshot,
+    () => DEFAULT_TRAINING_PREFERENCES_SNAPSHOT,
+  );
+  const loadedPreferences = useMemo(() => loadTrainingSessionPreferences({
+    getItem: () => preferencesSnapshot,
+    setItem: () => undefined,
+  }), [preferencesSnapshot]);
+  const { autoExport, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
+  const [preferenceWriteError, setPreferenceWriteError] = useState<string | null>(null);
+  const [coachMode, setCoachMode] = useState(false);
+  const [selectedMarkerKind, setSelectedMarkerKind] = useState<Exclude<TrainingSessionMarkerKind, "manual">>("clean");
   const [athleteCode, setAthleteCode] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesDraftSessionId, setNotesDraftSessionId] = useState<string | null>(null);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const telemetryControl = useBetaflightTelemetry();
   const {
     videoRef,
@@ -169,7 +237,40 @@ export function FlightDashboard() {
     disconnect: disconnectVideo,
   } = useVideoCapture();
   const { telemetry, throttleHistory, stickMotion, connection, source, error } = telemetryControl;
-  const trainingSession = useTrainingSession({ telemetry, source, connection, athleteCode });
+  const trainingSession = useTrainingSession({ telemetry, source, connection, athleteCode, autoExport });
+  const addTrainingMarker = trainingSession.addMarker;
+  const sessionIsRecording = trainingSession.isRecording;
+  const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
+    ? notesDraft
+    : trainingSession.lastSession?.notes ?? "";
+
+  const updateTrainingPreferences = useCallback((preferences: TrainingSessionPreferences) => {
+    try {
+      const saveError = saveTrainingSessionPreferences(window.localStorage, preferences);
+      setPreferenceWriteError(saveError);
+      if (!saveError) window.dispatchEvent(new Event(TRAINING_PREFERENCES_EVENT));
+    } catch (saveError) {
+      setPreferenceWriteError(saveError instanceof Error ? saveError.message : "无法保存本机界面偏好");
+    }
+  }, []);
+
+  const toggleCoachMode = useCallback(() => setCoachMode((enabled) => !enabled), []);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) return;
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        toggleCoachMode();
+      } else if (event.key.toLowerCase() === "m" && sessionIsRecording) {
+        event.preventDefault();
+        void addTrainingMarker(selectedMarkerKind);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [addTrainingMarker, selectedMarkerKind, sessionIsRecording, toggleCoachMode]);
+  const preferenceError = preferenceWriteError || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
   const bridgeIsLive = source === "serial" && connection === "live";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
@@ -199,14 +300,18 @@ export function FlightDashboard() {
       ? "有效 Session：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
       : `无效 Session：${trainingSession.lastSession.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}`
     : null;
+  const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
+  const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
+  const visibleError = trainingSession.storageError || preferenceError || error || videoError;
   const leftStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.left), [stickMotion.samples]);
   const rightStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.right), [stickMotion.samples]);
-  const leftStickLayout = stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
-  const rightStickLayout = stickOverlayMode === "trail" ? TRAIL_RIGHT_STICK_LAYOUT : SIMPLE_RIGHT_STICK_LAYOUT;
-  const leftStickStorageKey = `fpvhelper.overlay.${stickOverlayMode}.left-stick.v1`;
-  const rightStickStorageKey = `fpvhelper.overlay.${stickOverlayMode}.right-stick.v1`;
+  const leftStickLayout = coachMode ? COACH_LEFT_STICK_LAYOUT : stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
+  const rightStickLayout = coachMode ? COACH_RIGHT_STICK_LAYOUT : stickOverlayMode === "trail" ? TRAIL_RIGHT_STICK_LAYOUT : SIMPLE_RIGHT_STICK_LAYOUT;
+  const overlayLayoutScope = coachMode ? `coach.${stickOverlayMode}` : stickOverlayMode;
+  const leftStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.left-stick.v1`;
+  const rightStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.right-stick.v1`;
   return (
-    <main className="dashboard-shell">
+    <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
@@ -223,6 +328,13 @@ export function FlightDashboard() {
         </div>
 
         <div className="top-actions">
+          <button
+            className={`button button--quiet button--coach ${coachMode ? "button--coach-active" : ""}`}
+            type="button"
+            aria-pressed={coachMode}
+            title="F 键切换教练大屏"
+            onClick={toggleCoachMode}
+          >{coachMode ? "退出大屏 (F)" : "教练大屏 (F)"}</button>
           <button
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
@@ -246,10 +358,13 @@ export function FlightDashboard() {
         </div>
       </header>
 
-      {(error || videoError || trainingSession.storageError) && (
+      {visibleError && (
         <aside className="error-banner" role="status">
-          <b>{trainingSession.storageError ? "存储提示" : "连接提示"}</b>
-          <span>{trainingSession.storageError || error || videoError}</span>
+          <b>{trainingSession.storageError || preferenceError ? "存储提示" : "连接提示"}</b>
+          <span>{visibleError}</span>
+          {trainingSession.hasPendingSave ? (
+            <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试保存</button>
+          ) : null}
         </aside>
       )}
 
@@ -282,21 +397,21 @@ export function FlightDashboard() {
                 className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
                 type="button"
                 aria-pressed={showStickOverlays}
-                onClick={() => setShowStickOverlays((visible) => !visible)}
+                onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays: !showStickOverlays, stickOverlayMode })}
               >{showStickOverlays ? "叠层开启" : "叠层关闭"}</button>
-              {showStickOverlays ? (
+              {showStickOverlays || coachMode ? (
                 <>
                   <button
                     className={`mini-button ${stickOverlayMode === "trail" ? "mini-button--active" : ""}`}
                     type="button"
                     aria-pressed={stickOverlayMode === "trail"}
-                    onClick={() => setStickOverlayMode("trail")}
+                    onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "trail" })}
                   >动态轨迹</button>
                   <button
                     className={`mini-button ${stickOverlayMode === "simple" ? "mini-button--active" : ""}`}
                     type="button"
                     aria-pressed={stickOverlayMode === "simple"}
-                    onClick={() => setStickOverlayMode("simple")}
+                    onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "simple" })}
                   >简洁模式</button>
                   <button
                     className="mini-button"
@@ -327,7 +442,12 @@ export function FlightDashboard() {
               <b>{telemetry.groundBridgeVoltage === null ? "—" : telemetry.groundBridgeVoltage.toFixed(1)} V</b>
               <span>{source === "demo" ? "DEMO BRIDGE VOLTAGE" : "GROUND BRIDGE VOLTAGE"}</span>
             </div>
-            {showStickOverlays ? (
+            <div className={`coach-status coach-status--${connection}`}>
+              <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
+              <b>{trainingSession.isRecording ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}` : "REC 待命"}</b>
+              <strong>THR {Math.round(telemetry.throttleStickPercent)}%</strong>
+            </div>
+            {showStickOverlays || coachMode ? (
               <>
                 <DraggableStickOverlay
                   storageKey={leftStickStorageKey}
@@ -387,31 +507,35 @@ export function FlightDashboard() {
             <StickPlot eyebrow={`右摇杆 · ${rcSourceLabel}`} xLabel="ROLL" yLabel="PITCH" x={telemetry.rollStickPercent} y={telemetry.pitchStickPercent} tone="blue" />
           </div>
 
-          <div className="gauge-grid">
+          <div className="gauge-grid gauge-grid--primary">
             <Gauge label="遥控油门指令" value={telemetry.throttleStickPercent} detail={`${Math.round(telemetry.rcThrottleUs)} μs · ${rcSourceLabel}${source === "serial" ? " / MSP_RC" : ""}`} accent="orange" />
-            <Gauge label="地面桥 RSSI 字段" value={telemetry.groundMspRssiPercent} detail={`${bridgeSourceLabel} · MSP legacy RSSI · 非机上 LQ`} />
           </div>
 
-          <section className="bridge-card">
-            <div className="card-heading"><span>GROUND BRIDGE</span><b>{bridgeIsLive ? "MSP LIVE" : "WAIT"}</b></div>
-            <div className="bridge-path">
-              <div className={bridgeIsLive ? "is-active" : ""}><i />ELRS RX</div>
-              <span>→</span>
-              <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
-              <span>→</span>
-              <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
+          <details className="telemetry-details">
+            <summary>桥接诊断字段（非机上 LQ）</summary>
+            <div className="gauge-grid">
+              <Gauge label="地面桥 RSSI 字段" value={telemetry.groundMspRssiPercent} detail={`${bridgeSourceLabel} · MSP legacy RSSI · 明确不是机上 LQ`} />
             </div>
-            <p>只读 MSP_RC + MSP_ANALOG；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
-          </section>
-
-          <section className="link-card">
-            <div>
-              <span className="metric-label">AIRCRAFT TELEMETRY</span>
-              <strong>未接入</strong>
-            </div>
-            <SignalMark active={false} />
-            <p>真实机上 LQ、电池和姿态预留给 ELRS TX Backpack。</p>
-          </section>
+            <section className="bridge-card">
+              <div className="card-heading"><span>GROUND BRIDGE</span><b>{bridgeIsLive ? "MSP LIVE" : "WAIT"}</b></div>
+              <div className="bridge-path">
+                <div className={bridgeIsLive ? "is-active" : ""}><i />ELRS RX</div>
+                <span>→</span>
+                <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
+                <span>→</span>
+                <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
+              </div>
+              <p>只读 MSP_RC + MSP_ANALOG；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
+            </section>
+            <section className="link-card">
+              <div>
+                <span className="metric-label">AIRCRAFT TELEMETRY</span>
+                <strong>未接入</strong>
+              </div>
+              <SignalMark active={false} />
+              <p>真实机上 LQ、电池和姿态尚未接入，不从 legacy RSSI 推断。</p>
+            </section>
+          </details>
         </aside>
       </div>
 
@@ -427,7 +551,7 @@ export function FlightDashboard() {
         <div className="session-heading">
           <div>
             <span>LOCAL SESSION RECORDER</span>
-            <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.lastSession ? "最近记录已保存在本机" : "等待开始训练记录"}</h2>
+            <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.hasPendingSave ? "记录待重试保存" : trainingSession.lastSession ? "最近记录已保存在本机" : "等待开始训练记录"}</h2>
           </div>
           <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : trainingSession.lastSession?.validity.valid ? "session-state--valid" : trainingSession.lastSession ? "session-state--invalid" : ""}`}>
             <i />{trainingSession.isRecording ? "REC" : trainingSession.lastSession?.validity.valid ? "VALID" : trainingSession.lastSession ? "INVALID" : "IDLE"}
@@ -451,13 +575,58 @@ export function FlightDashboard() {
             <b>{startRequirement}</b>
             <small>{trainingSession.storageReady ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条记录` : "正在检查草稿与历史记录"}</small>
           </div>
+          <label className="session-toggle">
+            <input
+              type="checkbox"
+              checked={autoExport}
+              onChange={(event) => updateTrainingPreferences({
+                autoExport: event.target.checked,
+                showStickOverlays,
+                stickOverlayMode,
+              })}
+            />
+            <span>结束成功后自动下载 JSON</span>
+          </label>
         </div>
 
         <div className="session-stats">
-          <span>样本数<b>{trainingSession.sampleCount.toLocaleString()}</b></span>
+          <span>独立样本<b>{trainingSession.uniqueSampleCount.toLocaleString()}</b></span>
           <span>持续时间<b>{formatSessionDuration(trainingSession.elapsedMs)}</b></span>
           <span>估算采样率<b>{sessionRate === null ? "—" : `${sessionRate.toFixed(1)} Hz`}</b></span>
           <span>数据来源<b>{sessionSources}</b></span>
+        </div>
+
+        {trainingSession.isRecording ? (
+          <div className={`session-progress ${progress.thresholdReached ? "session-progress--ready" : ""}`} role="status">
+            <b>{progress.thresholdReached ? "有效门槛已达到" : "有效门槛进度"}</b>
+            <span>{progress.thresholdReached
+              ? "停止后仍会校验真实来源、严格单调、代号与中断状态"
+              : `距离 60 秒还差 ${Math.ceil(progress.remainingDurationMs / 1_000)} 秒 · 距离 300 个独立样本还差 ${progress.remainingUniqueSamples} 个`}</span>
+          </div>
+        ) : null}
+
+        <div className="marker-panel">
+          <div className="marker-kind-list" aria-label="人工标记标签">
+            {markerKinds.map((kind) => (
+              <button
+                key={kind}
+                className={selectedMarkerKind === kind ? "is-selected" : ""}
+                type="button"
+                aria-pressed={selectedMarkerKind === kind}
+                onClick={() => setSelectedMarkerKind(kind)}
+              >{TRAINING_MARKER_LABELS[kind]}</button>
+            ))}
+          </div>
+          <button
+            className="marker-button"
+            type="button"
+            disabled={!trainingSession.isRecording}
+            onClick={() => void trainingSession.addMarker(selectedMarkerKind)}
+          >
+            <span>MARK / M</span>
+            <b>{TRAINING_MARKER_LABELS[selectedMarkerKind]}</b>
+          </button>
+          <p>已记 {trainingSession.markerCount} 条 · 人工定位 DVR，不是自动计圈或正式计时</p>
         </div>
 
         <div className="session-note">
@@ -467,10 +636,92 @@ export function FlightDashboard() {
               <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
             ) : null}
           </div>
-          {trainingSession.lastSession && !trainingSession.isRecording ? (
-            <button className="button button--export" type="button" onClick={trainingSession.exportLastSession}>导出 Session JSON</button>
+          {trainingSession.hasPendingSave ? (
+            <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试保存 Session</button>
           ) : null}
         </div>
+      </section>
+
+      {trainingSession.lastSession && !trainingSession.isRecording ? (
+        <section className="session-summary-card">
+          <div className="session-heading">
+            <div><span>POST-FLIGHT REVIEW</span><h2>停止后小结</h2></div>
+            <span>{trainingSession.lastSession.markers.length} 条人工标记</span>
+          </div>
+          <div className="summary-grid">
+            <div className="summary-notes">
+              <label htmlFor="session-notes">训练备注</label>
+              <textarea
+                id="session-notes"
+                value={visibleSessionNotes}
+                maxLength={2_000}
+                disabled={trainingSession.hasPendingSave}
+                placeholder="记录练习目标、失误与下一轮调整"
+                onChange={(event) => {
+                  setNotesDraftSessionId(trainingSession.lastSession?.id ?? null);
+                  setNotesDraft(event.target.value);
+                }}
+              />
+              <button
+                className="mini-button mini-button--active"
+                type="button"
+                disabled={notesSaving || trainingSession.hasPendingSave}
+                onClick={() => {
+                  setNotesSaving(true);
+                  void trainingSession.updateLastSessionNotes(visibleSessionNotes).finally(() => setNotesSaving(false));
+                }}
+              >{notesSaving ? "保存中…" : "保存备注到本机"}</button>
+            </div>
+            <div className="dvr-checklist">
+              <label htmlFor="dvr-checklist">可复制 DVR 复盘清单</label>
+              <textarea id="dvr-checklist" readOnly value={dvrChecklist} />
+              <button
+                className="mini-button"
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      if (!navigator.clipboard) throw new Error("当前浏览器未提供剪贴板权限");
+                      await navigator.clipboard.writeText(dvrChecklist);
+                      setCopyStatus("已复制 DVR 清单");
+                    } catch {
+                      setCopyStatus("复制失败，请在清单中手动全选复制");
+                    }
+                  })();
+                }}
+              >复制清单</button>
+              {copyStatus ? <small role="status">{copyStatus}</small> : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="today-records-card">
+        <div className="session-heading">
+          <div><span>LOCAL INDEXEDDB</span><h2>今日记录</h2></div>
+          <span>今日 {trainingSession.todaySessions.length} 条 · 本机 {trainingSession.unexportedValidCount} 条有效记录待导出</span>
+        </div>
+        {trainingSession.todaySessions.length === 0 ? (
+          <p className="empty-records">今天还没有已完成的本机训练记录。</p>
+        ) : (
+          <div className="today-records-list">
+            {trainingSession.todaySessions.map((session) => (
+              <article key={session.id}>
+                <div><span>代号</span><b>{session.athleteCode ?? "—"}</b></div>
+                <div><span>开始（本地）</span><b>{formatSessionStart(session.timing.wallClockStartedAt)}</b></div>
+                <div><span>时长</span><b>{formatSessionDuration(session.durationMs)}</b></div>
+                <div className={session.validity.valid ? "record-valid" : "record-invalid"}>
+                  <span>有效性</span>
+                  <b>{session.validity.valid ? "有效" : session.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}</b>
+                </div>
+                <div><span>导出状态</span><b>{session.exportedAt ? `已导出 ${session.exportCount} 次` : "未导出"}</b></div>
+                <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.exportSession(session.id)}>
+                  {session.exportedAt ? "再次导出" : "导出 JSON"}
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <footer className="dashboard-footer">
