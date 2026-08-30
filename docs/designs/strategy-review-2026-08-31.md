@@ -358,7 +358,7 @@ Branch: main · Repo: LongXL6/fpvhelper · Status: DECISIONS APPLIED — 历史�
 | `hooks/use-analytics-lifecycle.ts` | 新建 | `app_opened`（含微信/浏览器检测）、`page_hidden/visible`、`page_unloaded`、`js_error`；`beforeunload` 在录制中或有未导出记录时 `preventDefault` |
 | `app/api/events/route.ts` | 新建 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；独立项目 secret key 写入 `app_events`；按 token + 工作站原子限流，超限返回 429 + `Retry-After`，成功返回 204 |
 | `lib/supabase/analytics-admin.ts` | 新建 | `import "server-only"` 的独立分析项目 secret-key 客户端，只被 Route Handler 引用 |
-| `supabase/migrations/0001_app_events.sql` | 新建 | 见下方 SQL |
+| `supabase/migrations/20260830192551_app_events_analytics.sql` | 新建 | 唯一可执行 migration；含事件合同、RLS、限流、90 天保留与私有分析视图，须由数据库自动化测试验证 |
 | `app/error.tsx` | 新建 | Next 16 错误边界（`{ error, retry }`），上报 `js_error` |
 | `next.config.ts` | 修改 | `env.NEXT_PUBLIC_APP_VERSION`、`NEXT_PUBLIC_ANALYTICS_ENABLED`（仅 `VERCEL_ENV === "production"`） |
 | `.env.example` | 修改 | 独立分析项目只使用 `FPVHELPER_ANALYTICS_SUPABASE_URL=` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY=`（值留空，仅 Vercel 服务端）；不兼容回退通用/旧项目变量；统计开关和 ingest token 不写真实值 |
@@ -372,69 +372,7 @@ Branch: main · Repo: LongXL6/fpvhelper · Status: DECISIONS APPLIED — 历史�
 | `README.md` | 修改 | 「离开本机的数据」表；「使用统计」小节（采什么、不采什么、如何关闭） |
 | `CLAUDE.md` | 修改 | 项目用途 / 技术栈 / 两个域名哪个正式 / Supabase 项目归属与 migrations 位置 / 凭证只在 Vercel 与 `.env.local` / 禁止事项（不引入第三方分析 SDK；不在本仓库改共用 Supabase） |
 
-**Supabase SQL 历史最小草案（不得执行）**：唯一实施规格是配套文档 A.8；必须使用新建独立 FPVHelper 项目，不保留“共用项目”分支。
-
-```sql
--- supabase/migrations/0001_app_events.sql
-create table public.app_events (
-  id                  uuid primary key,                 -- 客户端生成，重试幂等
-  workstation_id      uuid not null,
-  visit_id     uuid not null,
-  recording_id          uuid,                             -- 训练 Session id，故意不加外键
-  event_name          text not null
-                      check (event_name ~ '^[a-z][a-z0-9_]{2,63}$'),
-  occurred_at         timestamptz not null,             -- 客户端墙钟
-  received_at         timestamptz not null default now(),
-  client_monotonic_ms double precision,
-  build               text not null,
-  hostname            text,
-  vercel_env          text not null default 'production',
-  props               jsonb not null default '{}'::jsonb,
-  constraint app_events_props_object check (jsonb_typeof(props) = 'object'),
-  constraint app_events_props_size   check (pg_column_size(props) < 4096)
-);
-
-create index app_events_name_time_idx
-  on public.app_events (event_name, occurred_at desc);
-create index app_events_workstation_time_idx
-  on public.app_events (workstation_id, occurred_at desc);
-create index app_events_session_idx
-  on public.app_events (recording_id) where recording_id is not null;
-create index app_events_received_idx
-  on public.app_events (received_at);                   -- 供保留期清理
-
--- RLS：开启但不给 anon / authenticated 任何策略；只有 service_role（仅服务端持有）能读写
-alter table public.app_events enable row level security;
-revoke all on table public.app_events from anon, authenticated;
-
--- 保留期 90 天（与报价单附件一致）
-create or replace function public.purge_old_app_events()
-returns void language sql security definer set search_path = public as $$
-  delete from public.app_events where received_at < now() - interval '90 days';
-$$;
--- 开启 pg_cron 后：
--- select cron.schedule('purge_app_events', '15 3 * * *', $$select public.purge_old_app_events()$$);
-
--- D1 看板：按工作站、按周的验收漏斗
-create or replace view public.weekly_workstation_funnel as
-select
-  date_trunc('week', occurred_at at time zone 'Asia/Shanghai')::date        as week_start,
-  workstation_id,
-  count(*) filter (where event_name = 'app_opened')                          as opens,
-  count(distinct recording_id) filter (where event_name = 'recording_started'
-        and props->>'connection_at_start' = 'live')                          as attempts,
-  count(distinct recording_id) filter (where event_name = 'recording_stopped'
-        and (props->>'valid')::boolean)                                      as valid_sessions,
-  count(distinct recording_id) filter (where event_name = 'session_exported')  as exported,
-  count(*) filter (where event_name = 'session_lost')                        as lost, -- 仅确认不可恢复；无可靠触发时为 0
-  count(*) filter (where event_name = 'serial_connect_result'
-        and not (props->>'ok')::boolean)                                     as serial_failures,
-  count(*) filter (where event_name = 'telemetry_stalled')                   as stalls
-from public.app_events
-where vercel_env = 'production'
-group by 1, 2
-order by 1 desc, 2;
-```
+**Supabase migration 来源**：不要从本文复制或执行 SQL。新建的独立 FPVHelper Supabase 只部署并审查 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)；本文不再保留历史表结构、RLS、权限或视图 SQL 副本。任何后续数据库改动都必须通过 Supabase CLI 创建新 migration，并同步数据库自动化测试。
 
 **工作量**（人日）
 
