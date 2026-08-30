@@ -7,6 +7,12 @@ export interface AppVersionPayload {
   environment: string;
 }
 
+export interface PublicBuildEnvironment {
+  appVersion: string;
+  analyticsEnabled: boolean;
+  analyticsEnvironment: string;
+}
+
 export const APP_VERSION = packageJson.version;
 
 function normalizedCommitSha(value: string | undefined) {
@@ -23,5 +29,17 @@ export function getAppVersionPayload(
     build: commitSha ? `${APP_VERSION}+${commitSha.slice(0, 7)}` : `${APP_VERSION}+local`,
     commitSha,
     environment: env.VERCEL_ENV ?? env.NODE_ENV ?? "development",
+  };
+}
+
+export function getPublicBuildEnvironment(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): PublicBuildEnvironment {
+  const analyticsEnvironment = env.VERCEL_ENV ?? env.NEXT_PUBLIC_ANALYTICS_ENV ?? "development";
+  const explicitVersion = env.NEXT_PUBLIC_APP_VERSION?.trim();
+  return {
+    appVersion: explicitVersion || getAppVersionPayload(env).build,
+    analyticsEnabled: analyticsEnvironment === "production" && env.NEXT_PUBLIC_ANALYTICS_ENABLED === "true",
+    analyticsEnvironment,
   };
 }

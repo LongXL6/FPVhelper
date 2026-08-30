@@ -28,5 +28,5 @@
 
 - 功能分支经 PR 和 CI 后合并 main；CI 固定执行 `npm ci && npm run check && npm run build`。
 - Preview 验收通过后才能 Promote；生产核验通过后才创建与 `package.json` 一致的 `vX.Y.Z` tag。
-- `/version.json` 和版本检查 hook 是发布识别基础设施；未串行接入 Dashboard 前，不宣称页面已经展示升级提示。
+- `/version.json` 和版本检查 hook 已接入 Dashboard 的升级提示与页脚版本；仍需在真实 Preview/生产域核验后才能宣称发布识别生效。
 - 发布证据按本地、CI、PR、合并、Preview、Promote、生产页面、真机与业务验收分层报告。

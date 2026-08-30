@@ -216,7 +216,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 1. **错误是自由字符串**（`use-betaflight-telemetry.ts:32/:227/:232`、`use-video-capture.ts:69`）→ 先做 `error-codes.ts`，否则 `reason` 字段没有来源。
 2. **`source` 在 `requestPort` 前就切 serial**（`:191-198`）→ 先分离 `source / connection`，否则"真实数据时长"把取消后的冻结时间算进去，`recording_started.connection_at_start` 也无意义。
-3. **没有 `build` 号**（`package.json:3` 未引用，`next.config.ts` 无 env）→ 注入 `NEXT_PUBLIC_APP_VERSION`，否则任何事件都无法按发布切片。
+3. **`build` 号（已实现）**：`next.config.ts` 通过 `getPublicBuildEnvironment()` 注入 `package.json` 版本与提交短 SHA；可选 `NEXT_PUBLIC_APP_VERSION` 只作为公开覆盖值，事件可按发布切片。
 4. **没有有效性函数**（`lib/training-session.ts:109-135`）→ `assessTrainingSession()` 是 `recording_stopped.valid` 的唯一来源；未来若实现可证明的 `session_lost`，才可复用同一判定，不能从 `pagehide` 推断丢失。
 5. **没有看门狗**（`:156` 永不回退）→ `telemetry_stalled` 与 `serial_connect_result(first_frame_timeout)` 需要它。
 6. **解析器无计数器**（`lib/telemetry.ts:93-95`、hook `:177`）→ 两个 ref 计数器，一行改动 + 一个测试。
