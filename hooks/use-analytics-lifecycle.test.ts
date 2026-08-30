@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   analyticsConnectionTransition,
   analyticsInterruptedSessionIsLost,
+  analyticsObservedRcFrameDelta,
+  analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
   analyticsVideoWasLost,
   createAnalyticsEventDeduper,
@@ -54,5 +56,64 @@ describe("analytics lifecycle transition helpers", () => {
     expect(deduper.shouldEmit("js:abc", 2_000, 5_000)).toBe(false);
     expect(deduper.shouldEmit("js:def", 2_000, 5_000)).toBe(true);
     expect(deduper.shouldEmit("js:abc", 6_001, 5_000)).toBe(true);
+  });
+
+  it("counts every observed RC frame when React coalesces sequence updates", () => {
+    expect(analyticsObservedRcFrameDelta(null, 100)).toBe(0);
+    expect(analyticsObservedRcFrameDelta(100, 104)).toBe(4);
+    expect(analyticsObservedRcFrameDelta(104, 104)).toBe(0);
+    expect(analyticsObservedRcFrameDelta(104, 3)).toBe(0);
+  });
+
+  it("derives serial-loss counters from only the active parser lifecycle", () => {
+    expect(analyticsSerialLifecycleMetrics({
+      start: {
+        bytesReceived: 1_000,
+        checksumValidFrames: 10,
+        protocolErrors: 1,
+        checksumErrors: 2,
+        resyncs: 3,
+        discardedBytes: 4,
+      },
+      end: {
+        bytesReceived: 10_000,
+        checksumValidFrames: 132,
+        protocolErrors: 4,
+        checksumErrors: 5,
+        resyncs: 9,
+        discardedBytes: 24,
+      },
+      rcFrames: 110,
+      liveMs: 5_000,
+    })).toEqual({
+      rc_frames: 110,
+      analog_frames: 9,
+      checksum_errors: 3,
+      error_frames: 3,
+      effective_hz: 22,
+    });
+  });
+
+  it("clamps parser resets and impossible analog deltas instead of mixing connections", () => {
+    const previousConnection = {
+      bytesReceived: 9_000,
+      checksumValidFrames: 500,
+      protocolErrors: 8,
+      checksumErrors: 12,
+      resyncs: 10,
+      discardedBytes: 30,
+    };
+    expect(analyticsSerialLifecycleMetrics({
+      start: previousConnection,
+      end: { ...previousConnection, checksumValidFrames: 3, protocolErrors: 0, checksumErrors: 1 },
+      rcFrames: 12,
+      liveMs: 0,
+    })).toEqual({
+      rc_frames: 12,
+      analog_frames: 0,
+      checksum_errors: 0,
+      error_frames: 0,
+      effective_hz: 0,
+    });
   });
 });

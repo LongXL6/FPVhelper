@@ -177,6 +177,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .error-banner b { font-family: var(--mono); color: var(--alert); }
 
+.update-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 14px 0 -2px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--signal);
+  background: #0d2028;
+  color: var(--muted);
+  font: 500 11px/1.4 var(--mono);
+}
+.update-banner > div { display: flex; align-items: center; gap: 12px; }
+.update-banner b { color: var(--signal); }
+
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(420px, 0.86fr);
@@ -669,6 +684,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .brand-mark span:nth-child(3) { top: 18px; }
   .top-actions { width: 100%; }
   .top-actions { flex-wrap: wrap; }
+  .update-banner, .update-banner > div { align-items: flex-start; flex-direction: column; }
   .button { min-height: 36px; padding: 0 10px; font-size: 9px; }
   .button--primary { width: 100%; }
   .button--quiet { display: none; }

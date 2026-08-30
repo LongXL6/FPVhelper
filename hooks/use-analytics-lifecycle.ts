@@ -13,11 +13,10 @@ import {
   type AnalyticsLocalStatus,
 } from "@/lib/analytics/client";
 import {
-  classifyMediaError,
-  classifySerialError,
+  classifySerialHardwareErrorCode,
   classifyStorageError,
   classifyUnknownError,
-  type ClassifiedAnalyticsError,
+  classifyVideoHardwareErrorCode,
 } from "@/lib/analytics/error-codes";
 import type {
   AnalyticsConnectionState,
@@ -28,20 +27,24 @@ import type {
 import {
   analyticsConnectionTransition,
   analyticsInterruptedSessionIsLost,
+  analyticsObservedRcFrameDelta,
+  analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
   analyticsVideoWasLost,
   createAnalyticsEventDeduper,
 } from "@/lib/analytics/lifecycle";
-import type { TelemetrySource } from "@/lib/telemetry";
+import type { SerialErrorCode, VideoCaptureErrorCode } from "@/lib/hardware-errors";
+import type { MspParserStats, TelemetrySource } from "@/lib/telemetry";
 import type { TrainingSessionExportReceipt } from "@/hooks/use-training-session";
 import type { TrainingSession } from "@/lib/training-session";
+import type { LocalVideoCaptureSettings } from "@/lib/video-capture";
 
 const MAX_ANALYTICS_DURATION_MS = 31_536_000_000;
 
-export interface AnalyticsErrorSurface {
-  kind: "serial" | "video" | "storage";
-  message: string;
-}
+export type AnalyticsErrorSurface =
+  | { kind: "serial"; code: SerialErrorCode }
+  | { kind: "video"; code: VideoCaptureErrorCode }
+  | { kind: "storage"; message: string };
 
 interface UseAnalyticsLifecycleOptions {
   connection: AnalyticsConnectionState;
@@ -58,9 +61,10 @@ interface UseAnalyticsLifecycleOptions {
   overlayMode: AnalyticsOverlayMode;
   serialSupported: boolean;
   mediaSupported: boolean;
-  getVideoMetrics: () => { width: number; height: number; frameRate: number };
-  serialError: string | null;
-  videoError: string | null;
+  serialErrorCode: SerialErrorCode | null;
+  videoErrorCode: VideoCaptureErrorCode | null;
+  parserStats: MspParserStats;
+  captureSettings: LocalVideoCaptureSettings | null;
   errorSurface: AnalyticsErrorSurface | null;
 }
 
@@ -152,36 +156,14 @@ function errorLike(name: string, message: string) {
   return { name, message };
 }
 
-function classifySerialMessage(message: string): ClassifiedAnalyticsError {
-  if (/未选择串口/.test(message)) return classifySerialError(errorLike("NotFoundError", message), "picker");
-  if (/不支持 Web Serial/.test(message)) return classifySerialError(errorLike("NotSupportedError", message), "unsupported");
-  if (/5 秒内未收到|超时/.test(message)) return classifySerialError(errorLike("Error", "timeout"), "handshake");
-  if (/写入中断|不可写/.test(message)) return classifySerialError(errorLike("NetworkError", message), "write");
-  if (/读取失败|USB 连接已断开/.test(message)) return classifySerialError(errorLike("NetworkError", message), "read");
-  if (/占用|already open|busy/i.test(message)) return classifySerialError(errorLike("InvalidStateError", message), "open");
-  return classifySerialError(errorLike("Error", message), "open");
-}
-
-function classifyVideoMessage(message: string): ClassifiedAnalyticsError {
-  if (/无法访问视频|不支持/.test(message)) return classifyMediaError(errorLike("NotSupportedError", message));
-  if (/HTTPS|secure context/i.test(message)) return classifyMediaError(errorLike("SecurityError", message));
-  if (/permission|denied|权限|允许/i.test(message)) return classifyMediaError(errorLike("NotAllowedError", message));
-  if (/not found|找不到|未连接/i.test(message)) return classifyMediaError(errorLike("NotFoundError", message));
-  if (/busy|占用/i.test(message)) return classifyMediaError(errorLike("NotReadableError", message));
-  if (/constraint|分辨率/i.test(message)) return classifyMediaError(errorLike("OverconstrainedError", message));
-  if (/abort|中止/i.test(message)) return classifyMediaError(errorLike("AbortError", message));
-  if (/断开|device lost/i.test(message)) return classifyMediaError(errorLike("NetworkError", message));
-  return classifyMediaError(errorLike("Error", message));
-}
-
 function classifyErrorSurface(surface: AnalyticsErrorSurface) {
-  if (surface.kind === "serial") return classifySerialMessage(surface.message);
-  if (surface.kind === "video") return classifyVideoMessage(surface.message);
+  if (surface.kind === "serial") return classifySerialHardwareErrorCode(surface.code);
+  if (surface.kind === "video") return classifyVideoHardwareErrorCode(surface.code);
   return classifyStorageError(errorLike("Error", surface.message), "storage_write");
 }
 
-function serialFailureProps(message: string) {
-  const classified = classifySerialMessage(message);
+function serialFailureProps(code: SerialErrorCode) {
+  const classified = classifySerialHardwareErrorCode(code);
   const reason: PhaseOneEventProps["serial_connect_result"]["reason"] =
     classified.code === "serial_unsupported" ? "web_serial_unsupported"
       : classified.code === "serial_picker_cancelled" ? "picker_cancelled"
@@ -200,8 +182,8 @@ function serialFailureProps(message: string) {
   return { reason, stage };
 }
 
-function videoFailureReason(message: string): NonNullable<PhaseOneEventProps["video_connect_result"]["reason"]> {
-  const code = classifyVideoMessage(message).code;
+function videoFailureReason(hardwareCode: VideoCaptureErrorCode): NonNullable<PhaseOneEventProps["video_connect_result"]["reason"]> {
+  const code = classifyVideoHardwareErrorCode(hardwareCode).code;
   if (code === "video_unsupported") return "unsupported";
   if (code === "video_insecure_context") return "insecure_context";
   if (code === "video_permission_denied") return "permission_denied";
@@ -221,7 +203,6 @@ export function maxTrainingSampleGap(session: TrainingSession) {
 }
 
 export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): AnalyticsLifecycleController {
-  const getVideoMetrics = options.getVideoMetrics;
   const [status, setStatus] = useState<AnalyticsLocalStatus>({ state: "off", reason: "configuration" });
   const pageStartedAtRef = useRef<number | null>(null);
   const appOpenedRef = useRef(false);
@@ -233,6 +214,8 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
   const serialLiveMsTotalRef = useRef(0);
   const serialConnectionStartedAtRef = useRef<number | null>(null);
   const serialConnectionRcFrameStartRef = useRef(0);
+  const serialConnectionParserStartRef = useRef(options.parserStats);
+  const serialConnectionParserLatestRef = useRef(options.parserStats);
   const videoLiveStartedAtRef = useRef<number | null>(null);
   const videoLiveMsTotalRef = useRef(0);
   const videoConnectionStartedAtRef = useRef<number | null>(null);
@@ -310,6 +293,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     serialConnectionStartedAtRef.current = latestRef.current.source === "serial"
       && (latestRef.current.connection === "live" || latestRef.current.connection === "stale") ? now : null;
     serialConnectionRcFrameStartRef.current = observedRcFramesRef.current;
+    serialConnectionParserStartRef.current = serialConnectionParserLatestRef.current;
     videoLiveStartedAtRef.current = latestRef.current.videoState === "live" ? now : null;
     videoConnectionStartedAtRef.current = latestRef.current.videoState === "live" ? now : null;
     stallStartedAtRef.current = latestRef.current.connection === "stale" ? now : null;
@@ -332,18 +316,21 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     if (startedAt === null) return false;
     const liveMs = safeDuration(now - startedAt);
     const rcFrames = Math.max(0, observedRcFramesRef.current - serialConnectionRcFrameStartRef.current);
+    const parserMetrics = analyticsSerialLifecycleMetrics({
+      start: serialConnectionParserStartRef.current,
+      end: serialConnectionParserLatestRef.current,
+      rcFrames,
+      liveMs,
+    });
     trackAnalytics("serial_lost", {
       reason,
       live_ms: liveMs,
       was_recording: latestRef.current.isRecording,
-      rc_frames: rcFrames,
-      analog_frames: 0,
-      checksum_errors: 0,
-      error_frames: 0,
-      effective_hz: liveMs > 0 ? Math.min(1_000, rcFrames / (liveMs / 1_000)) : 0,
+      ...parserMetrics,
     });
     serialConnectionStartedAtRef.current = null;
     serialConnectionRcFrameStartRef.current = observedRcFramesRef.current;
+    serialConnectionParserStartRef.current = serialConnectionParserLatestRef.current;
     stallStartedAtRef.current = null;
     return true;
   }, []);
@@ -483,9 +470,21 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
       return;
     }
     if (previousTelemetrySequenceRef.current === options.telemetrySequence) return;
+    observedRcFramesRef.current += analyticsObservedRcFrameDelta(
+      previousTelemetrySequenceRef.current,
+      options.telemetrySequence,
+    );
     previousTelemetrySequenceRef.current = options.telemetrySequence;
-    observedRcFramesRef.current += 1;
   }, [options.source, options.telemetrySequence]);
+
+  useEffect(() => {
+    const current = serialConnectionParserLatestRef.current;
+    const isMonotonicFinalSnapshot = serialConnectionStartedAtRef.current !== null
+      && options.parserStats.bytesReceived >= current.bytesReceived;
+    if (options.source === "serial" || isMonotonicFinalSnapshot) {
+      serialConnectionParserLatestRef.current = options.parserStats;
+    }
+  }, [options.parserStats, options.source]);
 
   useEffect(() => {
     const now = performance.now();
@@ -498,6 +497,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
       if (serialConnectionStartedAtRef.current === null) {
         serialConnectionStartedAtRef.current = now;
         serialConnectionRcFrameStartRef.current = observedRcFramesRef.current;
+        serialConnectionParserStartRef.current = serialConnectionParserLatestRef.current;
       }
       statsRef.current.maxFunnelStep = Math.max(statsRef.current.maxFunnelStep, 3);
     } else if (serialLiveStartedAtRef.current !== null) {
@@ -532,8 +532,8 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
         attempt_index: pending.index,
       });
       pendingSerialRef.current = null;
-    } else if (pending && options.serialError && (options.connection === "error" || options.connection === "demo")) {
-      const failure = serialFailureProps(options.serialError);
+    } else if (pending && options.serialErrorCode && (options.connection === "error" || options.connection === "demo")) {
+      const failure = serialFailureProps(options.serialErrorCode);
       trackAnalytics("serial_connect_result", {
         ok: false,
         reason: failure.reason,
@@ -560,16 +560,16 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
       currentConnection: options.connection,
     })) {
       const reason = demoReturn ? "user_demo"
-        : options.serialError
-          ? classifySerialMessage(options.serialError).stage === "write" ? "write_error"
-            : classifySerialMessage(options.serialError).stage === "read" ? "read_error"
-              : "device_disconnect"
+        : options.serialErrorCode === "serial_write_failed" || options.serialErrorCode === "serial_not_writable"
+          ? "write_error"
+          : options.serialErrorCode === "serial_read_failed" || options.serialErrorCode === "serial_not_readable"
+            ? "read_error"
           : "device_disconnect";
       emitSerialLost(reason, now);
     }
     previousConnectionRef.current = options.connection;
     previousSourceRef.current = options.source;
-  }, [emitSerialLost, options.connection, options.isRecording, options.serialError, options.source]);
+  }, [emitSerialLost, options.connection, options.isRecording, options.serialErrorCode, options.source]);
 
   useEffect(() => {
     const now = performance.now();
@@ -585,21 +585,21 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
 
     const pending = pendingVideoRef.current;
     if (pending && options.videoState === "live") {
-      const videoMetrics = getVideoMetrics();
+      const videoMetrics = options.captureSettings;
       trackAnalytics("video_connect_result", {
         ok: true,
         device_kind: "unknown",
-        ...(videoMetrics.width > 0 ? { width: Math.round(videoMetrics.width) } : {}),
-        ...(videoMetrics.height > 0 ? { height: Math.round(videoMetrics.height) } : {}),
-        ...(videoMetrics.frameRate > 0 ? { frame_rate: videoMetrics.frameRate } : {}),
+        ...(videoMetrics?.width && videoMetrics.width > 0 ? { width: Math.round(videoMetrics.width) } : {}),
+        ...(videoMetrics?.height && videoMetrics.height > 0 ? { height: Math.round(videoMetrics.height) } : {}),
+        ...(videoMetrics?.frameRate && videoMetrics.frameRate > 0 ? { frame_rate: videoMetrics.frameRate } : {}),
         latency_ms: safeDuration(now - pending.startedAt),
         attempt_index: pending.index,
       });
       pendingVideoRef.current = null;
-    } else if (pending && options.videoState === "error" && options.videoError) {
+    } else if (pending && options.videoState === "error" && options.videoErrorCode) {
       trackAnalytics("video_connect_result", {
         ok: false,
-        reason: videoFailureReason(options.videoError),
+        reason: videoFailureReason(options.videoErrorCode),
         device_kind: "unknown",
         latency_ms: safeDuration(now - pending.startedAt),
         attempt_index: pending.index,
@@ -620,7 +620,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
       videoConnectionStartedAtRef.current = null;
     }
     previousVideoStateRef.current = options.videoState;
-  }, [getVideoMetrics, options.isRecording, options.videoError, options.videoState]);
+  }, [options.captureSettings, options.isRecording, options.videoErrorCode, options.videoState]);
 
   useEffect(() => {
     if (options.isRecording && !activeRecordingIdRef.current && options.sessionId) {

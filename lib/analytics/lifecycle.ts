@@ -1,5 +1,42 @@
 import type { AnalyticsConnectionState, AnalyticsVideoState } from "./events";
-import type { TelemetrySource } from "../telemetry";
+import type { MspParserStats, TelemetrySource } from "../telemetry";
+
+const MAX_EFFECTIVE_HZ = 1_000;
+
+function counterDelta(start: number, end: number) {
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, Math.round(end) - Math.round(start));
+}
+
+export function analyticsObservedRcFrameDelta(previousSequence: number | null, currentSequence: number) {
+  if (previousSequence === null || !Number.isFinite(currentSequence)) return 0;
+  return Math.max(0, Math.round(currentSequence) - Math.round(previousSequence));
+}
+
+export function analyticsSerialLifecycleMetrics(options: {
+  start: MspParserStats;
+  end: MspParserStats;
+  rcFrames: number;
+  liveMs: number;
+}) {
+  const rcFrames = Math.max(0, Math.round(options.rcFrames));
+  const checksumValidFrames = counterDelta(
+    options.start.checksumValidFrames,
+    options.end.checksumValidFrames,
+  );
+  const errorFrames = counterDelta(options.start.protocolErrors, options.end.protocolErrors);
+  const checksumErrors = counterDelta(options.start.checksumErrors, options.end.checksumErrors);
+  const nonErrorFrames = Math.max(0, checksumValidFrames - errorFrames);
+  const liveMs = Math.max(0, Number.isFinite(options.liveMs) ? options.liveMs : 0);
+
+  return {
+    rc_frames: rcFrames,
+    analog_frames: Math.max(0, nonErrorFrames - rcFrames),
+    checksum_errors: checksumErrors,
+    error_frames: errorFrames,
+    effective_hz: liveMs > 0 ? Math.min(MAX_EFFECTIVE_HZ, rcFrames / (liveMs / 1_000)) : 0,
+  };
+}
 
 export function analyticsConnectionTransition(
   previous: AnalyticsConnectionState,

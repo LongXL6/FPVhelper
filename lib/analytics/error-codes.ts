@@ -1,3 +1,5 @@
+import type { SerialErrorCode, VideoCaptureErrorCode } from "../hardware-errors";
+
 export const ANALYTICS_ERROR_DOMAINS = ["serial", "video", "storage", "unknown"] as const;
 export type AnalyticsErrorDomain = (typeof ANALYTICS_ERROR_DOMAINS)[number];
 
@@ -116,6 +118,54 @@ function classified(
     nextStepZh: NEXT_STEPS_ZH[code],
     fingerprint: stableFingerprint(domain, code, stage),
   };
+}
+
+export function classifySerialHardwareErrorCode(code: SerialErrorCode): ClassifiedAnalyticsError {
+  switch (code) {
+    case "serial_insecure_context":
+    case "serial_unsupported":
+      return classified("serial", "serial_unsupported", "unsupported");
+    case "serial_picker_cancelled":
+      return classified("serial", "serial_picker_cancelled", "picker");
+    case "serial_permission_denied":
+      return classified("serial", "serial_open_failed", "picker");
+    case "serial_port_busy":
+      return classified("serial", "serial_port_busy", "open");
+    case "serial_device_disconnected":
+      return classified("serial", "serial_device_lost", "read");
+    case "serial_not_readable":
+    case "serial_read_failed":
+      return classified("serial", "serial_not_readable", "read");
+    case "serial_not_writable":
+    case "serial_write_failed":
+      return classified("serial", "serial_not_writable", "write");
+    case "serial_no_rc_frames":
+      return classified("serial", "serial_first_frame_timeout", "handshake");
+    case "serial_unknown":
+      return classified("serial", "serial_unknown", "open");
+  }
+}
+
+export function classifyVideoHardwareErrorCode(code: VideoCaptureErrorCode): ClassifiedAnalyticsError {
+  switch (code) {
+    case "video_insecure_context":
+      return classified("video", "video_insecure_context", "capture");
+    case "video_media_unsupported":
+      return classified("video", "video_unsupported", "unsupported");
+    case "video_permission_denied":
+      return classified("video", "video_permission_denied", "capture");
+    case "video_device_busy":
+      return classified("video", "video_device_busy", "capture");
+    case "video_device_not_found":
+      return classified("video", "video_device_not_found", "capture");
+    case "video_constraints_failed":
+      return classified("video", "video_constraint_failed", "capture");
+    case "video_device_disconnected":
+      return classified("video", "video_device_lost", "capture");
+    case "video_playback_failed":
+    case "video_unknown":
+      return classified("video", "video_unknown", "capture");
+  }
 }
 
 export function classifySerialError(

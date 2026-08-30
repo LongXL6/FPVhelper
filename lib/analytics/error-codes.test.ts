@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   classifyMediaError,
   classifySerialError,
+  classifySerialHardwareErrorCode,
   classifyStorageError,
   classifyUnknownError,
+  classifyVideoHardwareErrorCode,
 } from "./error-codes";
 
 function error(name: string, message: string) {
@@ -40,5 +42,20 @@ describe("analytics error classification", () => {
     expect(first).toEqual(second);
     expect(first.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     expect(JSON.stringify(first)).not.toMatch(/Alice|Bob|tty|raw bytes|TypeError|RangeError/);
+  });
+
+  it("maps hardware error enums without consulting localized display messages", () => {
+    expect(classifySerialHardwareErrorCode("serial_no_rc_frames")).toMatchObject({
+      domain: "serial", code: "serial_first_frame_timeout", stage: "handshake",
+    });
+    expect(classifySerialHardwareErrorCode("serial_write_failed")).toMatchObject({
+      domain: "serial", code: "serial_not_writable", stage: "write",
+    });
+    expect(classifyVideoHardwareErrorCode("video_device_disconnected")).toMatchObject({
+      domain: "video", code: "video_device_lost", stage: "capture",
+    });
+    expect(classifyVideoHardwareErrorCode("video_constraints_failed")).toMatchObject({
+      domain: "video", code: "video_constraint_failed", stage: "capture",
+    });
   });
 });

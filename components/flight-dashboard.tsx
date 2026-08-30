@@ -9,6 +9,7 @@ import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
+import { useVersionCheck } from "@/hooks/use-version-check";
 import { clamp } from "@/lib/telemetry";
 import {
   DEFAULT_TRAINING_SESSION_PREFERENCES,
@@ -45,6 +46,13 @@ const invalidReasonCopy: Record<TrainingSessionInvalidReason, string> = {
   no_athlete_code: "缺少选手代号",
   interrupted: "刷新或连接中断",
 };
+
+const parserQualityCopy = {
+  unknown: "等待数据",
+  good: "良好",
+  degraded: "需观察",
+  poor: "较差",
+} as const;
 
 const TRAIL_LEFT_STICK_LAYOUT = { xPercent: 3, yPercent: 59, size: 154 };
 const TRAIL_RIGHT_STICK_LAYOUT = { xPercent: 78, yPercent: 59, size: 154 };
@@ -244,13 +252,16 @@ export function FlightDashboard() {
     videoRef,
     devices: videoDevices,
     selectedDeviceId,
+    captureSettings,
     state: videoState,
     error: videoError,
+    errorCode: videoErrorCode,
     setSelectedDeviceId,
     connect: connectVideo,
     disconnect: disconnectVideo,
   } = useVideoCapture();
   const { telemetry, throttleHistory, stickMotion, connection, source, error } = telemetryControl;
+  const version = useVersionCheck();
   const trainingSession = useTrainingSession({ telemetry, source, connection, athleteCode, autoExport });
   const addTrainingMarker = trainingSession.addMarker;
   const sessionIsRecording = trainingSession.isRecording;
@@ -290,6 +301,12 @@ export function FlightDashboard() {
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
   const bridgeIsLive = source === "serial" && connection === "live";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
+  const videoFormatLabel = videoState === "live" && captureSettings
+    ? [
+        captureSettings.width && captureSettings.height ? `${captureSettings.width}×${captureSettings.height}` : null,
+        captureSettings.frameRate ? `${captureSettings.frameRate.toFixed(1)} FPS` : null,
+      ].filter(Boolean).join(" · ")
+    : "";
   const rcSourceLabel = source === "demo" ? "DEMO" : "GROUND_RC";
   const bridgeSourceLabel = source === "demo" ? "DEMO" : "GROUND_BRIDGE";
   const timecode = formatLocalTimecode(telemetry.timestamp);
@@ -323,10 +340,10 @@ export function FlightDashboard() {
     if (trainingSession.storageError || preferenceError) {
       return { kind: "storage", message: trainingSession.storageError || preferenceError || "本机存储异常" };
     }
-    if (error) return { kind: "serial", message: error };
-    if (videoError) return { kind: "video", message: videoError };
+    if (telemetryControl.errorCode) return { kind: "serial", code: telemetryControl.errorCode };
+    if (videoErrorCode) return { kind: "video", code: videoErrorCode };
     return null;
-  }, [error, preferenceError, trainingSession.storageError, videoError]);
+  }, [preferenceError, telemetryControl.errorCode, trainingSession.storageError, videoErrorCode]);
   const leftStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.left), [stickMotion.samples]);
   const rightStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.right), [stickMotion.samples]);
   const leftStickLayout = coachMode ? COACH_LEFT_STICK_LAYOUT : stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
@@ -334,11 +351,6 @@ export function FlightDashboard() {
   const overlayLayoutScope = coachMode ? `coach.${stickOverlayMode}` : stickOverlayMode;
   const leftStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.left-stick.v1`;
   const rightStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.right-stick.v1`;
-  const getVideoMetrics = useCallback(() => ({
-    width: videoRef.current?.videoWidth ?? 0,
-    height: videoRef.current?.videoHeight ?? 0,
-    frameRate: 0,
-  }), [videoRef]);
   const analytics = useAnalyticsLifecycle({
     connection,
     source,
@@ -354,9 +366,10 @@ export function FlightDashboard() {
     overlayMode: stickOverlayMode,
     serialSupported: telemetryControl.serialSupported,
     mediaSupported: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),
-    getVideoMetrics,
-    serialError: error,
-    videoError,
+    serialErrorCode: telemetryControl.errorCode,
+    videoErrorCode,
+    parserStats: telemetryControl.parserStats,
+    captureSettings,
     errorSurface: analyticsErrorSurface,
   });
   const analyticsStatusLabel = analytics.status.state === "enabled"
@@ -372,7 +385,7 @@ export function FlightDashboard() {
         ? "本机已永久关闭并清除了令牌与待发送队列。"
         : analytics.status.state === "waiting_token"
           ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
-          : "只发送白名单内的伪名化运行事件；视频、原始 RC、代号与备注不会上传。";
+          : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
   return (
     <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
       <header className="topbar">
@@ -441,13 +454,27 @@ export function FlightDashboard() {
         </aside>
       )}
 
+      {version.updateAvailable ? (
+        <aside className="update-banner" role="status">
+          <div>
+            <b>发现新版本 {version.latest?.version}</b>
+            <span>{trainingSession.isRecording ? "本次记录结束后刷新" : "可手动刷新以使用最新版本"}</span>
+          </div>
+          {!trainingSession.isRecording ? (
+            <button className="mini-button mini-button--active" type="button" onClick={() => window.location.reload()}>
+              刷新更新
+            </button>
+          ) : null}
+        </aside>
+      ) : null}
+
       <div className="workspace-grid">
         <section className="video-console">
           <div className="section-bar">
             <div>
               <span className={`live-dot ${videoState === "live" ? "is-live" : ""}`} />
               <b>HDMI IN / MAIN FEED</b>
-              <small>{videoLabel}</small>
+              <small>{videoFormatLabel ? `${videoLabel} · ${videoFormatLabel}` : videoLabel}</small>
             </div>
             <div className="video-controls">
               <label>
@@ -625,6 +652,11 @@ export function FlightDashboard() {
                 <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
               </div>
               <p>只读 MSP_RC + MSP_ANALOG；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
+              <p>
+                解析质量：{parserQualityCopy[telemetryControl.parserQuality]} · 有效帧 {telemetryControl.parserStats.checksumValidFrames.toLocaleString()}
+                {" · "}校验错误 {telemetryControl.parserStats.checksumErrors.toLocaleString()}
+                {" · "}协议错误 {telemetryControl.parserStats.protocolErrors.toLocaleString()}
+              </p>
             </section>
             <section className="link-card">
               <div>
@@ -881,6 +913,7 @@ export function FlightDashboard() {
       <footer className="dashboard-footer">
         <p><i className={`footer-light footer-light--${connection}`} />{source === "demo" ? "当前为演示数据，未连接真实飞控" : bridgeIsLive ? "只读 MSP 轮询，不写入 Betaflight 配置" : "桥接飞控当前没有实时 RC 数据"}</p>
         <p>地面桥 MSP RSSI 字段 ≠ 机上 ELRS LQ；地面桥电压 ≠ 飞行器电池</p>
+        <p>FPVHelper v{version.currentVersion}</p>
       </footer>
     </main>
   );
