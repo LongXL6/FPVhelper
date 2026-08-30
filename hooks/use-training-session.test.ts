@@ -1,5 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { TrainingSession } from "../lib/training-session";
+import { requestUnconfirmedTrainingSessionDownload } from "./training-session-export-feedback";
 import { canStartTrainingSession } from "./training-session-start-guard";
+
+const READY_TO_START = {
+  storageReady: true,
+  storageError: null,
+  storageIntegrity: {
+    readableDraftCount: 0,
+    readableSessionCount: 1,
+    quarantinedDraftCount: 0,
+    quarantinedSessionCount: 0,
+  },
+  hasPendingSave: false,
+  isRecording: false,
+  isStarting: false,
+  isFinishing: false,
+  source: "serial" as const,
+  connection: "live" as const,
+  athleteCode: "PILOT-07",
+};
 
 describe("useTrainingSession start guard", () => {
   it("keeps new training available when unreadable records are quarantined", () => {
@@ -40,5 +60,33 @@ describe("useTrainingSession start guard", () => {
       connection: "live",
       athleteCode: "PILOT-07",
     })).toBe(false);
+  });
+
+  it("keeps two consecutive sessions startable after unconfirmed automatic downloads", () => {
+    const requestDownload = vi.fn(() => 256);
+    const sessions = [
+      { id: "session-one" } as TrainingSession,
+      { id: "session-two" } as TrainingSession,
+    ];
+
+    for (const session of sessions) {
+      const feedback = requestUnconfirmedTrainingSessionDownload(session, requestDownload);
+
+      expect(feedback.notice).toContain("已请求下载但未确认落盘");
+      expect(feedback.warning).toBeNull();
+      expect(canStartTrainingSession(READY_TO_START)).toBe(true);
+    }
+    expect(requestDownload).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a stored session startable when the anchor download request itself fails", () => {
+    const feedback = requestUnconfirmedTrainingSessionDownload(
+      { id: "session-download-failed" } as TrainingSession,
+      () => { throw new Error("downloads blocked"); },
+    );
+
+    expect(feedback.notice).toBeNull();
+    expect(feedback.warning).toContain("Session 已安全保存在本机 IndexedDB");
+    expect(canStartTrainingSession(READY_TO_START)).toBe(true);
   });
 });

@@ -12,10 +12,10 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 - Phase 1 是 **19 个事件名**；“17”只可表示把 `telemetry_stalled/resumed` 与 `page_hidden/visible` 各视为一个事件族后的 17 族。
 - `workstation_id` 可被线下台账重新关联，是假名化 ID，不是匿名 ID。
 - 事件永不含原始 `error.message`、stack、视频、原始 RC、设备名、串口名、原始 UA 或选手代号；历史代码骨架中的 raw error 字段已在本版删除。
-- A.8 是唯一实施 migration；3.8 的最小 SQL 只保留为历史说明，不执行，也不得改为 FPVSuperApp 共用项目。
+- 唯一可执行、可部署的数据库来源是 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)；本文不保留 SQL 副本，避免规格与实际 migration 漂移。
 - 当前不做 301/308：`race.fpvsuperapp.com` 是客户生产入口，`helper.longxl.com` 是内部完整验证且强制非生产。未来停用内部入口时才另行审批 308。
 - 人工 Marker 只定位 DVR 复盘时刻；视觉计圈属于独立实验，见 [`../vision-lap-experiment.md`](../vision-lap-experiment.md)。
-- 工作站与俱乐部的映射只留在线下台账，不进入本数据库，也不得通过可 join 表重建；A.8 已移除旧 `app_workstations` 草案。
+- 工作站与俱乐部的映射只留在线下台账，不进入本数据库，也不得通过可 join 表重建；实际 migration 不包含旧 `app_workstations` 草案。
 - 本文不证明 Supabase、Vercel、域名、客户书面确认或生产统计已经完成。
 
 ---
@@ -185,7 +185,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `hooks/use-analytics-lifecycle.ts` | 新建 | `app_opened`（含微信/浏览器检测）、`page_hidden/visible`、`page_unloaded`、`js_error`；`beforeunload` 在录制中或有未导出记录时 `preventDefault` |
 | `app/api/events/route.ts` | 新建 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；独立项目 secret key 写入；每 token + 工作站在数据库内原子限流，超限返回 429 + `Retry-After`，成功返回 204 |
 | `lib/supabase/analytics-admin.ts` | 新建 | `import "server-only"` 的独立分析项目 secret-key 客户端，只被 Route Handler 引用 |
-| `supabase/migrations/0001_app_events.sql` | 新建 | 见下方 SQL |
+| `supabase/migrations/20260830192551_app_events_analytics.sql` | 已实现 | 唯一可执行、可部署的数据库 migration；部署与审查都直接读取该文件 |
 | `app/error.tsx` | 新建 | Next 16 错误边界（`{ error, retry }`），上报 `js_error` |
 | `next.config.ts` | 修改 | `env.NEXT_PUBLIC_APP_VERSION`、`NEXT_PUBLIC_ANALYTICS_ENABLED`（仅 `VERCEL_ENV === "production"`） |
 | `.env.example` | 修改 | 独立分析项目只写 `FPVHELPER_ANALYTICS_SUPABASE_URL=` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY=`（值留空，仅 Vercel 服务端）；不回退通用/旧项目变量；统计开关与 ingest token 均不写真实值 |
@@ -199,69 +199,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `README.md` | 修改 | 「离开本机的数据」表；「使用统计」小节（采什么、不采什么、如何关闭） |
 | `CLAUDE.md` | 修改 | 项目用途 / 技术栈 / 两个域名哪个正式 / Supabase 项目归属与 migrations 位置 / 凭证只在 Vercel 与 `.env.local` / 禁止事项（不引入第三方分析 SDK；不在本仓库改共用 Supabase） |
 
-**Supabase SQL 历史最小草案（不得执行）**：仅用于解释表形状。唯一实施 migration 是 A.8，且只用于新建的独立 FPVHelper Supabase。
-
-```sql
--- supabase/migrations/0001_app_events.sql
-create table public.app_events (
-  id                  uuid primary key,                 -- 客户端生成，重试幂等
-  workstation_id      uuid not null,
-  visit_id     uuid not null,
-  recording_id          uuid,                             -- 训练 Session id，故意不加外键
-  event_name          text not null
-                      check (event_name ~ '^[a-z][a-z0-9_]{2,63}$'),
-  occurred_at         timestamptz not null,             -- 客户端墙钟
-  received_at         timestamptz not null default now(),
-  client_monotonic_ms double precision,
-  build               text not null,
-  hostname            text,
-  vercel_env          text not null default 'production',
-  props               jsonb not null default '{}'::jsonb,
-  constraint app_events_props_object check (jsonb_typeof(props) = 'object'),
-  constraint app_events_props_size   check (pg_column_size(props) < 4096)
-);
-
-create index app_events_name_time_idx
-  on public.app_events (event_name, occurred_at desc);
-create index app_events_workstation_time_idx
-  on public.app_events (workstation_id, occurred_at desc);
-create index app_events_session_idx
-  on public.app_events (recording_id) where recording_id is not null;
-create index app_events_received_idx
-  on public.app_events (received_at);                   -- 供保留期清理
-
--- RLS：开启但不给 anon / authenticated 任何策略；只有 service_role（仅服务端持有）能读写
-alter table public.app_events enable row level security;
-revoke all on table public.app_events from anon, authenticated;
-
--- 保留期 90 天（与报价单附件一致）
-create or replace function public.purge_old_app_events()
-returns void language sql security definer set search_path = public as $$
-  delete from public.app_events where received_at < now() - interval '90 days';
-$$;
--- 开启 pg_cron 后：
--- select cron.schedule('purge_app_events', '15 3 * * *', $$select public.purge_old_app_events()$$);
-
--- D1 看板：按工作站、按周的验收漏斗
-create or replace view public.weekly_workstation_funnel as
-select
-  date_trunc('week', occurred_at at time zone 'Asia/Shanghai')::date        as week_start,
-  workstation_id,
-  count(*) filter (where event_name = 'app_opened')                          as opens,
-  count(distinct recording_id) filter (where event_name = 'recording_started'
-        and props->>'connection_at_start' = 'live')                          as attempts,
-  count(distinct recording_id) filter (where event_name = 'recording_stopped'
-        and (props->>'valid')::boolean)                                      as valid_sessions,
-  count(distinct recording_id) filter (where event_name = 'session_exported')  as exported,
-  count(*) filter (where event_name = 'session_lost')                        as lost,
-  count(*) filter (where event_name = 'serial_connect_result'
-        and not (props->>'ok')::boolean)                                     as serial_failures,
-  count(*) filter (where event_name = 'telemetry_stalled')                   as stalls
-from public.app_events
-where vercel_env = 'production'
-group by 1, 2
-order by 1 desc, 2;
-```
+**Supabase migration 来源**：不要从本文复制或执行 SQL。新建的独立 FPVHelper Supabase 只部署并审查 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)；历史最小草案已删除。
 
 **工作量**（人日）
 
@@ -597,156 +535,11 @@ export async function POST(request: Request) {
 // }
 ```
 
-### A.8 唯一实施 migration
+### A.8 migration 部署来源（不含 SQL 副本）
 
-本节是唯一可执行 SQL 规格；3.8 的最小草案不得执行。它包含事件名白名单表（外键约束）、未来时间戳 guard 触发器、BRIN 索引、`security_invoker` 视图和按钮使用视图。工作站与俱乐部映射只留在线下台账，不进入本数据库。
+唯一可执行、可部署、可审查的数据库来源是 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)。本附录不再复制表结构、RLS、权限、清理函数或看板视图 SQL；任何数据库变更必须直接修改并验证该 migration（或新增由 Supabase CLI 创建的后续 migration），不得从本文恢复旧 A.8 草案。
 
-```sql
--- supabase/migrations/0001_app_events.sql —— 完整版（analytics-infra 草案改名 + 与 3.4 信封对齐）
--- 只有 /api/events Route Handler（service role）写入；浏览器永远不直连这张表。
--- 前置：本仓库 `supabase init` 后放入 supabase/migrations/，用 `supabase db push` 或 SQL Editor 执行。
-
--- 1. 事件名白名单。新增事件 = 这里 INSERT 一行 + lib/analytics/events.ts 加同名字符串。
-create table if not exists public.app_event_names (
-  name        text primary key check (name ~ '^[a-z][a-z0-9_]{2,63}$'),
-  phase       smallint not null default 1,
-  created_at  timestamptz not null default now()
-);
-insert into public.app_event_names (name, phase) values
-  ('app_opened', 1),
-  ('video_connect_result', 1),
-  ('video_lost', 1),
-  ('serial_connect_result', 1),
-  ('serial_lost', 1),
-  ('telemetry_stalled', 1),
-  ('telemetry_resumed', 1),
-  ('demo_returned', 1),
-  ('recording_started', 1),
-  ('recording_stopped', 1),
-  ('session_exported', 1),
-  ('session_lost', 1),
-  ('page_hidden', 1),
-  ('page_visible', 1),
-  ('page_unloaded', 1),
-  ('error_shown', 1),
-  ('js_error', 1),
-  ('overlay_mode_changed', 1),
-  ('overlay_layout_reset', 1),
-  ('video_devices_enumerated', 2),
-  ('video_device_selected', 2),
-  ('video_connect_clicked', 2),
-  ('video_disconnect_clicked', 2),
-  ('serial_connect_clicked', 2),
-  ('serial_port_selected', 2),
-  ('serial_frame_stats', 2),
-  ('link_lost', 2),
-  ('link_recovered', 2),
-  ('page_heartbeat', 2),
-  ('overlay_visibility_toggled', 2),
-  ('overlay_dragged', 2),
-  ('overlay_resized', 2),
-  ('athlete_selected', 2),
-  ('marker_added', 2),
-  ('session_summary_viewed', 2),
-  ('report_generated', 2),
-  ('gamepad_detected', 2),
-  ('route_navigated', 2)
-on conflict (name) do nothing;
-
--- 2. 事件表（列与 3.4 事件信封一一对应）
-create table if not exists public.app_events (
-  event_id        uuid primary key,                                 -- 客户端生成；幂等 upsert 的冲突键
-  received_at     timestamptz not null default now(),
-  client_ts       timestamptz not null check (client_ts >= timestamptz '2026-01-01 00:00:00+00'),
-  mono_ms         double precision check (mono_ms is null or mono_ms >= 0),
-  seq             integer not null check (seq >= 0),
-  workstation_id  uuid not null,
-  visit_id        uuid not null,
-  recording_id    uuid,                                             -- 训练 Session id，故意不加外键
-  event_name      text not null references public.app_event_names (name),
-  props           jsonb not null default '{}'::jsonb
-                  check (jsonb_typeof(props) = 'object' and pg_column_size(props) <= 4096),
-  build           text check (build is null or length(build) <= 40),
-  hostname        text check (hostname is null or length(hostname) <= 80),
-  vercel_env      text not null default 'production',
-  country         text check (country is null or length(country) <= 2),   -- 只取 x-vercel-ip-country，不存 IP / UA
-  clock_offset_ms integer
-);
-
--- CHECK 里不该用 now()（非 immutable），未来时间戳用触发器拦；同时强制 received_at 由服务端决定。
-create or replace function public.app_events_guard()
-returns trigger language plpgsql set search_path = '' as $$
-begin
-  if new.client_ts > now() + interval '10 minutes' then
-    raise exception 'client_ts is in the future' using errcode = 'check_violation';
-  end if;
-  new.received_at := now();
-  return new;
-end
-$$;
-drop trigger if exists app_events_guard on public.app_events;
-create trigger app_events_guard before insert on public.app_events
-  for each row execute function public.app_events_guard();
-
--- 3. 索引：工作站时间线、事件趋势、visit 内漏斗、录制关联、保留期扫描
-create index if not exists app_events_workstation_ts_idx on public.app_events (workstation_id, client_ts desc);
-create index if not exists app_events_name_ts_idx        on public.app_events (event_name, client_ts desc);
-create index if not exists app_events_visit_seq_idx      on public.app_events (visit_id, seq);
-create index if not exists app_events_recording_idx      on public.app_events (recording_id) where recording_id is not null;
-create index if not exists app_events_received_brin      on public.app_events using brin (received_at);
-
--- 4. 锁死：RLS 开启且零策略 → anon / authenticated 一律拒绝；表级权限也收回（纵深防御）。service_role 绕过 RLS。
-alter table public.app_events      enable row level security;
-alter table public.app_event_names enable row level security;
-revoke all on public.app_events      from anon, authenticated;
-revoke all on public.app_event_names from anon, authenticated;
-grant select, insert on public.app_events      to service_role;
-grant select         on public.app_event_names to service_role;
--- （备用，未启用）若将来浏览器要用 publishable key 直写：只放开 insert，且时间窗受限。
--- grant insert on public.app_events to anon;
--- create policy app_events_anon_insert on public.app_events for insert to anon
---   with check (client_ts between now() - interval '7 days' and now() + interval '10 minutes');
-
--- 5. 保留期 90 天（与报价单附件一致）；开启 pg_cron 后每日执行
-create or replace function public.purge_old_app_events()
-returns void language sql security definer set search_path = public as $$
-  delete from public.app_events where received_at < now() - interval '90 days';
-$$;
--- select cron.schedule('purge_app_events', '15 3 * * *', $$select public.purge_old_app_events()$$);
-
--- 6. 看板视图（security_invoker 保证不绕过上面的权限；在 Supabase SQL Editor 里查）
-create or replace view public.weekly_workstation_funnel with (security_invoker = true) as
-select
-  date_trunc('week', e.client_ts at time zone 'Asia/Shanghai')::date              as week_start,
-  e.workstation_id,
-  count(*) filter (where e.event_name = 'app_opened')                             as opens,
-  count(distinct e.recording_id) filter (where e.event_name = 'recording_started'
-        and e.props->>'connection_at_start' = 'live')                             as attempts,
-  count(distinct e.recording_id) filter (where e.event_name = 'recording_stopped'
-        and (e.props->>'valid')::boolean)                                         as valid_sessions,
-  count(distinct e.recording_id) filter (where e.event_name = 'session_exported') as exported,
-  count(*) filter (where e.event_name = 'session_lost')                           as lost,
-  count(*) filter (where e.event_name = 'serial_connect_result'
-        and not (e.props->>'ok')::boolean)                                        as serial_failures,
-  count(*) filter (where e.event_name = 'telemetry_stalled')                      as stalls,
-  count(*) filter (where e.event_name = 'js_error')                               as js_errors
-from public.app_events e
-where e.vercel_env = 'production'
-group by 1, 2
-order by 1 desc, 2;
-
-create or replace view public.app_events_button_usage with (security_invoker = true) as
-select event_name, count(*) as clicks, count(distinct workstation_id) as workstations,
-       min(client_ts) as first_seen, max(client_ts) as last_seen
-from public.app_events
-where event_name in ('recording_started','session_exported','demo_returned','overlay_mode_changed','overlay_layout_reset',
-                     'video_connect_clicked','video_disconnect_clicked','serial_connect_clicked','overlay_visibility_toggled')
-group by 1;
-
-revoke all on public.weekly_workstation_funnel  from anon, authenticated;
-revoke all on public.app_events_button_usage    from anon, authenticated;
-
-```
+该 migration 当前覆盖事件写入白名单与校验、服务端 ingest token/配额、90 天保留清理、私有分析台账及周报视图。这里的摘要只用于导航，不构成部署指令；最终行为始终以 migration 文件及其自动化数据库测试为准。
 
 ### A.9 analytics-infra 提出、需要创始人回答的问题（与母文档第 7 章去重后的补充）
 

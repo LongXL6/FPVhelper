@@ -9,6 +9,7 @@ import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
 } from "@/components/training-storage-integrity-notice";
+import { TrainingExportNotice } from "@/components/training-export-notice";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
@@ -460,6 +461,11 @@ export function FlightDashboard() {
           ) : null}
         </aside>
       )}
+
+      <TrainingExportNotice
+        notice={trainingSession.exportNotice}
+        warning={trainingSession.exportWarning}
+      />
 
       {version.updateAvailable ? (
         <aside className="update-banner" role="status">

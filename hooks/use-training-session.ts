@@ -21,7 +21,6 @@ import {
   type TrainingSessionMarkerKind,
 } from "@/lib/training-session";
 import {
-  beginUnconfirmedTrainingSessionDownload,
   getBrowserTrainingSessionSaveFilePicker,
   saveTrainingSessionWithPicker,
 } from "@/lib/training-session-export";
@@ -31,6 +30,7 @@ import {
   shouldWarnBeforeTrainingExit,
 } from "@/lib/training-session-summary";
 import { canStartTrainingSession } from "./training-session-start-guard";
+import { requestUnconfirmedTrainingSessionDownload } from "./training-session-export-feedback";
 
 const DRAFT_PERSIST_INTERVAL_MS = 5_000;
 
@@ -63,6 +63,8 @@ interface TrainingSessionController {
   todaySessions: TrainingSession[];
   storageReady: boolean;
   storageError: string | null;
+  exportNotice: string | null;
+  exportWarning: string | null;
   storageIntegrity: TrainingSessionStorageIntegrity;
   recentSessionCount: number;
   unexportedValidCount: number;
@@ -106,6 +108,8 @@ export function useTrainingSession({
   const [todaySessions, setTodaySessions] = useState<TrainingSession[]>([]);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
   const [storageIntegrity, setStorageIntegrity] = useState<TrainingSessionStorageIntegrity>(
     EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
   );
@@ -155,20 +159,37 @@ export function useTrainingSession({
     const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
     const picker = getBrowserTrainingSessionSaveFilePicker();
     if (!picker) {
-      beginUnconfirmedTrainingSessionDownload(session);
-      throw new Error("浏览器已发起下载，但无法确认文件已落盘；记录仍保持未导出状态");
+      const feedback = requestUnconfirmedTrainingSessionDownload(session);
+      setExportNotice(feedback.notice);
+      setExportWarning(feedback.warning);
+      return;
     }
-    const bytes = await saveTrainingSessionWithPicker(exportedSession, picker);
-    await store.saveSession(exportedSession);
-    await refreshSessions(store);
-    setLastExport({
-      receiptId: `${exportedSession.id}:${exportedSession.exportCount}`,
-      session: exportedSession,
-      method,
-      bytes,
-      exportedAtEpochMs,
-    });
-    setStorageError(null);
+
+    let bytes: number;
+    try {
+      bytes = await saveTrainingSessionWithPicker(exportedSession, picker);
+    } catch (exportError) {
+      setExportNotice(null);
+      setExportWarning(`文件保存未完成：${storageErrorMessage(exportError)}；Session 仍安全保存在本机且保持未导出状态。`);
+      return;
+    }
+
+    try {
+      await store.saveSession(exportedSession);
+      await refreshSessions(store);
+      setLastExport({
+        receiptId: `${exportedSession.id}:${exportedSession.exportCount}`,
+        session: exportedSession,
+        method,
+        bytes,
+        exportedAtEpochMs,
+      });
+      setStorageError(null);
+      setExportWarning(null);
+      setExportNotice("已确认 JSON 文件写入完成；本机记录已标记为已导出。");
+    } catch (saveError) {
+      setStorageError(`JSON 文件已写入，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+    }
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -281,12 +302,9 @@ export function useTrainingSession({
     }
 
     if (sessionStored && autoExport) {
-      try {
-        beginUnconfirmedTrainingSessionDownload(session);
-        setStorageError("自动下载已发起，但浏览器无法确认文件已落盘；记录仍标为待导出，请手动保存确认");
-      } catch (exportError) {
-        setStorageError(`自动下载失败：${storageErrorMessage(exportError)}；Session 已在本机，可手动导出`);
-      }
+      const feedback = requestUnconfirmedTrainingSessionDownload(session);
+      setExportNotice(feedback.notice);
+      setExportWarning(feedback.warning);
     }
 
     finishingRef.current = false;
@@ -410,11 +428,7 @@ export function useTrainingSession({
     const store = storeRef.current;
     const session = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
     if (!store || !session) return;
-    try {
-      await exportStoredSession(session, store, "download");
-    } catch (exportError) {
-      setStorageError(`导出状态尚未保存：${storageErrorMessage(exportError)}；可以再次导出`);
-    }
+    await exportStoredSession(session, store, "download");
   }, [exportStoredSession]);
 
   return {
@@ -430,6 +444,8 @@ export function useTrainingSession({
     todaySessions,
     storageReady,
     storageError,
+    exportNotice,
+    exportWarning,
     storageIntegrity,
     recentSessionCount: sessions.length,
     unexportedValidCount,
