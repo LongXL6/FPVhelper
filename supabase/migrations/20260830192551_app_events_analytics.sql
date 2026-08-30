@@ -30,6 +30,106 @@ alter table public.analytics_ingest_tokens enable row level security;
 revoke all on table public.analytics_ingest_tokens from public, anon, authenticated, service_role;
 grant select on table public.analytics_ingest_tokens to service_role;
 
+create table private.analytics_ingest_quota_windows (
+  token_id uuid not null references public.analytics_ingest_tokens(id) on delete cascade,
+  workstation_id uuid not null,
+  window_started_at timestamptz not null,
+  request_count integer not null
+    check (request_count between 1 and 120),
+  event_count integer not null
+    check (event_count between 1 and 1000),
+  primary key (token_id, workstation_id, window_started_at)
+);
+
+comment on table private.analytics_ingest_quota_windows is
+  'Short-lived fixed-window counters for the event-ingest endpoint. Stores token row IDs, never plaintext tokens or network identifiers.';
+
+alter table private.analytics_ingest_quota_windows enable row level security;
+revoke all on table private.analytics_ingest_quota_windows from public, anon, authenticated, service_role;
+grant usage on schema private to service_role;
+grant select, insert, update on table private.analytics_ingest_quota_windows to service_role;
+
+create or replace function public.authorize_and_consume_analytics_quota(
+  p_token_hash text,
+  p_workstation_id uuid,
+  p_event_count integer
+)
+returns table (
+  authorized boolean,
+  allowed boolean,
+  retry_after_seconds integer
+)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  quota_now timestamptz := clock_timestamp();
+  quota_window timestamptz := date_trunc('minute', quota_now);
+  quota_token_id uuid;
+  quota_reserved boolean;
+begin
+  if p_token_hash !~ '^[0-9a-f]{64}$' or p_event_count not between 1 and 50 then
+    raise exception 'invalid analytics quota input' using errcode = '22023';
+  end if;
+
+  select id
+  into quota_token_id
+  from public.analytics_ingest_tokens
+  where token_hash = p_token_hash
+    and workstation_id = p_workstation_id
+    and purpose = 'event_ingest'
+    and revoked_at is null
+    and (expires_at is null or expires_at > quota_now);
+
+  if quota_token_id is null then
+    return query select false, false, 0;
+    return;
+  end if;
+
+  insert into private.analytics_ingest_quota_windows (
+    token_id,
+    workstation_id,
+    window_started_at,
+    request_count,
+    event_count
+  ) values (
+    quota_token_id,
+    p_workstation_id,
+    quota_window,
+    1,
+    p_event_count
+  )
+  on conflict (token_id, workstation_id, window_started_at) do update
+  set
+    request_count = private.analytics_ingest_quota_windows.request_count + 1,
+    event_count = private.analytics_ingest_quota_windows.event_count + excluded.event_count
+  where private.analytics_ingest_quota_windows.request_count < 120
+    and private.analytics_ingest_quota_windows.event_count + excluded.event_count <= 1000
+  returning true into quota_reserved;
+
+  if coalesce(quota_reserved, false) then
+    return query select true, true, 0;
+    return;
+  end if;
+
+  return query select
+    true,
+    false,
+    greatest(
+      1,
+      ceil(extract(epoch from quota_window + interval '1 minute' - quota_now))::integer
+    );
+end;
+$$;
+
+comment on function public.authorize_and_consume_analytics_quota(text, uuid, integer) is
+  'Atomically authorizes and reserves one fixed-window request/event quota for one ingest token and workstation. Returns no token or network identifier.';
+revoke all on function public.authorize_and_consume_analytics_quota(text, uuid, integer)
+  from public, anon, authenticated;
+grant execute on function public.authorize_and_consume_analytics_quota(text, uuid, integer)
+  to service_role;
+
 create table public.app_events (
   event_id uuid primary key,
   workstation_id uuid not null,
@@ -131,6 +231,9 @@ as $$
 declare
   deleted_count bigint;
 begin
+  delete from private.analytics_ingest_quota_windows
+  where window_started_at < now() - interval '1 day';
+
   delete from public.app_events
   where received_at < now() - interval '90 days';
   get diagnostics deleted_count = row_count;

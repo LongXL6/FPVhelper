@@ -42,7 +42,7 @@ function dependencies(overrides: Partial<AnalyticsRequestDependencies> = {}) {
   const input: AnalyticsRequestDependencies = {
     allowedHostnames: new Set(["helper.example.com"]),
     now: () => NOW,
-    authorize: async () => true,
+    authorizeAndConsumeQuota: async () => ({ authorized: true, allowed: true, retryAfterSeconds: 0 }),
     insert: async (events) => { inserted.push(events); },
     ...overrides,
   };
@@ -59,8 +59,13 @@ function request(payload: string, contentType = "application/json", extraHeaders
 
 describe("POST /api/events", () => {
   it.each(["application/json", "text/plain;charset=UTF-8"])("accepts strict %s batches and returns 204", async (contentType) => {
-    let authorization: { tokenHash: string; workstationId: string } | undefined;
-    const deps = dependencies({ authorize: async (input) => { authorization = input; return true; } });
+    let authorization: { tokenHash: string; workstationId: string; eventCount: number } | undefined;
+    const deps = dependencies({
+      authorizeAndConsumeQuota: async (input) => {
+        authorization = input;
+        return { authorized: true, allowed: true, retryAfterSeconds: 0 };
+      },
+    });
     const response = await handleAnalyticsEventsRequest(
       request(body(), contentType, { "user-agent": "private-agent", "x-forwarded-for": "203.0.113.8" }),
       deps.input,
@@ -71,6 +76,7 @@ describe("POST /api/events", () => {
     expect(authorization).toEqual({
       tokenHash: createHash("sha256").update(TOKEN).digest("hex"),
       workstationId: "20000000-0000-4000-8000-000000000001",
+      eventCount: 1,
     });
     expect(deps.inserted).toHaveLength(1);
     expect(deps.inserted[0][0]).not.toHaveProperty("ingest_token");
@@ -111,11 +117,44 @@ describe("POST /api/events", () => {
     const unavailable = dependencies({ allowedHostnames: new Set() });
     expect((await handleAnalyticsEventsRequest(request(body()), unavailable.input)).status).toBe(503);
 
-    const unauthorized = dependencies({ authorize: async () => false });
+    const unauthorized = dependencies({
+      authorizeAndConsumeQuota: async () => ({ authorized: false, allowed: false, retryAfterSeconds: 0 }),
+    });
     const response = await handleAnalyticsEventsRequest(request(body()), unauthorized.input);
     expect(response.status).toBe(401);
     expect(await response.text()).toBe("");
     expect(unauthorized.inserted).toHaveLength(0);
+  });
+
+  it("returns a body-free 429 with bounded Retry-After when the atomic quota is exhausted", async () => {
+    const rateLimited = dependencies({
+      authorizeAndConsumeQuota: async () => ({ authorized: true, allowed: false, retryAfterSeconds: 42.1 }),
+    });
+    const response = await handleAnalyticsEventsRequest(request(body()), rateLimited.input);
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("43");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("");
+    expect(rateLimited.inserted).toHaveLength(0);
+  });
+
+  it("does not reflect token, workstation, IP, or user-agent data in a 429 response", async () => {
+    const rateLimited = dependencies({
+      authorizeAndConsumeQuota: async () => ({ authorized: true, allowed: false, retryAfterSeconds: 9999 }),
+    });
+    const response = await handleAnalyticsEventsRequest(
+      request(body(), "application/json", { "user-agent": "private-agent", "x-forwarded-for": "203.0.113.8" }),
+      rateLimited.input,
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("300");
+    expect([...response.headers.entries()]).toEqual([
+      ["cache-control", "no-store"],
+      ["retry-after", "300"],
+    ]);
+    expect(await response.text()).toBe("");
   });
 
   it("returns a body-free 503 without logging the token or request body", async () => {

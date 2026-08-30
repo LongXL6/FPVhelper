@@ -29,18 +29,32 @@ export interface AnalyticsInsertRow {
 
 export interface AnalyticsRequestDependencies {
   allowedHostnames: ReadonlySet<string>;
-  authorize(input: { tokenHash: string; workstationId: string }): Promise<boolean>;
+  authorizeAndConsumeQuota(input: {
+    tokenHash: string;
+    workstationId: string;
+    eventCount: number;
+  }): Promise<{
+    authorized: boolean;
+    allowed: boolean;
+    retryAfterSeconds: number;
+  }>;
   insert(events: AnalyticsInsertRow[]): Promise<void>;
   now?: () => number;
 }
 
-function response(status: number) {
+function response(status: number, extraHeaders: Record<string, string> = {}) {
   return new Response(null, {
     status,
     headers: {
       "cache-control": "no-store",
+      ...extraHeaders,
     },
   });
+}
+
+function boundedRetryAfterSeconds(value: number) {
+  if (!Number.isFinite(value)) return 5;
+  return Math.min(300, Math.max(1, Math.ceil(value)));
 }
 
 function analyticsRow(event: AnyAnalyticsEvent): AnalyticsInsertRow {
@@ -105,7 +119,17 @@ export async function handleAnalyticsEventsRequest(
     });
     const workstationId = batch.events[0].workstation_id;
     const tokenHash = createHash("sha256").update(batch.ingest_token, "utf8").digest("hex");
-    if (!await dependencies.authorize({ tokenHash, workstationId })) return response(401);
+    const admission = await dependencies.authorizeAndConsumeQuota({
+      tokenHash,
+      workstationId,
+      eventCount: batch.events.length,
+    });
+    if (!admission.authorized) return response(401);
+    if (!admission.allowed) {
+      return response(429, {
+        "retry-after": String(boundedRetryAfterSeconds(admission.retryAfterSeconds)),
+      });
+    }
     await dependencies.insert(batch.events.map(analyticsRow));
     return response(204);
   } catch (error) {

@@ -8,10 +8,16 @@ import {
 const TOKEN_A = `fpvh_ingest_${"a".repeat(43)}`;
 const TOKEN_B = `fpvh_ingest_${"b".repeat(43)}`;
 
-function createHarness(options: { search?: string; online?: boolean; statuses?: number[]; hostname?: string } = {}) {
+function createHarness(options: {
+  search?: string;
+  online?: boolean;
+  statuses?: number[];
+  responses?: Array<{ status: number; headers?: Record<string, string> }>;
+  hostname?: string;
+} = {}) {
   const values = new Map<string, string>();
   const listeners = new Map<string, Set<() => void>>();
-  const timers = new Map<number, () => void>();
+  const timers = new Map<number, { callback: () => void; delayMs: number }>();
   const requests: Array<{ input: string; init: RequestInit }> = [];
   const beacons: Array<{ input: string; body: Blob }> = [];
   let uuidIndex = 1;
@@ -19,6 +25,7 @@ function createHarness(options: { search?: string; online?: boolean; statuses?: 
   let isOnline = options.online ?? true;
   let nowMs = Date.parse("2026-08-31T00:00:00.000Z");
   const statuses = [...(options.statuses ?? [204])];
+  const responses = [...(options.responses ?? [])];
 
   const runtime = {
     storage: {
@@ -34,15 +41,16 @@ function createHarness(options: { search?: string; online?: boolean; statuses?: 
     monotonicNow: () => 1234,
     fetch: async (input: string, init: RequestInit) => {
       requests.push({ input, init });
-      return new Response(null, { status: statuses.shift() ?? 204 });
+      const configured = responses.shift();
+      return new Response(null, configured ?? { status: statuses.shift() ?? 204 });
     },
     sendBeacon: (input: string, body: Blob) => {
       beacons.push({ input, body });
       return true;
     },
-    setTimeout: (callback: () => void) => {
+    setTimeout: (callback: () => void, delayMs: number) => {
       const id = timerIndex++;
-      timers.set(id, callback);
+      timers.set(id, { callback, delayMs });
       return id;
     },
     clearTimeout: (id: number) => { timers.delete(id); },
@@ -67,10 +75,13 @@ function createHarness(options: { search?: string; online?: boolean; statuses?: 
     advanceNow(deltaMs: number) { nowMs += deltaMs; },
     emit(type: "online" | "pagehide") { listeners.get(type)?.forEach((listener) => listener()); },
     runNextTimer() {
-      const entry = timers.entries().next().value as [number, () => void] | undefined;
+      const entry = timers.entries().next().value as [number, { callback: () => void; delayMs: number }] | undefined;
       if (!entry) return;
       timers.delete(entry[0]);
-      entry[1]();
+      entry[1].callback();
+    },
+    nextTimerDelay() {
+      return timers.values().next().value?.delayMs as number | undefined;
     },
   };
 }
@@ -244,6 +255,53 @@ describe("analytics client privacy and delivery", () => {
     expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
     expect(harness.requests).toHaveLength(requestCountAfterFailure + 1);
     unsubscribe();
+  });
+
+  it("retains a rate-limited batch and obeys Retry-After before replaying it", async () => {
+    const harness = createHarness({ responses: [
+      { status: 429, headers: { "retry-after": "30" } },
+      { status: 204 },
+    ] });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    client.init();
+    client.track("overlay_layout_reset", overlayProps());
+
+    expect(await client.flush()).toBe(false);
+    expect(client.getQueueLength()).toBe(1);
+    expect(harness.nextTimerDelay()).toBe(30_000);
+
+    harness.advanceNow(29_999);
+    expect(await client.flush()).toBe(false);
+    expect(harness.requests).toHaveLength(1);
+    expect(harness.nextTimerDelay()).toBe(1);
+
+    harness.advanceNow(1);
+    harness.runNextTimer();
+    await settle();
+    expect(harness.requests).toHaveLength(2);
+    expect(client.getQueueLength()).toBe(0);
+  });
+
+  it("uses bounded exponential backoff for retryable server failures", async () => {
+    const harness = createHarness({ statuses: [503, 503, 204] });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    client.init();
+    client.track("overlay_layout_reset", overlayProps());
+
+    expect(await client.flush()).toBe(false);
+    expect(harness.nextTimerDelay()).toBe(5_000);
+    harness.advanceNow(5_000);
+    harness.runNextTimer();
+    await settle();
+    expect(harness.nextTimerDelay()).toBe(10_000);
+    harness.advanceNow(10_000);
+    harness.runNextTimer();
+    await settle();
+    expect(client.getQueueLength()).toBe(0);
   });
 
   it("clear token and opt-out both delete the token, queue, and listeners", () => {

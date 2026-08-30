@@ -20,6 +20,8 @@ const MAX_QUEUE_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const FLUSH_SIZE = 20;
 const MAX_BATCH_BYTES = 32 * 1_024;
 const FLUSH_INTERVAL_MS = 10_000;
+const INITIAL_BACKOFF_MS = 5_000;
+const MAX_BACKOFF_MS = 5 * 60 * 1_000;
 const DROP_RESPONSE_STATUSES = new Set([400, 413, 415, 422]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const CUSTOMER_ANALYTICS_HOSTNAME = "race.fpvsuperapp.com";
@@ -143,6 +145,16 @@ function analyticsBuildIdentifier(options: AnalyticsClientOptions) {
   return sanitized && /^[a-zA-Z0-9]/.test(sanitized) ? sanitized : "unknown";
 }
 
+function retryAfterMilliseconds(value: string | null, now: number) {
+  if (!value) return null;
+  const seconds = Number(value);
+  const requested = Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1_000
+    : Date.parse(value) - now;
+  if (!Number.isFinite(requested) || requested < 0) return null;
+  return Math.min(MAX_BACKOFF_MS, Math.max(1_000, Math.ceil(requested)));
+}
+
 export function isCustomerAnalyticsHostname(hostname: string) {
   return hostname.trim().toLowerCase() === CUSTOMER_ANALYTICS_HOSTNAME;
 }
@@ -175,6 +187,8 @@ export class AnalyticsClient {
   private authorizationBlocked = false;
   private installedToken: string | null = null;
   private readonly statusListeners = new Set<(status: AnalyticsLocalStatus) => void>();
+  private backoffMs = 0;
+  private retryNotBefore = 0;
 
   private readonly handleOnline = () => {
     void this.flush();
@@ -279,6 +293,11 @@ export class AnalyticsClient {
     if (!this.active || !runtime || this.authorizationBlocked) return false;
     this.pruneQueue();
     if (this.queue.length === 0) return false;
+    const retryDelay = this.retryNotBefore - runtime.now();
+    if (retryDelay > 0) {
+      this.scheduleFlush(retryDelay);
+      return false;
+    }
     const events = this.takeBatch();
     // sendBeacon cannot set Authorization headers. The purpose-limited workstation
     // ingest token therefore travels in the body, is never an event property, and
@@ -309,6 +328,7 @@ export class AnalyticsClient {
         const sentIds = new Set(events.map((event) => event.event_id));
         this.queue = this.queue.filter((event) => !sentIds.has(event.event_id));
         this.persistQueue();
+        this.resetBackoff();
       }
       if (response.status === 401 || response.status === 403) {
         this.authorizationBlocked = true;
@@ -318,13 +338,16 @@ export class AnalyticsClient {
         if (this.timer !== null) runtime.clearTimeout(this.timer);
         this.timer = null;
         this.notifyStatusChanged();
+      } else if (!response.ok && !DROP_RESPONSE_STATUSES.has(response.status)) {
+        this.applyBackoff(retryAfterMilliseconds(response.headers.get("retry-after"), runtime.now()));
       }
       return response.ok;
     } catch {
+      this.applyBackoff(null);
       return false;
     } finally {
       this.inflight = false;
-      if (!this.authorizationBlocked) this.scheduleFlush();
+      if (!this.authorizationBlocked) this.scheduleFlush(this.backoffMs || undefined);
     }
   }
 
@@ -340,6 +363,7 @@ export class AnalyticsClient {
     ) return false;
     this.installedToken = token;
     this.authorizationBlocked = false;
+    this.resetBackoff();
     if (!this.active) {
       if (!this.init()) {
         safeRemove(runtime.storage, TOKEN_KEY);
@@ -363,6 +387,7 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.queue = [];
     this.authorizationBlocked = false;
+    this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
   }
@@ -377,6 +402,7 @@ export class AnalyticsClient {
     this.installedToken = "";
     this.ingestToken = "";
     this.queue = [];
+    this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
   }
@@ -396,6 +422,7 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.queue = [];
     this.authorizationBlocked = false;
+    this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
     return true;
@@ -484,12 +511,28 @@ export class AnalyticsClient {
     return events.length > 0 ? events : this.queue.slice(0, 1);
   }
 
-  private scheduleFlush() {
+  private applyBackoff(retryAfterMs: number | null) {
+    if (!this.runtime) return;
+    this.backoffMs = retryAfterMs ?? Math.min(
+      this.backoffMs ? this.backoffMs * 2 : INITIAL_BACKOFF_MS,
+      MAX_BACKOFF_MS,
+    );
+    this.retryNotBefore = this.runtime.now() + this.backoffMs;
+  }
+
+  private resetBackoff() {
+    this.backoffMs = 0;
+    this.retryNotBefore = 0;
+  }
+
+  private scheduleFlush(delayMs = FLUSH_INTERVAL_MS) {
     if (!this.runtime || !this.active || this.authorizationBlocked) return;
     if (this.timer !== null) this.runtime.clearTimeout(this.timer);
+    const retryDelay = Math.max(0, this.retryNotBefore - this.runtime.now());
     this.timer = this.runtime.setTimeout(() => {
+      this.timer = null;
       void this.flush();
-    }, FLUSH_INTERVAL_MS);
+    }, Math.max(delayMs, retryDelay));
   }
 
   private notifyStatusChanged() {

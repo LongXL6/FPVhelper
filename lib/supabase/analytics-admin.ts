@@ -2,23 +2,15 @@ import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { AnalyticsInsertRow } from "@/lib/analytics/server";
+import { readAnalyticsAdminConfig } from "./analytics-admin-config";
 
 let analyticsAdminClient: SupabaseClient | null = null;
 
-function analyticsAdminConfig() {
-  const url = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL)?.trim();
-  const secretKey = process.env.SUPABASE_SECRET_KEY?.trim();
-  const legacyServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  const key = secretKey || legacyServiceRoleKey;
-  if (!url || !key) return null;
-  return { url, key };
-}
-
 function getAnalyticsAdminClient() {
   if (analyticsAdminClient) return analyticsAdminClient;
-  const config = analyticsAdminConfig();
+  const config = readAnalyticsAdminConfig();
   if (!config) return null;
-  analyticsAdminClient = createClient(config.url, config.key, {
+  analyticsAdminClient = createClient(config.url, config.secretKey, {
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -37,22 +29,40 @@ export function analyticsAllowedHostnames() {
   );
 }
 
-export async function authorizeAnalyticsIngest(input: { tokenHash: string; workstationId: string }) {
+export interface AnalyticsIngestAdmission {
+  authorized: boolean;
+  allowed: boolean;
+  retryAfterSeconds: number;
+}
+
+export async function authorizeAndConsumeAnalyticsQuota(input: {
+  tokenHash: string;
+  workstationId: string;
+  eventCount: number;
+}): Promise<AnalyticsIngestAdmission> {
   const client = getAnalyticsAdminClient();
   if (!client) throw new Error("Analytics storage is not configured");
 
   const { data, error } = await client
-    .from("analytics_ingest_tokens")
-    .select("workstation_id, purpose, revoked_at, expires_at")
-    .eq("token_hash", input.tokenHash)
-    .eq("workstation_id", input.workstationId)
-    .eq("purpose", "event_ingest")
-    .is("revoked_at", null)
-    .maybeSingle();
+    .rpc("authorize_and_consume_analytics_quota", {
+      p_token_hash: input.tokenHash,
+      p_workstation_id: input.workstationId,
+      p_event_count: input.eventCount,
+    });
 
-  if (error) throw new Error("Analytics token lookup failed");
-  if (!data) return false;
-  return data.expires_at === null || Date.parse(data.expires_at) > Date.now();
+  if (error) throw new Error("Analytics admission check failed");
+  const result = Array.isArray(data) ? data[0] : data;
+  if (
+    !result
+    || typeof result.authorized !== "boolean"
+    || typeof result.allowed !== "boolean"
+    || !Number.isSafeInteger(result.retry_after_seconds)
+  ) throw new Error("Analytics admission response was invalid");
+  return {
+    authorized: result.authorized,
+    allowed: result.allowed,
+    retryAfterSeconds: Math.max(0, result.retry_after_seconds),
+  };
 }
 
 export async function insertAnalyticsEvents(events: AnalyticsInsertRow[]) {

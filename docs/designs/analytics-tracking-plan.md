@@ -37,7 +37,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 3.2 工具选型结论与理由
 
-**结论：自建最小管道，不引入第三方分析 SDK。** `lib/analytics.ts`（localStorage 队列 + `fetch keepalive` / `sendBeacon`）→ Vercel 上的 `app/api/events/route.ts` 处理入口（Next Route Handler，Node 运行时）→ 新建的 FPVHelper 独立 Supabase 项目托管 `app_events`。数据库高权限密钥主名为 `SUPABASE_SECRET_KEY`，只放 Vercel 服务端；旧 `SUPABASE_SERVICE_ROLE_KEY` 仅为过渡兼容名。分析使用数据库内的受限 SQL 视图，试点期不做看板产品。
+**结论：自建最小管道，不引入第三方分析 SDK。** `lib/analytics.ts`（localStorage 队列 + `fetch keepalive` / `sendBeacon`）→ Vercel 上的同域 `app/api/events/route.ts` 处理入口（Next Route Handler，Node 运行时）→ 新建的 FPVHelper 独立 Supabase 项目托管 `app_events`。分析写入只读取 `FPVHELPER_ANALYTICS_SUPABASE_URL` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY` 两个服务端配置，不回退到公开、通用或旧 `service_role` 变量。分析使用数据库内的受限 SQL 视图，试点期不做看板产品。
 
 理由：
 - **规模**：试点是 1 家俱乐部、2 台工作站、4 周约 16–30 条 Session、几十次页面打开，任何转化率都没有统计意义；埋点的价值在于"每一次失败都能归因"，而不是漏斗曲线。
@@ -172,7 +172,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 3.8 实施步骤
 
-**前置（D1，创始人）**：新建 FPVHelper 独立 Supabase 项目；Vercel 服务端密钥主名使用 `SUPABASE_SECRET_KEY`（旧 `SUPABASE_SERVICE_ROLE_KEY` 只作过渡兼容；二者永远不加 `NEXT_PUBLIC_` 前缀且值不进对话/文件/commit）；另配置受控 ingest token 与统计开关；核验 System Environment Variables 和 `VERCEL_GIT_COMMIT_SHA`；客户域固定为 `race.fpvsuperapp.com`。
+**前置（D1，创始人）**：新建 FPVHelper 独立 Supabase 项目；Vercel 只配置 `FPVHELPER_ANALYTICS_SUPABASE_URL` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY`，密钥永远不加 `NEXT_PUBLIC_` 前缀且值不进对话/文件/commit；不得复用其他项目的 `NEXT_PUBLIC_SUPABASE_URL`、通用 `SUPABASE_URL / SUPABASE_SECRET_KEY` 或旧 `SUPABASE_SERVICE_ROLE_KEY`；另配置受控 ingest token 与统计开关；核验 System Environment Variables 和 `VERCEL_GIT_COMMIT_SHA`；客户域固定为 `race.fpvsuperapp.com`。
 
 **文件级改动清单**
 
@@ -183,12 +183,12 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `lib/analytics/error-codes.ts` + `.test.ts` | 新建 | `classifySerialError() / classifyMediaError()`：`DOMException.name + message` → 枚举 + 中文下一步文案；vitest 覆盖 NotFoundError / NetworkError / InvalidStateError / NotAllowedError / NotReadableError / OverconstrainedError |
 | `lib/training-session.ts` + `.test.ts` | 修改 | `assessTrainingSession(session): { valid, reasons[] }` 纯函数（L168 逐子句）；schema v2 字段；`parseTrainingSession()` 兼容 v1；`serializeTrainingSession` 去掉 pretty print；补 3–5 个用例 |
 | `hooks/use-analytics-lifecycle.ts` | 新建 | `app_opened`（含微信/浏览器检测）、`page_hidden/visible`、`page_unloaded`、`js_error`；`beforeunload` 在录制中或有未导出记录时 `preventDefault` |
-| `app/api/events/route.ts` | 新建 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；`service_role` 写入 `app_events`；返回 204 |
-| `lib/supabase/admin.ts` | 新建 | `import "server-only"` 的 service role 客户端，只被 Route Handler 引用 |
+| `app/api/events/route.ts` | 新建 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；独立项目 secret key 写入；每 token + 工作站在数据库内原子限流，超限返回 429 + `Retry-After`，成功返回 204 |
+| `lib/supabase/analytics-admin.ts` | 新建 | `import "server-only"` 的独立分析项目 secret-key 客户端，只被 Route Handler 引用 |
 | `supabase/migrations/0001_app_events.sql` | 新建 | 见下方 SQL |
 | `app/error.tsx` | 新建 | Next 16 错误边界（`{ error, retry }`），上报 `js_error` |
 | `next.config.ts` | 修改 | `env.NEXT_PUBLIC_APP_VERSION`、`NEXT_PUBLIC_ANALYTICS_ENABLED`（仅 `VERCEL_ENV === "production"`） |
-| `.env.example` | 修改 | 主配置名写 `SUPABASE_SECRET_KEY=`（值留空，仅 Vercel 服务端）；旧 `SUPABASE_SERVICE_ROLE_KEY` 只留迁移兼容说明；统计开关与 ingest token 均不写真实值 |
+| `.env.example` | 修改 | 独立分析项目只写 `FPVHELPER_ANALYTICS_SUPABASE_URL=` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY=`（值留空，仅 Vercel 服务端）；不回退通用/旧项目变量；统计开关与 ingest token 均不写真实值 |
 | `package.json` | 修改 | `npm i server-only`；`version` 随发布递增 |
 | `hooks/use-betaflight-telemetry.ts` | 修改 | `error` 改 `{ code, message }`；`source` 只在首帧后切 serial；`NotFoundError` 视为取消；1.5 秒看门狗 + `stale` 状态 + 首帧超时；`navigator.serial` `disconnect` 监听；RC/ANALOG/checksum/error 帧计数 ref；在 `:156 / :185 / :215 / :224 / :229 / :118` 处 `track()` |
 | `hooks/use-video-capture.ts` | 修改 | `error` 改 `{ code, message }`；`:65 / :67` 处 `track()`（含 `getSettings()`）；`:59` 后 `track.onended` |
@@ -336,7 +336,7 @@ analytics-infra 在没有看到合成文档的情况下独立得出同一技术�
 | --- | --- | --- |
 | Supabase 项目可能因方案或状态不可用 | `/api/events` 返回 5xx，离线队列持续增长 | 先从实际项目与服务商文档核验暂停/恢复规则；客户端退避重试，运营台账记录不可用时段；不得为 keep-alive 或升级方案作未审批承诺 |
 | Vercel 函数区域与 Supabase 区域不一致 | 每批多一次跨洋往返 | `vercel.json` `regions` 对齐 Supabase 区域 |
-| `lib/supabase/server.ts` 不能作为写入端 | 它用 publishable key + cookie，写入会被零策略 RLS 拒绝 | 新建 `lib/supabase/admin.ts`（`server-only`，主配置名 `SUPABASE_SECRET_KEY`，`persistSession: false`；旧配置名只作迁移兼容） |
+| `lib/supabase/server.ts` 不能作为写入端 | 它用 publishable key + cookie，写入会被零策略 RLS 拒绝 | 新建 `lib/supabase/analytics-admin.ts`（`server-only`，只读取 `FPVHELPER_ANALYTICS_SUPABASE_URL / FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY`，`persistSession: false`；不兼容回退其他项目变量） |
 
 ### A.7 代码骨架
 
@@ -522,7 +522,7 @@ export function onRouterTransitionStart(url: string, navigationType: "push" | "r
 ```ts
 // app/api/events/route.ts
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin"; // server-only；SUPABASE_SECRET_KEY，无 cookie
+import { createAdminClient } from "@/lib/supabase/analytics-admin"; // server-only；FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY，无 cookie
 import { ANALYTICS_EVENT_NAMES } from "@/lib/analytics/events";
 
 export const runtime = "nodejs";
@@ -586,11 +586,12 @@ export async function POST(request: Request) {
   return NextResponse.json({ accepted: rows.length, rejected: body.events.length - rows.length });
 }
 
-// lib/supabase/admin.ts
+// lib/supabase/analytics-admin.ts
 // import "server-only";
 // import { createClient } from "@supabase/supabase-js";
 // export function createAdminClient() {
-//   const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const key = process.env.SUPABASE_SECRET_KEY;
+//   const url = process.env.FPVHELPER_ANALYTICS_SUPABASE_URL;
+//   const key = process.env.FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY;
 //   if (!url || !key) throw new Error("analytics server configuration missing");
 //   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 // }

@@ -14,6 +14,8 @@
 
 - 产品定位统一为“FPVHelper 训练工作台 / 俱乐部训练量化”。
 - 统一客户入口、内部验证入口、独立 Supabase 与假名化统计边界。
+- 分析写入只接受独立项目的 `FPVHELPER_ANALYTICS_SUPABASE_*` 服务端配置，不再回退到公开、通用或旧 `service_role` 环境变量。
+- `/api/events` 在 Supabase 内按 ingest token + 工作站执行原子分钟配额（120 请求 / 1000 事件），超限返回无响应体的 `429` 与 `Retry-After`；客户端保留队列并退避重放。
 
 ### 未完成 / 不由本版本证明
 
