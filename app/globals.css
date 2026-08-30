@@ -28,10 +28,10 @@ body {
   font-family: var(--body);
 }
 
-button, select { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
 
-button:focus-visible, select:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
@@ -128,6 +128,7 @@ button:focus-visible, select:focus-visible {
 .status-chip--live i, .live-dot.is-live, .footer-light--live { background: var(--signal); box-shadow: 0 0 10px rgba(50, 182, 233, 0.8); }
 .status-chip--demo i, .footer-light--demo { background: var(--alert); }
 .status-chip--connecting i { background: #f6bd48; animation: pulse 1s infinite; }
+.status-chip--stale i, .footer-light--stale { background: #f6bd48; box-shadow: 0 0 10px rgba(246, 189, 72, 0.7); }
 .status-chip--error i, .footer-light--error { background: #ff3e4d; }
 
 .session-meta {
@@ -150,6 +151,11 @@ button:focus-visible, select:focus-visible {
 }
 .button { min-height: 40px; padding: 0 16px; }
 .button:hover, .mini-button:hover { border-color: var(--signal); }
+.button:disabled, .mini-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.button:disabled:hover, .mini-button:disabled:hover { border-color: var(--line); }
 .button--primary { border-color: var(--signal-dim); color: var(--white); background: #123047; }
 .button--quiet { color: var(--muted); }
 .button--record { border-color: rgba(255, 107, 53, 0.48); color: #ffc0a8; background: #24140f; }
@@ -488,11 +494,49 @@ button:focus-visible, select:focus-visible {
 .session-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); }
 .session-state--recording { color: var(--alert); }
 .session-state--recording i { background: var(--alert); box-shadow: 0 0 10px rgba(255, 107, 53, 0.75); animation: pulse 1s infinite; }
+.session-state--valid { color: var(--signal); }
+.session-state--valid i { background: var(--signal); box-shadow: 0 0 10px rgba(50, 182, 233, 0.65); }
+.session-state--invalid { color: #f6bd48; }
+.session-state--invalid i { background: #f6bd48; }
+.session-identity {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.6fr) 1fr;
+  gap: 10px;
+  margin-top: 13px;
+}
+.session-identity label, .session-identity > div {
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: #0a1117;
+}
+.session-identity label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; }
+.session-identity label > span, .session-identity small {
+  color: var(--quiet);
+  font: 600 8px/1.4 var(--mono);
+  letter-spacing: 0.08em;
+}
+.session-identity input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--carbon);
+  color: var(--white);
+  font: 700 11px/1 var(--mono);
+}
+.session-identity input:disabled { opacity: 0.7; }
+.session-identity > div { display: grid; align-content: center; gap: 6px; }
+.session-identity b { color: var(--muted); font: 700 10px/1.3 var(--mono); }
 .session-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
 .session-stats span { display: grid; gap: 6px; min-height: 54px; padding: 9px 10px; border: 1px solid var(--line-soft); color: var(--quiet); font: 600 8px/1 var(--mono); letter-spacing: 0.08em; }
 .session-stats b { overflow: hidden; color: var(--white); font-size: 12px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .session-note { margin-top: 10px; }
 .session-note p { margin: 0; color: var(--quiet); font: 500 9px/1.5 var(--mono); }
+.session-note > div { display: grid; gap: 5px; }
+.session-note .validity-copy--valid { color: var(--signal); }
+.session-note .validity-copy--invalid { color: #f6bd48; }
 
 .dashboard-footer { min-height: 43px; justify-content: space-between; color: var(--quiet); font: 500 9px/1.4 var(--mono); }
 .dashboard-footer p { display: flex; align-items: center; gap: 8px; margin: 0; }
@@ -537,6 +581,7 @@ button:focus-visible, select:focus-visible {
   .rail-heading { margin-bottom: 13px; }
   .gauge-grid, .bridge-card, .link-card { margin-top: 10px; }
   .session-stats { grid-template-columns: 1fr 1fr; }
+  .session-identity { grid-template-columns: 1fr; }
   .session-note { align-items: stretch; flex-direction: column; }
   .button--export { width: 100%; }
   .dashboard-footer { display: grid; gap: 7px; padding-top: 12px; }

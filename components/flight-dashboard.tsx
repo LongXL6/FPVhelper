@@ -10,13 +10,25 @@ import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
 import { clamp } from "@/lib/telemetry";
+import { normalizeAthleteCode, type TrainingSessionInvalidReason } from "@/lib/training-session";
 
 const statusCopy = {
   demo: "演示数据",
   connecting: "正在连接",
   live: "数据桥在线",
+  stale: "数据已停滞",
   error: "需要检查",
 } as const;
+
+const invalidReasonCopy: Record<TrainingSessionInvalidReason, string> = {
+  source_not_ground_rc: "不是真实 GROUND_RC",
+  mixed_sources: "混入其他数据源",
+  too_short: "不足 60 秒",
+  too_few_unique_samples: "不足 300 个不重复样本",
+  non_monotonic: "时间戳不严格单调",
+  no_athlete_code: "缺少选手代号",
+  interrupted: "刷新或连接中断",
+};
 
 const TRAIL_LEFT_STICK_LAYOUT = { xPercent: 3, yPercent: 59, size: 154 };
 const TRAIL_RIGHT_STICK_LAYOUT = { xPercent: 78, yPercent: 59, size: 154 };
@@ -33,6 +45,13 @@ function formatSessionDuration(durationMs: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = (totalSeconds % 60).toFixed(1).padStart(4, "0");
   return `${String(minutes).padStart(2, "0")}:${seconds}`;
+}
+
+function formatLocalTimecode(timestamp: number) {
+  if (!timestamp) return "--:--:--.---";
+  const date = new Date(timestamp);
+  const pad = (value: number, length = 2) => value.toString().padStart(length, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function SignalMark({ active }: { active: boolean }) {
@@ -137,6 +156,7 @@ function ThrottleTimeline({ samples }: { samples: number[] }) {
 export function FlightDashboard() {
   const [showStickOverlays, setShowStickOverlays] = useState(true);
   const [stickOverlayMode, setStickOverlayMode] = useState<StickOverlayMode>("trail");
+  const [athleteCode, setAthleteCode] = useState("");
   const telemetryControl = useBetaflightTelemetry();
   const {
     videoRef,
@@ -149,11 +169,13 @@ export function FlightDashboard() {
     disconnect: disconnectVideo,
   } = useVideoCapture();
   const { telemetry, throttleHistory, stickMotion, connection, source, error } = telemetryControl;
-  const trainingSession = useTrainingSession(telemetry, source);
+  const trainingSession = useTrainingSession({ telemetry, source, connection, athleteCode });
+  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
+  const bridgeIsLive = source === "serial" && connection === "live";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
   const rcSourceLabel = source === "demo" ? "DEMO" : "GROUND_RC";
   const bridgeSourceLabel = source === "demo" ? "DEMO" : "GROUND_BRIDGE";
-  const timecode = telemetry.timestamp ? new Date(telemetry.timestamp).toISOString().slice(11, 23) : "--:--:--.---";
+  const timecode = formatLocalTimecode(telemetry.timestamp);
   const sessionRate = trainingSession.isRecording
     ? trainingSession.sampleCount > 1 && trainingSession.elapsedMs > 0
       ? (trainingSession.sampleCount - 1) / (trainingSession.elapsedMs / 1000)
@@ -163,6 +185,20 @@ export function FlightDashboard() {
     ? rcSourceLabel
     : trainingSession.lastSession?.dataSources.map((dataSource) => dataSource === "ground_rc" ? "GROUND_RC" : "DEMO").join(" + ") ?? "—";
   const visibleSessionId = trainingSession.sessionId?.slice(0, 8).toUpperCase() ?? "READY";
+  const startRequirement = !trainingSession.storageReady
+    ? "正在准备浏览器本地存储"
+    : trainingSession.storageError
+      ? "本地存储异常，暂不能开始"
+      : !normalizeAthleteCode(athleteCode)
+        ? "先填写选手代号"
+        : !bridgeIsLive
+          ? "连接桥接飞控并等待 MSP_RC 数据在线"
+          : "已满足开始条件";
+  const lastSessionValidity = trainingSession.lastSession
+    ? trainingSession.lastSession.validity.valid
+      ? "有效 Session：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
+      : `无效 Session：${trainingSession.lastSession.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}`
+    : null;
   const leftStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.left), [stickMotion.samples]);
   const rightStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.right), [stickMotion.samples]);
   const leftStickLayout = stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
@@ -183,7 +219,7 @@ export function FlightDashboard() {
         <div className="session-strip">
           <span className={`status-chip status-chip--${connection}`}><i />{statusCopy[connection]}</span>
           <span className="session-meta">SESSION <b>{trainingSession.isRecording ? `REC / ${visibleSessionId}` : "LOCAL / READY"}</b></span>
-          <span className="session-meta">RATE <b>{source === "demo" ? "20 HZ" : "MSP LIVE"}</b></span>
+          <span className="session-meta">RATE <b>{source === "demo" ? "20 HZ" : bridgeIsLive ? "MSP LIVE" : "MSP WAIT"}</b></span>
         </div>
 
         <div className="top-actions">
@@ -191,23 +227,29 @@ export function FlightDashboard() {
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
             aria-pressed={trainingSession.isRecording}
-            onClick={trainingSession.isRecording ? trainingSession.stopRecording : trainingSession.startRecording}
+            disabled={trainingSession.isRecording ? trainingSession.isFinishing : !trainingSession.canStart}
+            title={trainingSession.isRecording ? "结束并保存当前 Session" : startRequirement}
+            onClick={() => void (trainingSession.isRecording ? trainingSession.stopRecording() : trainingSession.startRecording())}
           >
-            {trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
+            {trainingSession.isFinishing ? "保存记录…" : trainingSession.isStarting ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
           </button>
           {source === "serial" ? (
-            <button className="button button--quiet" onClick={() => void telemetryControl.useDemo()}>返回演示</button>
+            <button className="button button--quiet" disabled={controlsLocked} onClick={() => void telemetryControl.useDemo()}>返回演示</button>
           ) : null}
-          <button className="button button--primary" onClick={() => void telemetryControl.connectSerial()}>
+          <button
+            className="button button--primary"
+            disabled={controlsLocked || connection === "connecting"}
+            onClick={() => void telemetryControl.connectSerial()}
+          >
             <span className="usb-icon">⌁</span>连接桥接飞控
           </button>
         </div>
       </header>
 
-      {(error || videoError) && (
+      {(error || videoError || trainingSession.storageError) && (
         <aside className="error-banner" role="status">
-          <b>连接提示</b>
-          <span>{error || videoError}</span>
+          <b>{trainingSession.storageError ? "存储提示" : "连接提示"}</b>
+          <span>{trainingSession.storageError || error || videoError}</span>
         </aside>
       )}
 
@@ -351,13 +393,13 @@ export function FlightDashboard() {
           </div>
 
           <section className="bridge-card">
-            <div className="card-heading"><span>GROUND BRIDGE</span><b>{source === "serial" ? "MSP LIVE" : "WAIT"}</b></div>
+            <div className="card-heading"><span>GROUND BRIDGE</span><b>{bridgeIsLive ? "MSP LIVE" : "WAIT"}</b></div>
             <div className="bridge-path">
-              <div className={source === "serial" ? "is-active" : ""}><i />ELRS RX</div>
+              <div className={bridgeIsLive ? "is-active" : ""}><i />ELRS RX</div>
               <span>→</span>
-              <div className={source === "serial" ? "is-active" : ""}><i />BETAFLIGHT</div>
+              <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
               <span>→</span>
-              <div className={source === "serial" ? "is-active" : ""}><i />DASHBOARD</div>
+              <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
             </div>
             <p>只读 MSP_RC + MSP_ANALOG；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
           </section>
@@ -385,11 +427,30 @@ export function FlightDashboard() {
         <div className="session-heading">
           <div>
             <span>LOCAL SESSION RECORDER</span>
-            <h2>{trainingSession.isRecording ? "正在记录遥控输入" : trainingSession.lastSession ? "最近记录可以导出" : "等待开始训练记录"}</h2>
+            <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.lastSession ? "最近记录已保存在本机" : "等待开始训练记录"}</h2>
           </div>
-          <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : ""}`}>
-            <i />{trainingSession.isRecording ? "REC" : trainingSession.lastSession ? "READY" : "IDLE"}
+          <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : trainingSession.lastSession?.validity.valid ? "session-state--valid" : trainingSession.lastSession ? "session-state--invalid" : ""}`}>
+            <i />{trainingSession.isRecording ? "REC" : trainingSession.lastSession?.validity.valid ? "VALID" : trainingSession.lastSession ? "INVALID" : "IDLE"}
           </span>
+        </div>
+
+        <div className="session-identity">
+          <label>
+            <span>选手代号</span>
+            <input
+              type="text"
+              value={athleteCode}
+              maxLength={40}
+              disabled={controlsLocked}
+              placeholder="例如 PILOT-07"
+              autoComplete="off"
+              onChange={(event) => setAthleteCode(event.target.value)}
+            />
+          </label>
+          <div>
+            <b>{startRequirement}</b>
+            <small>{trainingSession.storageReady ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条记录` : "正在检查草稿与历史记录"}</small>
+          </div>
         </div>
 
         <div className="session-stats">
@@ -400,7 +461,12 @@ export function FlightDashboard() {
         </div>
 
         <div className="session-note">
-          <p>记录保存在浏览器内存，JSON 仅包含打杆与地面桥数据；当前不录制视频，视频时间偏移也尚未校准。</p>
+          <div>
+            <p>草稿保存在浏览器 IndexedDB：开始即写、每 5 秒更新、结束即保存；刷新残留草稿会恢复为 interrupted，不会静默丢弃。</p>
+            {lastSessionValidity && !trainingSession.isRecording ? (
+              <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
+            ) : null}
+          </div>
           {trainingSession.lastSession && !trainingSession.isRecording ? (
             <button className="button button--export" type="button" onClick={trainingSession.exportLastSession}>导出 Session JSON</button>
           ) : null}
@@ -408,7 +474,7 @@ export function FlightDashboard() {
       </section>
 
       <footer className="dashboard-footer">
-        <p><i className={`footer-light footer-light--${connection}`} />{source === "demo" ? "当前为演示数据，未连接真实飞控" : "只读 MSP 轮询，不写入 Betaflight 配置"}</p>
+        <p><i className={`footer-light footer-light--${connection}`} />{source === "demo" ? "当前为演示数据，未连接真实飞控" : bridgeIsLive ? "只读 MSP 轮询，不写入 Betaflight 配置" : "桥接飞控当前没有实时 RC 数据"}</p>
         <p>地面桥 MSP RSSI 字段 ≠ 机上 ELRS LQ；地面桥电压 ≠ 飞行器电池</p>
       </footer>
     </main>
