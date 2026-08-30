@@ -33,6 +33,13 @@ describe("analytics migration static security review", () => {
     expect(migration).toMatch(/revoke all on schema private from public, anon, authenticated, service_role;/);
   });
 
+  it("groups the environment summary by every non-aggregate column, including build", () => {
+    const environmentSummary = migration.match(
+      /create view private\.environment_summary[\s\S]*?group by ([^;]+);/,
+    );
+    expect(environmentSummary?.[1].replaceAll(/\s+/g, " ").trim()).toBe("1, 2, 3, 4, 5, 6, 7, 8");
+  });
+
   it("uses the independent intent ledger for commercial coverage and has no club join key", () => {
     expect(migration).toContain("private.training_intent_ledger");
     expect(migration).toContain("independent_intended_recordings");

@@ -15,13 +15,16 @@ import {
   finishTrainingSession,
   markTrainingSessionExported,
   recoverInterruptedTrainingSession,
-  serializeTrainingSession,
-  trainingSessionFilename,
   withTrainingSessionNotes,
   type TrainingSession,
   type TrainingSessionDraft,
   type TrainingSessionMarkerKind,
 } from "@/lib/training-session";
+import {
+  beginUnconfirmedTrainingSessionDownload,
+  getBrowserTrainingSessionSaveFilePicker,
+  saveTrainingSessionWithPicker,
+} from "@/lib/training-session-export";
 import {
   countUniqueTrainingSamples,
   sessionsStartedOnLocalDay,
@@ -81,22 +84,6 @@ function uniqueLocalId(prefix: string) {
 
 function storageErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : "浏览器本地训练记录存储失败";
-}
-
-function downloadTrainingSession(session: TrainingSession) {
-  const blob = new Blob([serializeTrainingSession(session)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = trainingSessionFilename(session);
-    document.body.append(link);
-    link.click();
-    link.remove();
-  } finally {
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  }
-  return blob.size;
 }
 
 export function useTrainingSession({
@@ -166,7 +153,12 @@ export function useTrainingSession({
   ) => {
     const exportedAtEpochMs = Date.now();
     const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
-    const bytes = downloadTrainingSession(exportedSession);
+    const picker = getBrowserTrainingSessionSaveFilePicker();
+    if (!picker) {
+      beginUnconfirmedTrainingSessionDownload(session);
+      throw new Error("浏览器已发起下载，但无法确认文件已落盘；记录仍保持未导出状态");
+    }
+    const bytes = await saveTrainingSessionWithPicker(exportedSession, picker);
     await store.saveSession(exportedSession);
     await refreshSessions(store);
     setLastExport({
@@ -290,15 +282,16 @@ export function useTrainingSession({
 
     if (sessionStored && autoExport) {
       try {
-        await exportStoredSession(session, store, "auto");
+        beginUnconfirmedTrainingSessionDownload(session);
+        setStorageError("自动下载已发起，但浏览器无法确认文件已落盘；记录仍标为待导出，请手动保存确认");
       } catch (exportError) {
-        setStorageError(`自动下载后未能保存导出状态：${storageErrorMessage(exportError)}；Session 已在本机，可再次导出`);
+        setStorageError(`自动下载失败：${storageErrorMessage(exportError)}；Session 已在本机，可手动导出`);
       }
     }
 
     finishingRef.current = false;
     setIsFinishing(false);
-  }, [autoExport, exportStoredSession, refreshSessions]);
+  }, [autoExport, refreshSessions]);
 
   const finishRecording = useCallback(async (interrupted: boolean) => {
     const draft = draftRef.current;

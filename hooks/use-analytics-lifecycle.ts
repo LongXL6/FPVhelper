@@ -9,6 +9,7 @@ import {
   optOutAnalytics,
   prepareAnalyticsReactivation,
   setAnalyticsIngestToken,
+  subscribeAnalyticsLocalStatus,
   trackAnalytics,
   type AnalyticsLocalStatus,
 } from "@/lib/analytics/client";
@@ -26,7 +27,7 @@ import type {
 } from "@/lib/analytics/events";
 import {
   analyticsConnectionTransition,
-  analyticsInterruptedSessionIsLost,
+  describeAnalyticsInterruptedSessionLoss,
   analyticsObservedRcFrameDelta,
   analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
@@ -370,6 +371,8 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     };
   }, [emitAppOpened, updateClientContext]);
 
+  useEffect(() => subscribeAnalyticsLocalStatus(setStatus), []);
+
   useEffect(() => {
     updateClientContext();
   }, [options.connection, options.isRecording, options.overlayMode, options.sessionId, options.source, options.videoState, updateClientContext]);
@@ -709,16 +712,19 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
 
   useEffect(() => {
     const session = options.lastSession;
-    if (!session || !analyticsInterruptedSessionIsLost({
+    if (!session) return;
+    const loss = describeAnalyticsInterruptedSessionLoss({
       interrupted: session.interrupted,
       exportedAt: session.exportedAt,
       alreadyTracked: lostSessionIdsRef.current.has(session.id),
-    })) return;
+      invalidReasons: session.validity.reasons,
+    });
+    if (!loss) return;
     lostSessionIdsRef.current.add(session.id);
     trackAnalytics("session_lost", {
       reason: "recording_interrupted",
       recording_id: session.id,
-      valid: session.validity.valid,
+      valid: loss.validBeforeInterruption,
       duration_ms: safeDuration(session.durationMs),
       sample_count: session.sampleCount,
       ms_since_stop: safeDuration(Date.now() - Date.parse(session.endedAt)),

@@ -280,7 +280,7 @@ select
   count(distinct workstation_id) as workstations
 from public.app_events
 where event_name = 'app_opened'
-group by 1, 2, 3, 4, 5, 6, 7;
+group by 1, 2, 3, 4, 5, 6, 7, 8;
 
 create view private.failure_timeline
 with (security_invoker = true)

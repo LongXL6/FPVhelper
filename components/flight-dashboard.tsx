@@ -388,6 +388,8 @@ export function FlightDashboard() {
       ? "当前发布未开启客户统计。训练、记录与导出不受影响。"
       : analytics.status.reason === "opted_out"
         ? "本机已永久关闭并清除了令牌与待发送队列。"
+        : analytics.status.reason === "rejected_token"
+          ? "工作站令牌已被服务端拒绝；待发送事件仍保留在本机，请粘贴新令牌。"
         : analytics.status.state === "waiting_token"
           ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
           : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
@@ -880,7 +882,9 @@ export function FlightDashboard() {
               setAnalyticsInstallMessage(installed ? "工作站令牌已安装，统计已开启。" : "令牌格式无效或本机仍处于关闭状态。");
             }}
           >
-            <label htmlFor="analytics-workstation-token">一次性安装工作站令牌</label>
+            <label htmlFor="analytics-workstation-token">
+              {analytics.status.reason === "rejected_token" ? "替换工作站令牌" : "一次性安装工作站令牌"}
+            </label>
             <div>
               <input
                 id="analytics-workstation-token"

@@ -139,6 +139,13 @@ describe("analytics client privacy and delivery", () => {
       hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: false, hasToken: true,
     })).toEqual({ state: "enabled", reason: "installed" });
     expect(resolveAnalyticsLocalStatus({
+      hostname: CUSTOMER_ANALYTICS_HOSTNAME,
+      configured: true,
+      optedOut: false,
+      hasToken: true,
+      authorizationBlocked: true,
+    })).toEqual({ state: "waiting_token", reason: "rejected_token" });
+    expect(resolveAnalyticsLocalStatus({
       hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: true, hasToken: true,
     })).toEqual({ state: "off", reason: "opted_out" });
   });
@@ -216,9 +223,16 @@ describe("analytics client privacy and delivery", () => {
       enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
     });
     client.init();
+    const observedStatuses: ReturnType<typeof client.getLocalStatus>[] = [];
+    const unsubscribe = client.subscribeLocalStatus((nextStatus) => observedStatuses.push(nextStatus));
     client.track("overlay_layout_reset", overlayProps());
     expect(await client.flush()).toBe(false);
     expect(client.getQueueLength()).toBe(1);
+    expect(client.getLocalStatus()).toEqual({ state: "waiting_token", reason: "rejected_token" });
+    expect(observedStatuses.at(-1)).toEqual({ state: "waiting_token", reason: "rejected_token" });
+    expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
+    harness.emit("pagehide");
+    expect(harness.beacons).toHaveLength(0);
     const requestCountAfterFailure = harness.requests.length;
     harness.runNextTimer();
     await settle();
@@ -227,7 +241,9 @@ describe("analytics client privacy and delivery", () => {
     expect(client.setIngestToken(TOKEN_B)).toBe(true);
     await settle();
     expect(client.getQueueLength()).toBe(0);
+    expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
     expect(harness.requests).toHaveLength(requestCountAfterFailure + 1);
+    unsubscribe();
   });
 
   it("clear token and opt-out both delete the token, queue, and listeners", () => {

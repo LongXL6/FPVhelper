@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyticsConnectionTransition,
-  analyticsInterruptedSessionIsLost,
+  describeAnalyticsInterruptedSessionLoss,
   analyticsObservedRcFrameDelta,
   analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
@@ -43,11 +43,25 @@ describe("analytics lifecycle transition helpers", () => {
     })).toBe(false);
   });
 
-  it("marks only an unexported interrupted session once", () => {
-    expect(analyticsInterruptedSessionIsLost({ interrupted: true, exportedAt: null, alreadyTracked: false })).toBe(true);
-    expect(analyticsInterruptedSessionIsLost({ interrupted: true, exportedAt: null, alreadyTracked: true })).toBe(false);
-    expect(analyticsInterruptedSessionIsLost({ interrupted: true, exportedAt: "2026-08-31T00:00:00.000Z", alreadyTracked: false })).toBe(false);
-    expect(analyticsInterruptedSessionIsLost({ interrupted: false, exportedAt: null, alreadyTracked: false })).toBe(false);
+  it("describes one unexported interruption and evaluates validity before that interruption", () => {
+    expect(describeAnalyticsInterruptedSessionLoss({
+      interrupted: true, exportedAt: null, alreadyTracked: false, invalidReasons: ["interrupted"],
+    })).toEqual({ validBeforeInterruption: true });
+    expect(describeAnalyticsInterruptedSessionLoss({
+      interrupted: true, exportedAt: null, alreadyTracked: false, invalidReasons: ["too_short", "interrupted"],
+    })).toEqual({ validBeforeInterruption: false });
+    expect(describeAnalyticsInterruptedSessionLoss({
+      interrupted: true, exportedAt: null, alreadyTracked: true, invalidReasons: ["interrupted"],
+    })).toBeNull();
+    expect(describeAnalyticsInterruptedSessionLoss({
+      interrupted: true,
+      exportedAt: "2026-08-31T00:00:00.000Z",
+      alreadyTracked: false,
+      invalidReasons: ["interrupted"],
+    })).toBeNull();
+    expect(describeAnalyticsInterruptedSessionLoss({
+      interrupted: false, exportedAt: null, alreadyTracked: false, invalidReasons: [],
+    })).toBeNull();
   });
 
   it("deduplicates noisy lifecycle notifications inside their quiet window", () => {

@@ -144,6 +144,7 @@ export interface PhaseOneEventProps {
   session_lost: {
     reason: "overwritten" | "unload" | "recording_interrupted";
     recording_id: string;
+    /** For recording_interrupted, validity is evaluated before interruption itself. */
     valid: boolean;
     duration_ms: number;
     sample_count: number;

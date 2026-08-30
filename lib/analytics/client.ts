@@ -26,7 +26,7 @@ export const CUSTOMER_ANALYTICS_HOSTNAME = "race.fpvsuperapp.com";
 
 export type AnalyticsLocalStatus =
   | { state: "off"; reason: "hostname" | "configuration" | "opted_out" }
-  | { state: "waiting_token"; reason: "missing_token" }
+  | { state: "waiting_token"; reason: "missing_token" | "rejected_token" }
   | { state: "enabled"; reason: "installed" };
 
 interface AnalyticsStorage {
@@ -152,10 +152,12 @@ export function resolveAnalyticsLocalStatus(options: {
   configured: boolean;
   optedOut: boolean;
   hasToken: boolean;
+  authorizationBlocked?: boolean;
 }): AnalyticsLocalStatus {
   if (!isCustomerAnalyticsHostname(options.hostname)) return { state: "off", reason: "hostname" };
   if (!options.configured) return { state: "off", reason: "configuration" };
   if (options.optedOut) return { state: "off", reason: "opted_out" };
+  if (options.authorizationBlocked) return { state: "waiting_token", reason: "rejected_token" };
   if (!options.hasToken) return { state: "waiting_token", reason: "missing_token" };
   return { state: "enabled", reason: "installed" };
 }
@@ -172,6 +174,7 @@ export class AnalyticsClient {
   private active = false;
   private authorizationBlocked = false;
   private installedToken: string | null = null;
+  private readonly statusListeners = new Set<(status: AnalyticsLocalStatus) => void>();
 
   private readonly handleOnline = () => {
     void this.flush();
@@ -273,7 +276,7 @@ export class AnalyticsClient {
 
   async flush(options: { beacon?: boolean } = {}) {
     const runtime = this.runtime;
-    if (!this.active || !runtime) return false;
+    if (!this.active || !runtime || this.authorizationBlocked) return false;
     this.pruneQueue();
     if (this.queue.length === 0) return false;
     const events = this.takeBatch();
@@ -309,8 +312,12 @@ export class AnalyticsClient {
       }
       if (response.status === 401 || response.status === 403) {
         this.authorizationBlocked = true;
+        safeRemove(runtime.storage, TOKEN_KEY);
+        this.installedToken = "";
+        this.ingestToken = "";
         if (this.timer !== null) runtime.clearTimeout(this.timer);
         this.timer = null;
+        this.notifyStatusChanged();
       }
       return response.ok;
     } catch {
@@ -343,6 +350,7 @@ export class AnalyticsClient {
       this.ingestToken = token;
       void this.flush();
     }
+    this.notifyStatusChanged();
     return true;
   }
 
@@ -356,6 +364,7 @@ export class AnalyticsClient {
     this.queue = [];
     this.authorizationBlocked = false;
     this.stop();
+    this.notifyStatusChanged();
   }
 
   optOut() {
@@ -369,6 +378,7 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.queue = [];
     this.stop();
+    this.notifyStatusChanged();
   }
 
   prepareReactivation() {
@@ -387,6 +397,7 @@ export class AnalyticsClient {
     this.queue = [];
     this.authorizationBlocked = false;
     this.stop();
+    this.notifyStatusChanged();
     return true;
   }
 
@@ -398,7 +409,15 @@ export class AnalyticsClient {
       configured: productionAnalyticsEnabled(this.options),
       optedOut: safeGet(runtime.storage, OPT_OUT_KEY) === "1",
       hasToken: isAnalyticsIngestToken(this.installedToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? ""),
+      authorizationBlocked: this.authorizationBlocked,
     });
+  }
+
+  subscribeLocalStatus(listener: (status: AnalyticsLocalStatus) => void) {
+    this.statusListeners.add(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
   }
 
   stop() {
@@ -472,6 +491,11 @@ export class AnalyticsClient {
       void this.flush();
     }, FLUSH_INTERVAL_MS);
   }
+
+  private notifyStatusChanged() {
+    const status = this.getLocalStatus();
+    this.statusListeners.forEach((listener) => listener(status));
+  }
 }
 
 export const analyticsClient = new AnalyticsClient();
@@ -506,6 +530,10 @@ export function prepareAnalyticsReactivation() {
 
 export function getAnalyticsLocalStatus() {
   return analyticsClient.getLocalStatus();
+}
+
+export function subscribeAnalyticsLocalStatus(listener: (status: AnalyticsLocalStatus) => void) {
+  return analyticsClient.subscribeLocalStatus(listener);
 }
 
 export function flushAnalyticsWithBeacon() {

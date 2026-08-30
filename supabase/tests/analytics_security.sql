@@ -1,6 +1,6 @@
 begin;
 
-select plan(30);
+select plan(31);
 
 select has_table('public', 'app_events', 'app_events exists');
 select has_table('public', 'analytics_ingest_tokens', 'ingest token registry exists');
@@ -24,6 +24,12 @@ select has_view('private', 'attrition_summary', 'attrition summary is private');
 select has_view('private', 'feature_usage', 'feature usage is private');
 select has_view('private', 'environment_summary', 'environment summary is private');
 select has_view('private', 'failure_timeline', 'failure timeline is private');
+select lives_ok($sql$
+  select week_start, browser_family, os_family, secure_context, serial_supported,
+    is_wechat, hostname, build, opens, workstations
+  from private.environment_summary
+  limit 0
+$sql$, 'environment summary is executable and exposes its grouped build column');
 select has_function('private', 'purge_old_app_events', array[]::text[], 'retention function is private');
 select ok(exists(
   select 1 from cron.job where jobname = 'fpvhelper-app-events-retention'
