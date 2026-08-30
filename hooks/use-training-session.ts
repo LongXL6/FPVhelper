@@ -34,6 +34,14 @@ interface UseTrainingSessionOptions {
   autoExport: boolean;
 }
 
+export interface TrainingSessionExportReceipt {
+  receiptId: string;
+  session: TrainingSession;
+  method: "download" | "auto";
+  bytes: number;
+  exportedAtEpochMs: number;
+}
+
 interface TrainingSessionController {
   isRecording: boolean;
   isStarting: boolean;
@@ -50,6 +58,7 @@ interface TrainingSessionController {
   recentSessionCount: number;
   unexportedValidCount: number;
   hasPendingSave: boolean;
+  lastExport: TrainingSessionExportReceipt | null;
   canStart: boolean;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
@@ -81,6 +90,7 @@ function downloadTrainingSession(session: TrainingSession) {
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
+  return blob.size;
 }
 
 export function useTrainingSession({
@@ -105,6 +115,7 @@ export function useTrainingSession({
   const [storageError, setStorageError] = useState<string | null>(null);
   const [unexportedValidCount, setUnexportedValidCount] = useState(0);
   const [hasPendingSave, setHasPendingSave] = useState(false);
+  const [lastExport, setLastExport] = useState<TrainingSessionExportReceipt | null>(null);
   const draftRef = useRef<TrainingSessionDraft | null>(null);
   const pendingSessionRef = useRef<TrainingSession | null>(null);
   const storeRef = useRef<TrainingSessionStore | null>(null);
@@ -137,11 +148,23 @@ export function useTrainingSession({
     return nextSessions;
   }, [applySessions]);
 
-  const exportStoredSession = useCallback(async (session: TrainingSession, store: TrainingSessionStore) => {
-    const exportedSession = markTrainingSessionExported(session, Date.now());
-    downloadTrainingSession(exportedSession);
+  const exportStoredSession = useCallback(async (
+    session: TrainingSession,
+    store: TrainingSessionStore,
+    method: TrainingSessionExportReceipt["method"],
+  ) => {
+    const exportedAtEpochMs = Date.now();
+    const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
+    const bytes = downloadTrainingSession(exportedSession);
     await store.saveSession(exportedSession);
     await refreshSessions(store);
+    setLastExport({
+      receiptId: `${exportedSession.id}:${exportedSession.exportCount}`,
+      session: exportedSession,
+      method,
+      bytes,
+      exportedAtEpochMs,
+    });
     setStorageError(null);
   }, [refreshSessions]);
 
@@ -255,7 +278,7 @@ export function useTrainingSession({
 
     if (sessionStored && autoExport) {
       try {
-        await exportStoredSession(session, store);
+        await exportStoredSession(session, store, "auto");
       } catch (exportError) {
         setStorageError(`自动下载后未能保存导出状态：${storageErrorMessage(exportError)}；Session 已在本机，可再次导出`);
       }
@@ -383,7 +406,7 @@ export function useTrainingSession({
     const session = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
     if (!store || !session) return;
     try {
-      await exportStoredSession(session, store);
+      await exportStoredSession(session, store, "download");
     } catch (exportError) {
       setStorageError(`导出状态尚未保存：${storageErrorMessage(exportError)}；可以再次导出`);
     }
@@ -405,6 +428,7 @@ export function useTrainingSession({
     recentSessionCount: sessions.length,
     unexportedValidCount,
     hasPendingSave,
+    lastExport,
     canStart,
     startRecording,
     stopRecording,

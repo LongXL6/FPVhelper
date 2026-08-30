@@ -584,12 +584,40 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .today-records-list .record-invalid b { color: #f6bd48; }
 .today-records-list button { min-height: 100%; }
 
+.analytics-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.65fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--line-soft);
+  background: #090f14;
+}
+.analytics-card > div:first-child > span { color: var(--quiet); font: 700 8px/1 var(--mono); letter-spacing: 0.12em; }
+.analytics-card h2 { margin: 5px 0 0; font: 700 14px/1 var(--display); }
+.analytics-card p { max-width: 760px; margin: 7px 0 0; color: var(--quiet); font: 500 9px/1.5 var(--mono); }
+.analytics-card > small { grid-column: 1 / -1; color: var(--muted); font: 600 9px/1.4 var(--mono); }
+.analytics-install-form { display: grid; gap: 7px; }
+.analytics-install-form label { color: var(--muted); font: 700 8px/1 var(--mono); letter-spacing: 0.08em; }
+.analytics-install-form > div { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 7px; }
+.analytics-install-form input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--carbon);
+  color: var(--white);
+  font: 600 10px/1 var(--mono);
+}
+
 .dashboard-shell--coach { height: 100vh; min-height: 680px; overflow: hidden; padding: 0 14px 14px; }
 .dashboard-shell--coach .topbar { min-height: 78px; }
 .dashboard-shell--coach .workspace-grid { grid-template-columns: 1fr; height: calc(100vh - 92px); padding-top: 14px; }
 .dashboard-shell--coach .video-console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .dashboard-shell--coach .video-stage { min-height: 0; height: 100%; }
-.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .dashboard-footer { display: none; }
+.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
 .dashboard-shell--coach .section-bar { min-height: 44px; }
 .dashboard-shell--coach .section-bar small { font-size: 12px; }
 .dashboard-shell--coach .hud-top-right, .dashboard-shell--coach .hud-bottom-left { display: none; }
@@ -627,6 +655,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .marker-panel { grid-template-columns: 1fr 180px; }
   .marker-panel p { grid-column: 1 / -1; max-width: none; }
   .today-records-list article { grid-template-columns: repeat(3, 1fr); }
+  .analytics-card { grid-template-columns: 1fr; align-items: stretch; }
 }
 
 @media (max-width: 720px) {
@@ -669,6 +698,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .summary-grid { grid-template-columns: 1fr; }
   .today-records-list article { grid-template-columns: 1fr 1fr; }
   .today-records-list article .record-valid, .today-records-list article .record-invalid, .today-records-list article button { grid-column: 1 / -1; }
+  .analytics-install-form > div { grid-template-columns: 1fr; }
   .dashboard-footer { display: grid; gap: 7px; padding-top: 12px; }
   .dashboard-shell--coach { min-height: 560px; padding: 0 6px 6px; }
   .dashboard-shell--coach .brand-lockup { display: none; }

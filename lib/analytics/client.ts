@@ -22,6 +22,12 @@ const MAX_BATCH_BYTES = 32 * 1_024;
 const FLUSH_INTERVAL_MS = 10_000;
 const DROP_RESPONSE_STATUSES = new Set([400, 413, 415, 422]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const CUSTOMER_ANALYTICS_HOSTNAME = "race.fpvsuperapp.com";
+
+export type AnalyticsLocalStatus =
+  | { state: "off"; reason: "hostname" | "configuration" | "opted_out" }
+  | { state: "waiting_token"; reason: "missing_token" }
+  | { state: "enabled"; reason: "installed" };
 
 interface AnalyticsStorage {
   getItem(key: string): string | null;
@@ -131,6 +137,29 @@ function productionAnalyticsEnabled(options: AnalyticsClientOptions) {
   return enabled && environment === "production";
 }
 
+function analyticsBuildIdentifier(options: AnalyticsClientOptions) {
+  const candidate = (options.build ?? process.env.NEXT_PUBLIC_APP_VERSION ?? "unknown").trim();
+  const sanitized = candidate.replaceAll(/[^a-zA-Z0-9._+-]/g, "-").slice(0, 80);
+  return sanitized && /^[a-zA-Z0-9]/.test(sanitized) ? sanitized : "unknown";
+}
+
+export function isCustomerAnalyticsHostname(hostname: string) {
+  return hostname.trim().toLowerCase() === CUSTOMER_ANALYTICS_HOSTNAME;
+}
+
+export function resolveAnalyticsLocalStatus(options: {
+  hostname: string;
+  configured: boolean;
+  optedOut: boolean;
+  hasToken: boolean;
+}): AnalyticsLocalStatus {
+  if (!isCustomerAnalyticsHostname(options.hostname)) return { state: "off", reason: "hostname" };
+  if (!options.configured) return { state: "off", reason: "configuration" };
+  if (options.optedOut) return { state: "off", reason: "opted_out" };
+  if (!options.hasToken) return { state: "waiting_token", reason: "missing_token" };
+  return { state: "enabled", reason: "installed" };
+}
+
 export class AnalyticsClient {
   private runtime: AnalyticsRuntime | null = null;
   private workstationId = "";
@@ -160,14 +189,16 @@ export class AnalyticsClient {
     if (!runtime || (process.env.NODE_ENV === "test" && !this.options.allowInTest)) return false;
 
     this.runtime = runtime;
+    if (!isCustomerAnalyticsHostname(runtime.hostname) || !productionAnalyticsEnabled(this.options)) return false;
     if (new URLSearchParams(runtime.search).get("analytics") === "off") {
       safeSet(runtime.storage, OPT_OUT_KEY, "1");
       safeRemove(runtime.storage, QUEUE_KEY);
       safeRemove(runtime.storage, TOKEN_KEY);
+      safeRemove(runtime.storage, WORKSTATION_KEY);
       this.queue = [];
       return false;
     }
-    if (!productionAnalyticsEnabled(this.options) || safeGet(runtime.storage, OPT_OUT_KEY) === "1") return false;
+    if (safeGet(runtime.storage, OPT_OUT_KEY) === "1") return false;
 
     const existingWorkstationId = safeGet(runtime.storage, WORKSTATION_KEY);
     const workstationId = existingWorkstationId && UUID_PATTERN.test(existingWorkstationId)
@@ -215,7 +246,7 @@ export class AnalyticsClient {
       workstation_id: this.workstationId,
       visit_id: this.visitId,
       recording_id: propsRecordingId,
-      build: this.options.build ?? process.env.NEXT_PUBLIC_APP_VERSION ?? "unknown",
+      build: analyticsBuildIdentifier(this.options),
       hostname: runtime.hostname,
       vercel_env: "production",
       session_schema_version: this.options.sessionSchemaVersion ?? 2,
@@ -294,6 +325,8 @@ export class AnalyticsClient {
     const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
     if (
       !runtime
+      || !isCustomerAnalyticsHostname(runtime.hostname)
+      || !productionAnalyticsEnabled(this.options)
       || safeGet(runtime.storage, OPT_OUT_KEY) === "1"
       || !isAnalyticsIngestToken(token)
       || !safeSet(runtime.storage, TOKEN_KEY, token)
@@ -301,7 +334,11 @@ export class AnalyticsClient {
     this.installedToken = token;
     this.authorizationBlocked = false;
     if (!this.active) {
-      this.init();
+      if (!this.init()) {
+        safeRemove(runtime.storage, TOKEN_KEY);
+        this.installedToken = null;
+        return false;
+      }
     } else {
       this.ingestToken = token;
       void this.flush();
@@ -327,10 +364,41 @@ export class AnalyticsClient {
     safeSet(runtime.storage, OPT_OUT_KEY, "1");
     safeRemove(runtime.storage, QUEUE_KEY);
     safeRemove(runtime.storage, TOKEN_KEY);
+    safeRemove(runtime.storage, WORKSTATION_KEY);
     this.installedToken = "";
     this.ingestToken = "";
     this.queue = [];
     this.stop();
+  }
+
+  prepareReactivation() {
+    const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
+    if (
+      !runtime
+      || !isCustomerAnalyticsHostname(runtime.hostname)
+      || !productionAnalyticsEnabled(this.options)
+    ) return false;
+    safeRemove(runtime.storage, OPT_OUT_KEY);
+    safeRemove(runtime.storage, TOKEN_KEY);
+    safeRemove(runtime.storage, QUEUE_KEY);
+    safeRemove(runtime.storage, WORKSTATION_KEY);
+    this.installedToken = "";
+    this.ingestToken = "";
+    this.queue = [];
+    this.authorizationBlocked = false;
+    this.stop();
+    return true;
+  }
+
+  getLocalStatus(): AnalyticsLocalStatus {
+    const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
+    if (!runtime) return { state: "off", reason: "configuration" };
+    return resolveAnalyticsLocalStatus({
+      hostname: runtime.hostname,
+      configured: productionAnalyticsEnabled(this.options),
+      optedOut: safeGet(runtime.storage, OPT_OUT_KEY) === "1",
+      hasToken: isAnalyticsIngestToken(this.installedToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? ""),
+    });
   }
 
   stop() {
@@ -426,4 +494,20 @@ export function setAnalyticsIngestToken(token: string) {
 
 export function clearAnalyticsIngestToken() {
   analyticsClient.clearIngestToken();
+}
+
+export function optOutAnalytics() {
+  analyticsClient.optOut();
+}
+
+export function prepareAnalyticsReactivation() {
+  return analyticsClient.prepareReactivation();
+}
+
+export function getAnalyticsLocalStatus() {
+  return analyticsClient.getLocalStatus();
+}
+
+export function flushAnalyticsWithBeacon() {
+  return analyticsClient.flush({ beacon: true });
 }

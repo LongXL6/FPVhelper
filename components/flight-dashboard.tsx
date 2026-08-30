@@ -6,6 +6,7 @@ import {
   storeStickOverlayLayout,
 } from "@/components/draggable-stick-overlay";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
+import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
 import { clamp } from "@/lib/telemetry";
@@ -105,6 +106,17 @@ function isTypingTarget(target: EventTarget | null) {
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT"
   );
+}
+
+function overlayLayoutsWereDefault(entries: Array<{ storageKey: string; defaultLayout: { xPercent: number; yPercent: number; size: number } }>) {
+  try {
+    return entries.every(({ storageKey, defaultLayout }) => {
+      const stored = window.localStorage.getItem(storageKey);
+      return stored === null || stored === JSON.stringify(defaultLayout);
+    });
+  } catch {
+    return false;
+  }
 }
 
 function SignalMark({ active }: { active: boolean }) {
@@ -225,6 +237,8 @@ export function FlightDashboard() {
   const [notesDraftSessionId, setNotesDraftSessionId] = useState<string | null>(null);
   const [notesSaving, setNotesSaving] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [analyticsTokenDraft, setAnalyticsTokenDraft] = useState("");
+  const [analyticsInstallMessage, setAnalyticsInstallMessage] = useState<string | null>(null);
   const telemetryControl = useBetaflightTelemetry();
   const {
     videoRef,
@@ -249,8 +263,10 @@ export function FlightDashboard() {
       const saveError = saveTrainingSessionPreferences(window.localStorage, preferences);
       setPreferenceWriteError(saveError);
       if (!saveError) window.dispatchEvent(new Event(TRAINING_PREFERENCES_EVENT));
+      return saveError === null;
     } catch (saveError) {
       setPreferenceWriteError(saveError instanceof Error ? saveError.message : "无法保存本机界面偏好");
+      return false;
     }
   }, []);
 
@@ -303,6 +319,14 @@ export function FlightDashboard() {
   const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
   const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
   const visibleError = trainingSession.storageError || preferenceError || error || videoError;
+  const analyticsErrorSurface = useMemo<AnalyticsErrorSurface | null>(() => {
+    if (trainingSession.storageError || preferenceError) {
+      return { kind: "storage", message: trainingSession.storageError || preferenceError || "本机存储异常" };
+    }
+    if (error) return { kind: "serial", message: error };
+    if (videoError) return { kind: "video", message: videoError };
+    return null;
+  }, [error, preferenceError, trainingSession.storageError, videoError]);
   const leftStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.left), [stickMotion.samples]);
   const rightStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.right), [stickMotion.samples]);
   const leftStickLayout = coachMode ? COACH_LEFT_STICK_LAYOUT : stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
@@ -310,6 +334,45 @@ export function FlightDashboard() {
   const overlayLayoutScope = coachMode ? `coach.${stickOverlayMode}` : stickOverlayMode;
   const leftStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.left-stick.v1`;
   const rightStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.right-stick.v1`;
+  const getVideoMetrics = useCallback(() => ({
+    width: videoRef.current?.videoWidth ?? 0,
+    height: videoRef.current?.videoHeight ?? 0,
+    frameRate: 0,
+  }), [videoRef]);
+  const analytics = useAnalyticsLifecycle({
+    connection,
+    source,
+    videoState,
+    telemetrySequence: telemetry.sequence,
+    isRecording: trainingSession.isRecording,
+    sessionId: trainingSession.sessionId,
+    lastSession: trainingSession.lastSession,
+    lastExport: trainingSession.lastExport,
+    unexportedValidCount: trainingSession.unexportedValidCount,
+    hasPendingSave: trainingSession.hasPendingSave,
+    athleteSet: normalizeAthleteCode(athleteCode).length > 0,
+    overlayMode: stickOverlayMode,
+    serialSupported: telemetryControl.serialSupported,
+    mediaSupported: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),
+    getVideoMetrics,
+    serialError: error,
+    videoError,
+    errorSurface: analyticsErrorSurface,
+  });
+  const analyticsStatusLabel = analytics.status.state === "enabled"
+    ? "已开启"
+    : analytics.status.state === "waiting_token"
+      ? "等待工作站令牌"
+      : "关闭";
+  const analyticsStatusCopy = analytics.status.reason === "hostname"
+    ? "当前域名仅用于内部验证，不采集统计事件。"
+    : analytics.status.reason === "configuration"
+      ? "当前发布未开启客户统计。训练、记录与导出不受影响。"
+      : analytics.status.reason === "opted_out"
+        ? "本机已永久关闭并清除了令牌与待发送队列。"
+        : analytics.status.state === "waiting_token"
+          ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
+          : "只发送白名单内的伪名化运行事件；视频、原始 RC、代号与备注不会上传。";
   return (
     <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
       <header className="topbar">
@@ -346,12 +409,22 @@ export function FlightDashboard() {
             {trainingSession.isFinishing ? "保存记录…" : trainingSession.isStarting ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
           </button>
           {source === "serial" ? (
-            <button className="button button--quiet" disabled={controlsLocked} onClick={() => void telemetryControl.useDemo()}>返回演示</button>
+            <button
+              className="button button--quiet"
+              disabled={controlsLocked}
+              onClick={() => {
+                analytics.markDemoReturnIntentional();
+                void telemetryControl.useDemo();
+              }}
+            >返回演示</button>
           ) : null}
           <button
             className="button button--primary"
             disabled={controlsLocked || connection === "connecting"}
-            onClick={() => void telemetryControl.connectSerial()}
+            onClick={() => {
+              analytics.beginSerialConnect();
+              void telemetryControl.connectSerial();
+            }}
           >
             <span className="usb-icon">⌁</span>连接桥接飞控
           </button>
@@ -389,9 +462,22 @@ export function FlightDashboard() {
                 </select>
               </label>
               {videoState === "live" ? (
-                <button className="mini-button" onClick={disconnectVideo}>断开画面</button>
+                <button
+                  className="mini-button"
+                  onClick={() => {
+                    analytics.markVideoDisconnectIntentional();
+                    disconnectVideo();
+                  }}
+                >断开画面</button>
               ) : (
-                <button className="mini-button mini-button--active" onClick={() => void connectVideo()}>打开画面</button>
+                <button
+                  className="mini-button mini-button--active"
+                  disabled={videoState === "connecting"}
+                  onClick={() => {
+                    analytics.beginVideoConnect();
+                    void connectVideo();
+                  }}
+                >{videoState === "connecting" ? "正在打开" : "打开画面"}</button>
               )}
               <button
                 className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
@@ -405,20 +491,33 @@ export function FlightDashboard() {
                     className={`mini-button ${stickOverlayMode === "trail" ? "mini-button--active" : ""}`}
                     type="button"
                     aria-pressed={stickOverlayMode === "trail"}
-                    onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "trail" })}
+                    onClick={() => {
+                      if (updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "trail" })) {
+                        analytics.trackOverlayModeChange(stickOverlayMode, "trail");
+                      }
+                    }}
                   >动态轨迹</button>
                   <button
                     className={`mini-button ${stickOverlayMode === "simple" ? "mini-button--active" : ""}`}
                     type="button"
                     aria-pressed={stickOverlayMode === "simple"}
-                    onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "simple" })}
+                    onClick={() => {
+                      if (updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "simple" })) {
+                        analytics.trackOverlayModeChange(stickOverlayMode, "simple");
+                      }
+                    }}
                   >简洁模式</button>
                   <button
                     className="mini-button"
                     type="button"
                     onClick={() => {
+                      const wasDefault = overlayLayoutsWereDefault([
+                        { storageKey: leftStickStorageKey, defaultLayout: leftStickLayout },
+                        { storageKey: rightStickStorageKey, defaultLayout: rightStickLayout },
+                      ]);
                       storeStickOverlayLayout(leftStickStorageKey, leftStickLayout);
                       storeStickOverlayLayout(rightStickStorageKey, rightStickLayout);
+                      analytics.trackOverlayLayoutReset(wasDefault);
                     }}
                   >重置叠层</button>
                 </>
@@ -722,6 +821,61 @@ export function FlightDashboard() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="analytics-card" aria-label="本机统计设置">
+        <div>
+          <span>PRIVACY-FIRST ANALYTICS</span>
+          <h2>本机统计 · {analyticsStatusLabel}</h2>
+          <p>{analyticsStatusCopy}</p>
+        </div>
+        {analytics.status.state === "waiting_token" ? (
+          <form
+            className="analytics-install-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const installed = analytics.installToken(analyticsTokenDraft.trim());
+              setAnalyticsTokenDraft("");
+              setAnalyticsInstallMessage(installed ? "工作站令牌已安装，统计已开启。" : "令牌格式无效或本机仍处于关闭状态。");
+            }}
+          >
+            <label htmlFor="analytics-workstation-token">一次性安装工作站令牌</label>
+            <div>
+              <input
+                id="analytics-workstation-token"
+                type="password"
+                value={analyticsTokenDraft}
+                autoComplete="new-password"
+                spellCheck={false}
+                placeholder="由俱乐部管理员粘贴"
+                onChange={(event) => setAnalyticsTokenDraft(event.target.value)}
+              />
+              <button className="mini-button mini-button--active" type="submit" disabled={!analyticsTokenDraft.trim()}>安装并开启</button>
+            </div>
+          </form>
+        ) : null}
+        {analytics.status.reason === "opted_out" ? (
+          <button
+            className="mini-button"
+            type="button"
+            onClick={() => {
+              const prepared = analytics.prepareReactivation();
+              setAnalyticsInstallMessage(prepared ? "已允许重新安装；仍需输入新的工作站令牌。" : "当前发布不可重新开启统计。");
+            }}
+          >明确重新启用统计</button>
+        ) : null}
+        {analytics.status.state === "enabled" ? (
+          <button
+            className="mini-button"
+            type="button"
+            onClick={() => {
+              analytics.optOut();
+              setAnalyticsTokenDraft("");
+              setAnalyticsInstallMessage("已关闭并清除本机统计数据。");
+            }}
+          >关闭并清除本机统计数据</button>
+        ) : null}
+        {analyticsInstallMessage ? <small role="status">{analyticsInstallMessage}</small> : null}
       </section>
 
       <footer className="dashboard-footer">

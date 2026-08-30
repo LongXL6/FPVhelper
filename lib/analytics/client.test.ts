@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { AnalyticsClient } from "./client";
+import {
+  AnalyticsClient,
+  CUSTOMER_ANALYTICS_HOSTNAME,
+  resolveAnalyticsLocalStatus,
+} from "./client";
 
 const TOKEN_A = `fpvh_ingest_${"a".repeat(43)}`;
 const TOKEN_B = `fpvh_ingest_${"b".repeat(43)}`;
 
-function createHarness(options: { search?: string; online?: boolean; statuses?: number[] } = {}) {
+function createHarness(options: { search?: string; online?: boolean; statuses?: number[]; hostname?: string } = {}) {
   const values = new Map<string, string>();
   const listeners = new Map<string, Set<() => void>>();
   const timers = new Map<number, () => void>();
@@ -22,7 +26,7 @@ function createHarness(options: { search?: string; online?: boolean; statuses?: 
       setItem: (key: string, value: string) => { values.set(key, value); },
       removeItem: (key: string) => { values.delete(key); },
     },
-    hostname: "helper.example.com",
+    hostname: options.hostname ?? CUSTOMER_ANALYTICS_HOSTNAME,
     search: options.search ?? "",
     online: () => isOnline,
     randomUuid: () => `10000000-0000-4000-8000-${(uuidIndex++).toString(16).padStart(12, "0")}`,
@@ -102,6 +106,43 @@ describe("analytics client privacy and delivery", () => {
     expect(harness.requests).toHaveLength(0);
   });
 
+  it.each(["helper.longxl.com", "localhost", "127.0.0.1"])(
+    "forces analytics to a no-op on %s even when production flags and a token exist",
+    (hostname) => {
+      const harness = createHarness({ hostname });
+      const client = new AnalyticsClient({
+        enabled: true,
+        environment: "production",
+        ingestToken: TOKEN_A,
+        runtime: harness.runtime,
+        allowInTest: true,
+        build: "test",
+      });
+
+      expect(client.init()).toBe(false);
+      expect(client.setIngestToken(TOKEN_B)).toBe(false);
+      expect(client.track("overlay_layout_reset", overlayProps())).toBeNull();
+      expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
+      expect(harness.values.has("fpvhelper.analytics.queue.v1")).toBe(false);
+      expect(harness.requests).toHaveLength(0);
+    },
+  );
+
+  it("resolves the three quiet UI states without exposing token contents", () => {
+    expect(resolveAnalyticsLocalStatus({
+      hostname: "helper.longxl.com", configured: true, optedOut: false, hasToken: true,
+    })).toEqual({ state: "off", reason: "hostname" });
+    expect(resolveAnalyticsLocalStatus({
+      hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: false, hasToken: false,
+    })).toEqual({ state: "waiting_token", reason: "missing_token" });
+    expect(resolveAnalyticsLocalStatus({
+      hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: false, hasToken: true,
+    })).toEqual({ state: "enabled", reason: "installed" });
+    expect(resolveAnalyticsLocalStatus({
+      hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: true, hasToken: true,
+    })).toEqual({ state: "off", reason: "opted_out" });
+  });
+
   it("installs a token locally, caps the queue at 500, and expires entries after seven days", async () => {
     const harness = createHarness({ online: false });
     const client = new AnalyticsClient({
@@ -116,6 +157,20 @@ describe("analytics client privacy and delivery", () => {
     await client.flush();
     expect(client.getQueueLength()).toBe(0);
     expect(JSON.parse(harness.values.get("fpvhelper.analytics.queue.v1") ?? "[]")).toHaveLength(0);
+  });
+
+  it("sanitizes a blank or unsafe public build label instead of dropping otherwise valid events", () => {
+    const harness = createHarness({ online: false });
+    const client = new AnalyticsClient({
+      enabled: true,
+      environment: "production",
+      ingestToken: TOKEN_A,
+      runtime: harness.runtime,
+      allowInTest: true,
+      build: " build label with spaces ",
+    });
+    expect(client.init()).toBe(true);
+    expect(client.track("overlay_layout_reset", overlayProps())).not.toBeNull();
   });
 
   it("flushes at 20 events, on the online event, and on the 10-second timer", async () => {
@@ -193,6 +248,7 @@ describe("analytics client privacy and delivery", () => {
     client.track("overlay_layout_reset", overlayProps());
     client.optOut();
     expect(harness.values.get("fpvhelper.analytics.opt-out.v1")).toBe("1");
+    expect(harness.values.has("fpvhelper.workstation.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.queue.v1")).toBe(false);
     expect(client.getQueueLength()).toBe(0);
@@ -209,7 +265,24 @@ describe("analytics client privacy and delivery", () => {
     });
     expect(client.init()).toBe(false);
     expect(harness.values.get("fpvhelper.analytics.opt-out.v1")).toBe("1");
+    expect(harness.values.has("fpvhelper.workstation.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.queue.v1")).toBe(false);
+  });
+
+  it("requires an explicit reactivation before a permanently opted-out workstation can reinstall", () => {
+    const harness = createHarness({ online: false });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    expect(client.init()).toBe(true);
+    client.optOut();
+    expect(client.getLocalStatus()).toEqual({ state: "off", reason: "opted_out" });
+    expect(client.setIngestToken(TOKEN_B)).toBe(false);
+
+    expect(client.prepareReactivation()).toBe(true);
+    expect(client.getLocalStatus()).toEqual({ state: "waiting_token", reason: "missing_token" });
+    expect(client.setIngestToken(TOKEN_B)).toBe(true);
+    expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
   });
 });
