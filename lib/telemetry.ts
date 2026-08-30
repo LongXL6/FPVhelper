@@ -1,6 +1,6 @@
 export type TelemetrySource = "demo" | "serial";
 
-export type ConnectionState = "demo" | "connecting" | "live" | "error";
+export type ConnectionState = "demo" | "connecting" | "live" | "stale" | "error";
 
 export interface FlightTelemetry {
   timestamp: number;
@@ -11,6 +11,7 @@ export interface FlightTelemetry {
   yawStickPercent: number;
   throttleStickPercent: number;
   rcThrottleUs: number;
+  rcChannelsUs: number[];
   motors: number[];
   motorAveragePercent: number | null;
   groundMspRssiPercent: number | null;
@@ -30,6 +31,9 @@ export const MSP = {
   ANALOG: 110,
 } as const;
 
+export const RC_FIRST_FRAME_TIMEOUT_MS = 5_000;
+export const RC_STALE_TIMEOUT_MS = 1_500;
+
 export const EMPTY_TELEMETRY: FlightTelemetry = {
   timestamp: 0,
   monotonicTimestampMs: 0,
@@ -39,6 +43,7 @@ export const EMPTY_TELEMETRY: FlightTelemetry = {
   yawStickPercent: 0,
   throttleStickPercent: 0,
   rcThrottleUs: 1000,
+  rcChannelsUs: [],
   motors: [],
   motorAveragePercent: null,
   groundMspRssiPercent: null,
@@ -55,6 +60,16 @@ export function normalizeRcAxis(microseconds: number) {
 
 export function normalizeThrottle(microseconds: number) {
   return clamp(((microseconds - 1000) / 1000) * 100, 0, 100);
+}
+
+export function connectionStateAfterRcSilence(
+  current: ConnectionState,
+  silenceMs: number,
+): ConnectionState {
+  if ((current === "live" || current === "stale") && silenceMs >= RC_STALE_TIMEOUT_MS) {
+    return "stale";
+  }
+  return current;
 }
 
 export function buildMspV1Request(command: number) {
@@ -132,6 +147,7 @@ export function decodeRc(payload: Uint8Array) {
     yawStickPercent: normalizeRcAxis(yaw),
     throttleStickPercent: normalizeThrottle(throttle),
     rcThrottleUs: throttle,
+    rcChannelsUs: channels,
   };
 }
 
@@ -157,19 +173,29 @@ export function decodeAnalog(payload: Uint8Array) {
 
 export function createDemoTelemetry(now: number, sequence: number): FlightTelemetry {
   const seconds = now / 1000;
+  const rollStickPercent = Math.sin(seconds * 1.35) * 72;
+  const pitchStickPercent = Math.cos(seconds * 0.91) * 54;
+  const yawStickPercent = Math.sin(seconds * 0.58 + 1.4) * 66;
   const throttleStickPercent = clamp(42 + Math.sin(seconds * 0.72) * 26 + Math.sin(seconds * 2.1) * 8, 6, 92);
-  const rcThrottleUs = 1000 + throttleStickPercent * 10;
+  const rcThrottleUs = Math.round(1000 + throttleStickPercent * 10);
+  const rcChannelsUs = [
+    Math.round(1500 + rollStickPercent * 5),
+    Math.round(1500 + pitchStickPercent * 5),
+    Math.round(1500 + yawStickPercent * 5),
+    rcThrottleUs,
+  ];
   const motorAveragePercent = clamp(throttleStickPercent + Math.sin(seconds * 3.2) * 5, 0, 100);
 
   return {
     timestamp: Date.now(),
     monotonicTimestampMs: now,
     sequence,
-    rollStickPercent: Math.sin(seconds * 1.35) * 72,
-    pitchStickPercent: Math.cos(seconds * 0.91) * 54,
-    yawStickPercent: Math.sin(seconds * 0.58 + 1.4) * 66,
+    rollStickPercent,
+    pitchStickPercent,
+    yawStickPercent,
     throttleStickPercent,
     rcThrottleUs,
+    rcChannelsUs,
     motors: [
       1000 + clamp(motorAveragePercent + 5, 0, 100) * 10,
       1000 + clamp(motorAveragePercent - 3, 0, 100) * 10,

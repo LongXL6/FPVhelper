@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMspV1Request,
+  connectionStateAfterRcSilence,
+  createDemoTelemetry,
   decodeAnalog,
   decodeMotors,
   decodeRc,
+  EMPTY_TELEMETRY,
   MSP,
   MspV1StreamParser,
 } from "./telemetry";
@@ -33,13 +36,25 @@ describe("MSP v1 telemetry", () => {
   });
 
   it("decodes sticks and keeps RC throttle separate", () => {
-    expect(decodeRc(Uint8Array.from(uint16Payload([1500, 1250, 1750, 1600])))).toEqual({
+    expect(decodeRc(Uint8Array.from(uint16Payload([1500, 1250, 1750, 1600, 988, 2012])))).toEqual({
       rollStickPercent: 0,
       pitchStickPercent: -50,
       yawStickPercent: 50,
       throttleStickPercent: 60,
       rcThrottleUs: 1600,
+      rcChannelsUs: [1500, 1250, 1750, 1600, 988, 2012],
     });
+  });
+
+  it("marks live RC telemetry stale after 1.5 seconds of silence", () => {
+    expect(connectionStateAfterRcSilence("live", 1499)).toBe("live");
+    expect(connectionStateAfterRcSilence("live", 1500)).toBe("stale");
+    expect(connectionStateAfterRcSilence("connecting", 5000)).toBe("connecting");
+  });
+
+  it("provides raw RC channels for empty and demo telemetry", () => {
+    expect(EMPTY_TELEMETRY.rcChannelsUs).toEqual([]);
+    expect(createDemoTelemetry(1000, 1).rcChannelsUs).toHaveLength(4);
   });
 
   it("decodes motor output and ground bridge analog values", () => {
