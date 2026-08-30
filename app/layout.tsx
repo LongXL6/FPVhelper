@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FPV Control Room",
-  description: "将 FPV 飞行画面、遥控输入和飞控遥测放在同一时间轴上。",
+  title: "FPVHelper 训练工作台",
+  description: "面向 FPV 俱乐部的训练量化工作台：本机观察实时画面与打杆，并按选手代号归档训练 Session。",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
