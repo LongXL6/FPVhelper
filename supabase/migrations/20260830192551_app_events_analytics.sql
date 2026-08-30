@@ -183,7 +183,15 @@ create table public.app_events (
   constraint app_events_props_object
     check (jsonb_typeof(props) = 'object'),
   constraint app_events_props_size
-    check (octet_length(props::text) <= 4096)
+    check (octet_length(props::text) <= 4096),
+  constraint app_events_confirmed_session_loss
+    check (
+      event_name <> 'session_lost'
+      or (
+        jsonb_typeof(props->'reason') = 'string'
+        and props->>'reason' in ('overwritten', 'unload')
+      )
+    )
 );
 
 comment on table public.app_events is
@@ -308,7 +316,7 @@ from weekly_product product
 full join private.training_intent_ledger ledger using (week_start);
 
 comment on view private.weekly_workstation_funnel is
-  'Commercial coverage uses independent_intended_recordings only. product_capture_valid_rate is diagnostic and must not be reported as the commercial acceptance denominator.';
+  'Commercial coverage uses independent_intended_recordings only. product_capture_valid_rate is diagnostic and must not be reported as the commercial acceptance denominator. lost_recordings counts only confirmed unrecoverable session_lost events; with no reliable client loss detector it remains zero.';
 
 create view private.connection_health
 with (security_invoker = true)
@@ -339,7 +347,10 @@ as
 select
   date_trunc('week', received_at at time zone 'Asia/Shanghai')::date as week_start,
   count(*) filter (where event_name = 'session_lost') as lost_sessions,
-  count(*) filter (where event_name = 'session_lost' and props->>'reason' = 'recording_interrupted') as interrupted_recordings,
+  count(*) filter (
+    where event_name = 'recording_stopped'
+      and props->'invalid_reasons' @> '["interrupted"]'::jsonb
+  ) as interrupted_recording_stops,
   count(*) filter (where event_name = 'page_unloaded' and props->>'is_recording' = 'true') as unloaded_while_recording,
   count(*) filter (where event_name = 'page_unloaded' and props->>'has_unexported_session' = 'true') as unloaded_with_unexported_session,
   avg(
@@ -423,7 +434,8 @@ revoke all on table
 from public, anon, authenticated, service_role;
 
 comment on view private.connection_health is 'Weekly serial, video and telemetry-link health without raw device or error data.';
-comment on view private.attrition_summary is 'Weekly recording loss and page-exit signals.';
+comment on view private.attrition_summary is
+  'Weekly confirmed unrecoverable loss, interrupted recording-stop, and page-exit risk signals. A recording stop or page exit alone is not counted as loss.';
 comment on view private.feature_usage is 'Weekly use of the five Phase 1 product actions.';
 comment on view private.environment_summary is 'Weekly coarse browser/environment categories; no raw user-agent is stored.';
 comment on view private.failure_timeline is 'Pseudonymous failure timeline for bounded troubleshooting; no club mapping is available in this database.';

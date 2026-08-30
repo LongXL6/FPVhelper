@@ -27,7 +27,6 @@ import type {
 } from "@/lib/analytics/events";
 import {
   analyticsConnectionTransition,
-  describeAnalyticsInterruptedSessionLoss,
   analyticsObservedRcFrameDelta,
   analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
@@ -239,7 +238,6 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     serialLiveMs: number;
   } | null>(null);
   const lastExportReceiptRef = useRef<string | null>(null);
-  const lostSessionIdsRef = useRef(new Set<string>());
   const previousErrorFingerprintRef = useRef<string | null>(null);
   const shownErrorIndexRef = useRef(0);
   const deduperRef = useRef(createAnalyticsEventDeduper());
@@ -303,7 +301,6 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     recordingStallCountRef.current = 0;
     pageHiddenStartedAtRef.current = document.visibilityState === "hidden" ? now : null;
     shownErrorIndexRef.current = 0;
-    lostSessionIdsRef.current.clear();
     pendingSerialRef.current = null;
     pendingVideoRef.current = null;
     demoReturnRef.current = null;
@@ -709,27 +706,6 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     statsRef.current.sessionsExported += 1;
     statsRef.current.maxFunnelStep = Math.max(statsRef.current.maxFunnelStep, 6);
   }, [options.lastExport]);
-
-  useEffect(() => {
-    const session = options.lastSession;
-    if (!session) return;
-    const loss = describeAnalyticsInterruptedSessionLoss({
-      interrupted: session.interrupted,
-      exportedAt: session.exportedAt,
-      alreadyTracked: lostSessionIdsRef.current.has(session.id),
-      invalidReasons: session.validity.reasons,
-    });
-    if (!loss) return;
-    lostSessionIdsRef.current.add(session.id);
-    trackAnalytics("session_lost", {
-      reason: "recording_interrupted",
-      recording_id: session.id,
-      valid: loss.validBeforeInterruption,
-      duration_ms: safeDuration(session.durationMs),
-      sample_count: session.sampleCount,
-      ms_since_stop: safeDuration(Date.now() - Date.parse(session.endedAt)),
-    });
-  }, [options.lastSession]);
 
   useEffect(() => {
     const surface = options.errorSurface;

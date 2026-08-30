@@ -95,6 +95,12 @@ describe("Phase 1 analytics schema", () => {
     expect(() => validateAnalyticsEvent(first, { now: NOW, allowedHostnames: new Set(["other.example.com"]) })).toThrow(/hostname/);
   });
 
+  it("does not classify a safely persisted interruption as a lost session", () => {
+    const interrupted = event("session_lost") as unknown as Record<string, unknown>;
+    interrupted.props = { ...(interrupted.props as object), reason: "recording_interrupted" };
+    expect(() => validateAnalyticsEvent(interrupted, { now: NOW })).toThrow(/枚举值无效/);
+  });
+
   it("rejects the entire batch when any event is invalid or the batch exceeds 50", () => {
     const events = Array.from({ length: 51 }, (_, index) => event("app_opened", index + 1));
     expect(() => validateAnalyticsBatch({ schema_version: 1, ingest_token: TOKEN, events }, { now: NOW })).toThrow(/1 至 50/);

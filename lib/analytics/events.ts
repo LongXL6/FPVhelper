@@ -142,9 +142,9 @@ export interface PhaseOneEventProps {
     method: "download" | "auto" | "folder";
   };
   session_lost: {
-    reason: "overwritten" | "unload" | "recording_interrupted";
+    /** Reserved for a confirmed, unrecoverable local-session loss. No current client path emits this event. */
+    reason: "overwritten" | "unload";
     recording_id: string;
-    /** For recording_interrupted, validity is evaluated before interruption itself. */
     valid: boolean;
     duration_ms: number;
     sample_count: number;
@@ -343,7 +343,7 @@ const EVENT_PROP_RULES: EventRules = {
     bytes: number(0, 1_000_000_000, true), export_index: number(1, 1_000_000, true), method: oneOf(["download", "auto", "folder"]),
   },
   session_lost: {
-    reason: oneOf(["overwritten", "unload", "recording_interrupted"]), recording_id: string(36, 36, UUID_PATTERN),
+    reason: oneOf(["overwritten", "unload"]), recording_id: string(36, 36, UUID_PATTERN),
     valid: bool(), duration_ms: number(0, 86_400_000), sample_count: number(0, 10_000_000, true), ms_since_stop: number(0, 31_536_000_000),
   },
   page_hidden: { was_recording: bool(), connection: oneOf(CONNECTIONS), video_state: oneOf(VIDEO_STATES) },

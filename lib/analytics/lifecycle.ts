@@ -1,6 +1,5 @@
 import type { AnalyticsConnectionState, AnalyticsVideoState } from "./events";
 import type { MspParserStats, TelemetrySource } from "../telemetry";
-import type { TrainingSessionInvalidReason } from "../training-session";
 
 const MAX_EFFECTIVE_HZ = 1_000;
 
@@ -69,18 +68,6 @@ export function analyticsSerialWasLost(options: {
   if (!previouslyConnected) return false;
   if (options.currentSource === "serial" && (options.currentConnection === "live" || options.currentConnection === "stale")) return false;
   return options.currentSource === "demo" || options.currentConnection === "error";
-}
-
-export function describeAnalyticsInterruptedSessionLoss(options: {
-  interrupted: boolean;
-  exportedAt: string | null;
-  alreadyTracked: boolean;
-  invalidReasons: readonly TrainingSessionInvalidReason[];
-}) {
-  if (!options.interrupted || options.exportedAt !== null || options.alreadyTracked) return null;
-  return {
-    validBeforeInterruption: options.invalidReasons.every((reason) => reason === "interrupted"),
-  };
 }
 
 export function createAnalyticsEventDeduper() {

@@ -27,7 +27,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 这是一个单页、约 14 个按钮、一家俱乐部两台工作站的产品。"哪一页流失多"要改问"6 步漏斗死在哪一步"；"哪个按键没人点"只需盯 5 个按钮（开始记录、导出、返回演示、简洁模式、重置叠层）。埋点要回答：
 
 1. **验收第 5 项的分子分母**：本周有多少次"点击开始记录"的尝试（含失败的）？其中多少条按 L168 有效？多少条被导出？——覆盖率是否 ≥80%。
-2. **白录了多少**：多少 Session 因为覆盖、刷新、录制中关页而丢失（`session_lost`）？这是"流失"的直接度量。
+2. **确认白录了多少**：多少未导出 Session 被确认已覆盖或卸载且无法从 IndexedDB 恢复（`session_lost`）？当前客户端没有可靠证明机制，所以该指标为 0；刷新、录制中关页和未导出仅由 `page_unloaded` 作为风险信号统计，不能算作丢失。
 3. **连接失败主因**：串口失败是取消弹窗、串口被占、选错端口还是 USB 掉线？画面失败是选错设备、权限还是被 OBS/DVR 软件占用？——决定第 2–5 天修什么。
 4. **静默劣化**：录制中出现了多少次数据冻结（`telemetry_stalled`）、标签页被切走多久（`page_hidden`）、遥控器失联多少次？——解释"为什么这条无效"。
 5. **有效使用时长**：一次打开页面，画面 + 飞控同时在线的时间占多少？演示模式占多少？
@@ -83,7 +83,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `recording_started` | `startRecording()` | `recording_id, connection_at_start, source_at_start, video_state, athlete_set, prev_unexported, recording_index, ms_since_serial_live` | 漏斗第 4 步；L182 分母；多少记录在未连上/演示时开始 | `hooks/use-training-session.ts:39-46`（需从 dashboard 传入 `connection / videoState` 快照） | 1 |
 | `recording_stopped` | `stopRecording()` | `recording_id, duration_ms, sample_count, hz, data_sources, valid, invalid_reasons[], max_gap_ms, hidden_ms, stall_count, athlete_set` | 80% 覆盖率的分子；无效原因分布 | `hooks/use-training-session.ts:48-57`，`finishTrainingSession` 后调 `assessTrainingSession()` | 1 |
 | `session_exported` | 点击"导出 Session JSON"，或自动下载 / 文件夹写入成功 | `recording_id, valid, ms_since_stop, bytes, export_index, method(download / auto / folder)` | 漏斗第 6 步；结束后犹豫多久 | `hooks/use-training-session.ts:77-88` | 1 |
-| `session_lost` | 未导出的 Session 被覆盖 / 卸载时仍未导出 / 录制中被卸载 | `reason(overwritten / unload / recording_interrupted), recording_id, valid, duration_ms, sample_count, ms_since_stop` | 流失核心：多少有效 Session 白录了 | `hooks/use-training-session.ts:53` 覆盖前检查旧值；`pagehide` 在 `hooks/use-analytics-lifecycle.ts` | 1 |
+| `session_lost` | 仅当客户端能确认未导出 Session 已被覆盖，或卸载后无法从 IndexedDB 恢复 | `reason(overwritten / unload), recording_id, valid, duration_ms, sample_count, ms_since_stop` | 确认不可恢复的白录次数；当前没有可靠触发路径，因此为 0 | 保留严格事件合同供未来可靠检测；不能由 `recording_interrupted`、`pagehide` 或“未导出”直接触发 | 1 |
 | `page_hidden` / `page_visible` | `document` `visibilitychange` | `was_recording, hidden_ms（回到可见时）, connection, video_state` | 教练是否在录制中切走标签页（节流根因） | `hooks/use-analytics-lifecycle.ts` | 1 |
 | `page_unloaded` | `pagehide`（`sendBeacon`） | `page_duration_ms, is_recording, has_unexported_session, max_funnel_step(1-6), recordings_started, recordings_stopped, sessions_exported, error_count, serial_live_ms_total, video_live_ms_total` | 每次会话死在漏斗第几步 | `hooks/use-analytics-lifecycle.ts` | 1 |
 | `error_shown` | `error` 或 `videoError` 从空变非空或文案变化 | `domain(serial / video), code, masked_other, shown_index, is_recording` | 错误横幅出现次数与类型；是否遮蔽了另一类错误 | `components/flight-dashboard.tsx` 新增 `useEffect` 依赖 `[error, videoError]`（横幅 `:207-212`） | 1 |
@@ -150,9 +150,9 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 | 看板 | 每周一要回答的问题 | 数据来源 | 形式 |
 | --- | --- | --- | --- |
-| D1 试点验收周报（对应 L154-159 / L182） | 活跃工作站数（≥1 且 ≤2）；训练尝试数（`recording_started` 且 `connection_at_start=live`）≥2；有效覆盖率 = `recording_stopped(valid)` / 尝试数 ≥80%；导出率；`session_lost` 次数；无效原因分布；4 周趋势 | `app_events` | SQL 视图 `weekly_workstation_funnel`（见 3.8） |
+| D1 试点验收周报（对应 L154-159 / L182） | 活跃工作站数（≥1 且 ≤2）；训练尝试数（`recording_started` 且 `connection_at_start=live`）≥2；有效覆盖率 = `recording_stopped(valid)` / 尝试数 ≥80%；导出率；确认不可恢复的 `session_lost` 次数（无可靠触发时为 0）；无效原因分布；4 周趋势 | `app_events` | SQL 视图 `weekly_workstation_funnel`（见 3.8） |
 | D2 连接健康 | 串口/画面成功率与 `reason` 排名；`ms_to_first_frame` P50/P95；`telemetry_stalled` 次数与其中 `tab_hidden=true` 占比；`serial_lost.reason` 分布；`checksum_errors` 均值；`video_lost` 次数；按 `browser_family / secure_context` 拆分 | `serial_connect_result`, `video_connect_result`, `serial_lost`, `video_lost`, `telemetry_stalled` | SQL |
-| D3 流失与漏斗 | F1 六步转化；`page_unloaded.max_funnel_step` 分布；`is_recording=true` / `has_unexported_session=true` 的关页次数；F6 重试率；`serial_live_ms_total / page_duration_ms` 比例 | `page_unloaded`, `session_lost` | SQL |
+| D3 流失与漏斗 | F1 六步转化；`page_unloaded.max_funnel_step` 分布；`is_recording=true` / `has_unexported_session=true` 的关页风险次数（不等于丢失）；`recording_stopped.invalid_reasons` 中的中断结束数（也不等于丢失）；F6 重试率；`serial_live_ms_total / page_duration_ms` 比例 | `page_unloaded`, `recording_stopped.invalid_reasons`, `session_lost` | SQL |
 | D4 功能使用（"哪个按键没人点"） | 5 个关键按钮的点击次数与使用它们的工作站数；`overlay_mode` 时长占比；`demo_returned.previous_connection` 分布（主动 vs 被逼） | `recording_started`, `session_exported`, `demo_returned`, `overlay_mode_changed`, `overlay_layout_reset` | SQL |
 | D5 环境与兼容 | `browser_family / os_family` 分布；`serial_supported=false`、`secure_context=false`、`is_wechat=true` 的会话数；`viewport_w<1120` 占比；`hostname` 分布；`build` 分布（旧缓存是否残留） | `app_opened` | SQL |
 
@@ -192,7 +192,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `package.json` | 修改 | `npm i server-only`；`version` 随发布递增 |
 | `hooks/use-betaflight-telemetry.ts` | 修改 | `error` 改 `{ code, message }`；`source` 只在首帧后切 serial；`NotFoundError` 视为取消；1.5 秒看门狗 + `stale` 状态 + 首帧超时；`navigator.serial` `disconnect` 监听；RC/ANALOG/checksum/error 帧计数 ref；在 `:156 / :185 / :215 / :224 / :229 / :118` 处 `track()` |
 | `hooks/use-video-capture.ts` | 修改 | `error` 改 `{ code, message }`；`:65 / :67` 处 `track()`（含 `getSettings()`）；`:59` 后 `track.onended` |
-| `hooks/use-training-session.ts` | 修改 | 接收 `connection / videoState` 快照；`recording_started / stopped / session_exported / session_lost`；返回 `hasUnexportedSession` |
+| `hooks/use-training-session.ts` | 修改 | 接收 `connection / videoState` 快照；`recording_started / stopped / session_exported`；返回 `hasUnexportedSession`；中断不进入 `session_lost`，可观测的中断结束由 `recording_stopped.invalid_reasons` 表达 |
 | `lib/telemetry.ts` | 修改 | `MspV1StreamParser` 增加 `checksumErrorCount / errorFrameCount`（`:93` 分支） |
 | `lib/web-serial.d.ts` | 修改 | `getInfo(): { usbVendorId?, usbProductId? }`；`Serial.addEventListener("disconnect" / "connect")`；`navigator.serial.getPorts()` |
 | `components/flight-dashboard.tsx` | 修改 | 5 个关键按钮改具名 handler + `data-track-id`；错误横幅按 `code` 显示中文并 `error_shown`；接入 `useAnalyticsLifecycle`；页脚显示 `build`；改 `:277 / :332 / :403` 文案；状态 chip 全断点保留 |
@@ -217,7 +217,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 1. **错误是自由字符串**（`use-betaflight-telemetry.ts:32/:227/:232`、`use-video-capture.ts:69`）→ 先做 `error-codes.ts`，否则 `reason` 字段没有来源。
 2. **`source` 在 `requestPort` 前就切 serial**（`:191-198`）→ 先分离 `source / connection`，否则"真实数据时长"把取消后的冻结时间算进去，`recording_started.connection_at_start` 也无意义。
 3. **没有 `build` 号**（`package.json:3` 未引用，`next.config.ts` 无 env）→ 注入 `NEXT_PUBLIC_APP_VERSION`，否则任何事件都无法按发布切片。
-4. **没有有效性函数**（`lib/training-session.ts:109-135`）→ `assessTrainingSession()` 是 `recording_stopped.valid`、`session_lost.valid`、`page_unloaded.unexported_is_valid` 三个字段的唯一来源。
+4. **没有有效性函数**（`lib/training-session.ts:109-135`）→ `assessTrainingSession()` 是 `recording_stopped.valid` 的唯一来源；未来若实现可证明的 `session_lost`，才可复用同一判定，不能从 `pagehide` 推断丢失。
 5. **没有看门狗**（`:156` 永不回退）→ `telemetry_stalled` 与 `serial_connect_result(first_frame_timeout)` 需要它。
 6. **解析器无计数器**（`lib/telemetry.ts:93-95`、hook `:177`）→ 两个 ref 计数器，一行改动 + 一个测试。
 7. **`web-serial.d.ts` 缺 `getInfo / disconnect`** → 否则拿不到 VID/PID，拔线只能等写入失败。

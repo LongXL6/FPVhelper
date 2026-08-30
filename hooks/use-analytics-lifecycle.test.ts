@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   analyticsConnectionTransition,
-  describeAnalyticsInterruptedSessionLoss,
   analyticsObservedRcFrameDelta,
   analyticsSerialLifecycleMetrics,
   analyticsSerialWasLost,
@@ -41,27 +40,6 @@ describe("analytics lifecycle transition helpers", () => {
     expect(analyticsSerialWasLost({
       previousSource: "demo", previousConnection: "connecting", currentSource: "demo", currentConnection: "error",
     })).toBe(false);
-  });
-
-  it("describes one unexported interruption and evaluates validity before that interruption", () => {
-    expect(describeAnalyticsInterruptedSessionLoss({
-      interrupted: true, exportedAt: null, alreadyTracked: false, invalidReasons: ["interrupted"],
-    })).toEqual({ validBeforeInterruption: true });
-    expect(describeAnalyticsInterruptedSessionLoss({
-      interrupted: true, exportedAt: null, alreadyTracked: false, invalidReasons: ["too_short", "interrupted"],
-    })).toEqual({ validBeforeInterruption: false });
-    expect(describeAnalyticsInterruptedSessionLoss({
-      interrupted: true, exportedAt: null, alreadyTracked: true, invalidReasons: ["interrupted"],
-    })).toBeNull();
-    expect(describeAnalyticsInterruptedSessionLoss({
-      interrupted: true,
-      exportedAt: "2026-08-31T00:00:00.000Z",
-      alreadyTracked: false,
-      invalidReasons: ["interrupted"],
-    })).toBeNull();
-    expect(describeAnalyticsInterruptedSessionLoss({
-      interrupted: false, exportedAt: null, alreadyTracked: false, invalidReasons: [],
-    })).toBeNull();
   });
 
   it("deduplicates noisy lifecycle notifications inside their quiet window", () => {

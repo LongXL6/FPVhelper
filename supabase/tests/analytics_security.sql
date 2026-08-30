@@ -1,6 +1,6 @@
 begin;
 
-select plan(31);
+select plan(33);
 
 select has_table('public', 'app_events', 'app_events exists');
 select has_table('public', 'analytics_ingest_tokens', 'ingest token registry exists');
@@ -24,6 +24,12 @@ select has_view('private', 'attrition_summary', 'attrition summary is private');
 select has_view('private', 'feature_usage', 'feature usage is private');
 select has_view('private', 'environment_summary', 'environment summary is private');
 select has_view('private', 'failure_timeline', 'failure timeline is private');
+select lives_ok($sql$
+  select week_start, lost_sessions, interrupted_recording_stops,
+    unloaded_while_recording, unloaded_with_unexported_session, average_max_funnel_step
+  from private.attrition_summary
+  limit 0
+$sql$, 'attrition summary separates confirmed losses from interrupted stops and exit risk');
 select lives_ok($sql$
   select week_start, browser_family, os_family, secure_context, serial_supported,
     is_wechat, hostname, build, opens, workstations
@@ -104,6 +110,21 @@ select throws_ok($sql$
     'demo', 'idle', false, 'trail', 'demo', jsonb_build_object('oversize', repeat('x', 4097))
   )
 $sql$, '23514', null, 'props larger than 4096 bytes are rejected');
+
+select throws_ok($sql$
+  insert into public.app_events (
+    event_id, workstation_id, visit_id, recording_id, event_name, occurred_at,
+    client_monotonic_ms, build, hostname, vercel_env, session_schema_version,
+    connection, video_state, is_recording, overlay_mode, telemetry_source, props
+  ) values (
+    '10000000-0000-4000-8000-000000000005',
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    '40000000-0000-4000-8000-000000000001',
+    'session_lost', now(), 1, 'test-build', 'helper.example.com', 'production', 2,
+    'live', 'live', false, 'trail', 'serial', '{"reason":"recording_interrupted"}'::jsonb
+  )
+$sql$, '23514', null, 'a safely persisted interruption cannot be inserted as session loss');
 
 select throws_ok($sql$
   insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
