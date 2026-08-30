@@ -23,3 +23,18 @@ jobs:
           cache: npm
       - name: Install, check, and build
         run: npm ci && npm run check && npm run build
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Supabase CLI 2.108.0
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.108.0
+      - name: Apply migrations to a fresh local database
+        run: supabase db start
+      - name: Run pgTAP security and quota tests
+        run: supabase test db --local supabase/tests

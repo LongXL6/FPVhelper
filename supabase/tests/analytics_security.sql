@@ -61,7 +61,7 @@ select throws_ok($sql$
     'app_opened', now(), 2, 'test-build', 'helper.example.com', 'production', 2,
     'demo', 'idle', false, 'trail', 'demo', '{}'::jsonb
   )
-$sql$, 'event_id is the idempotency primary key');
+$sql$, '23505', null, 'event_id is the idempotency primary key');
 
 select throws_ok($sql$
   insert into public.app_events (
@@ -75,7 +75,7 @@ select throws_ok($sql$
     'invented_event', now(), 1, 'test-build', 'helper.example.com', 'production', 2,
     'demo', 'idle', false, 'trail', 'demo', '{}'::jsonb
   )
-$sql$, 'event names outside the 19-name allowlist are rejected');
+$sql$, '23514', null, 'event names outside the 19-name allowlist are rejected');
 
 select throws_ok($sql$
   insert into public.app_events (
@@ -89,7 +89,7 @@ select throws_ok($sql$
     'app_opened', now(), 1, 'test-build', 'helper.example.com', 'production', 2,
     'demo', 'idle', false, 'trail', 'demo', '[]'::jsonb
   )
-$sql$, 'props must be a JSON object');
+$sql$, '23514', null, 'props must be a JSON object');
 
 select throws_ok($sql$
   insert into public.app_events (
@@ -103,7 +103,7 @@ select throws_ok($sql$
     'app_opened', now(), 1, 'test-build', 'helper.example.com', 'production', 2,
     'demo', 'idle', false, 'trail', 'demo', jsonb_build_object('oversize', repeat('x', 4097))
   )
-$sql$, 'props larger than 4096 bytes are rejected');
+$sql$, '23514', null, 'props larger than 4096 bytes are rejected');
 
 select throws_ok($sql$
   insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
@@ -112,12 +112,12 @@ select throws_ok($sql$
     repeat('a', 64),
     'admin'
   )
-$sql$, 'tokens are restricted to the event_ingest purpose');
+$sql$, '23514', null, 'tokens are restricted to the event_ingest purpose');
 
 select throws_ok($sql$
   insert into private.training_intent_ledger (week_start, intended_recordings, source)
   values ('2026-08-30', 4, 'club_schedule')
-$sql$, 'intent ledger weeks must start on Monday');
+$sql$, '23514', null, 'intent ledger weeks must start on Monday');
 
 select * from finish();
 rollback;

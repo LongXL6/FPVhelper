@@ -88,4 +88,9 @@ npm run dev
 ```bash
 npm run check
 npm run build
+
+# 需要 Docker；只启动本地 Postgres，不连接线上 Supabase。
+npx supabase@2.108.0 db start
+npx supabase@2.108.0 test db --local supabase/tests
+npx supabase@2.108.0 stop --project-id fpvhelper --no-backup --yes
 ```

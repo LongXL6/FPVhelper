@@ -10,7 +10,7 @@
 ## main 保护清单（仓库管理员手工配置并截图/导出核验）
 
 - [ ] 禁止直接 push 到 `main`，要求 PR。
-- [ ] 要求 `.github/workflows/ci.yml` 的 `verify` job 成功。
+- [ ] 要求 `.github/workflows/ci.yml` 的 `verify` 和 `database` job 都成功。
 - [ ] 要求分支与 `main` 保持最新后才能合并。
 - [ ] 至少 1 名 reviewer 批准；新提交后撤销旧批准。
 - [ ] 禁止强推和删除 `main`。
@@ -22,7 +22,7 @@
 
 1. 从独立 worktree/功能分支提交小而可审阅的 commit。
 2. 本地运行：`npm ci`、`npm run check`、`npm run build`、`git diff --check`。
-3. 推送分支并创建 PR；等待 CI `verify` 通过。
+3. 推送分支并创建 PR；等待 CI `verify` 与 `database` 通过。
 4. 在 Vercel Preview 核验页面、`/version.json`、视频/串口权限提示和无凭据构建；记录 Preview URL 与 commit SHA。
 5. 合并 `main` 后，从 Vercel 明确选择该 commit 的构建 Promote 到生产；不要用“合并成功”代替 Promote 证据。
 6. 核验客户规范域 `race.fpvsuperapp.com` 的页面与 `/version.json`；`helper.longxl.com` 只做内部完整验证，数据不计生产。

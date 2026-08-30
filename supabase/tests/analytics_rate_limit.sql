@@ -78,14 +78,13 @@ select is(
   false,
   'the 121st request in one fixed minute is rejected'
 );
-select between(
-  (select retry_after_seconds from public.authorize_and_consume_analytics_quota(
-    repeat('a', 64),
-    '20000000-0000-4000-8000-000000000001',
-    1
-  )),
-  1,
-  60,
+select ok(
+  (select retry_after_seconds between 1 and 60
+    from public.authorize_and_consume_analytics_quota(
+      repeat('a', 64),
+      '20000000-0000-4000-8000-000000000001',
+      1
+    )),
   'a rejected request receives a bounded retry delay'
 );
 
