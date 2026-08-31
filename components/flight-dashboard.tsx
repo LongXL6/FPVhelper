@@ -30,7 +30,7 @@ import {
   trainingSessionProgress,
 } from "@/lib/training-session-summary";
 import {
-  assessPilotLedgerCompleteness,
+  assessTrainingAttemptCandidate,
   normalizeAthleteCode,
   type TrainingSessionInvalidReason,
   type TrainingSessionMarkerKind,
@@ -341,8 +341,8 @@ export function FlightDashboard() {
       ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
       : `技术无效：${trainingSession.lastSession.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}`
     : null;
-  const lastSessionPilotLedger = trainingSession.lastSession
-    ? assessPilotLedgerCompleteness(trainingSession.lastSession)
+  const lastSessionAttemptCandidate = trainingSession.lastSession
+    ? assessTrainingAttemptCandidate(trainingSession.lastSession)
     : null;
   const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
   const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
@@ -788,10 +788,10 @@ export function FlightDashboard() {
             {lastSessionValidity && !trainingSession.isRecording ? (
               <>
                 <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
-                <p className={lastSessionPilotLedger?.complete ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>
-                  {lastSessionPilotLedger?.complete
-                    ? "试点台账完整：技术有效且已有非空复盘备注"
-                    : "试点台账不完整：需同时满足技术有效并保存非空复盘备注"}
+                <p className={lastSessionAttemptCandidate?.candidate ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>
+                  {lastSessionAttemptCandidate?.candidate
+                    ? "80% 验收候选：技术有效且已有非空复盘备注；仍需外部台账确认"
+                    : "尚不是 80% 验收候选：需同时满足技术有效并保存非空复盘备注"}
                 </p>
               </>
             ) : null}
@@ -868,9 +868,10 @@ export function FlightDashboard() {
         ) : (
           <div className="today-records-list">
             {trainingSession.allSessions.map((session) => {
-              const pilotLedger = assessPilotLedgerCompleteness(session);
+              const attemptCandidate = assessTrainingAttemptCandidate(session);
+              const sessionLabel = `${session.athleteCode ?? "未填写代号"} ${formatSessionStart(session.timing.wallClockStartedAt)}`;
               return (
-                <article key={session.id}>
+                <article key={session.id} aria-label={`训练 Session：${sessionLabel}`}>
                   <div><span>代号</span><b>{session.athleteCode ?? "—"}</b></div>
                   <div><span>开始（本地）</span><b>{formatSessionStart(session.timing.wallClockStartedAt)}</b></div>
                   <div><span>时长</span><b>{formatSessionDuration(session.durationMs)}</b></div>
@@ -878,12 +879,17 @@ export function FlightDashboard() {
                     <span>技术有效</span>
                     <b>{session.validity.valid ? "有效" : session.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}</b>
                   </div>
-                  <div className={pilotLedger.complete ? "record-valid" : "record-invalid"}>
-                    <span>试点台账完整</span>
-                    <b>{pilotLedger.complete ? "完整" : "不完整（需技术有效 + 非空备注）"}</b>
+                  <div className={attemptCandidate.candidate ? "record-valid" : "record-invalid"}>
+                    <span>80% 验收候选</span>
+                    <b>{attemptCandidate.candidate ? "满足基础条件（仍需外部台账）" : "不满足（需技术有效 + 非空备注）"}</b>
                   </div>
                   <div><span>导出状态</span><b>{session.exportedAt ? `已导出 ${session.exportCount} 次` : "未导出"}</b></div>
-                  <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.exportSession(session.id)}>
+                  <button
+                    className="mini-button mini-button--active"
+                    type="button"
+                    aria-label={`${session.exportedAt ? "再次导出" : "导出 JSON"}：${sessionLabel}`}
+                    onClick={() => void trainingSession.exportSession(session.id)}
+                  >
                     {session.exportedAt ? "再次导出" : "导出 JSON"}
                   </button>
                 </article>

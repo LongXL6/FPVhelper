@@ -7,7 +7,11 @@ import {
   serializeTrainingSession,
   withTrainingSessionNotes,
 } from "../lib/training-session";
-import { inspectTrainingSessionJson } from "./training-session-file-validator";
+import {
+  inspectTrainingSessionJson,
+  MAX_TRAINING_SESSION_FILE_BYTES,
+  trainingSessionFileSizeError,
+} from "./training-session-file-validator";
 
 function validSessionJson(notes = "") {
   const draft = createTrainingSessionDraft({
@@ -32,14 +36,19 @@ function validSessionJson(notes = "") {
 }
 
 describe("read-only Session JSON inspection", () => {
-  it("shows technical validity separately from pilot-ledger completeness", () => {
+  it("shows technical validity separately from the 80 percent attempt candidate", () => {
     const withoutReview = inspectTrainingSessionJson(validSessionJson());
     expect(withoutReview.technicalValidityLabel).toBe("有效");
-    expect(withoutReview.pilotLedgerLabel).toBe("不完整");
+    expect(withoutReview.attemptCandidateLabel).toBe("不满足");
 
     const reviewed = inspectTrainingSessionJson(validSessionJson("练习目标和复盘结论"));
     expect(reviewed.technicalValidityLabel).toBe("有效");
-    expect(reviewed.pilotLedgerLabel).toBe("完整");
+    expect(reviewed.attemptCandidateLabel).toBe("满足基础条件");
+  });
+
+  it("rejects oversized files before reading their text", () => {
+    expect(trainingSessionFileSizeError(MAX_TRAINING_SESSION_FILE_BYTES)).toBeNull();
+    expect(trainingSessionFileSizeError(MAX_TRAINING_SESSION_FILE_BYTES + 1)).toContain("超过 16 MB");
   });
 
   it("uses parseTrainingSession validation and rejects unrelated JSON", () => {

@@ -30,5 +30,9 @@ export function getOrCreateWorkstationId(
 
 export function getOrCreateBrowserWorkstationId() {
   if (typeof window === "undefined" || typeof crypto === "undefined" || !("randomUUID" in crypto)) return null;
-  return getOrCreateWorkstationId(window.localStorage, () => crypto.randomUUID());
+  try {
+    return getOrCreateWorkstationId(window.localStorage, () => crypto.randomUUID());
+  } catch {
+    return null;
+  }
 }

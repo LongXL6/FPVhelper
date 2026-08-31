@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getOrCreateBrowserWorkstationId,
   getOrCreateWorkstationId,
   isWorkstationId,
   WORKSTATION_ID_STORAGE_KEY,
@@ -7,6 +8,10 @@ import {
 
 const FIRST_ID = "10000000-0000-4000-8000-000000000001";
 const SECOND_ID = "20000000-0000-4000-8000-000000000002";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("local workstation identity", () => {
   it("creates one persisted UUID and reuses it across sessions", () => {
@@ -30,5 +35,16 @@ describe("local workstation identity", () => {
     expect(isWorkstationId("machine-name")).toBe(false);
     expect(getOrCreateWorkstationId(storage, () => FIRST_ID)).toBeNull();
     expect(getOrCreateWorkstationId(storage, () => "machine-name")).toBeNull();
+  });
+
+  it("returns null when browser localStorage access itself is denied", () => {
+    const deniedWindow = {};
+    Object.defineProperty(deniedWindow, "localStorage", {
+      get() { throw new DOMException("", "SecurityError"); },
+    });
+    vi.stubGlobal("window", deniedWindow);
+    vi.stubGlobal("crypto", { randomUUID: () => FIRST_ID });
+
+    expect(getOrCreateBrowserWorkstationId()).toBeNull();
   });
 });

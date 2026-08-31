@@ -15,7 +15,7 @@ export type TrainingSessionInvalidReason =
   | "non_monotonic"
   | "no_athlete_code"
   | "interrupted";
-export type PilotLedgerIncompleteReason = "technically_invalid" | "missing_notes";
+export type TrainingAttemptCandidateReason = "technically_invalid" | "missing_notes";
 
 export interface TrainingSessionMarker {
   id: string;
@@ -61,9 +61,9 @@ export interface TrainingSessionAssessment {
   reasons: TrainingSessionInvalidReason[];
 }
 
-export interface PilotLedgerAssessment {
-  complete: boolean;
-  reasons: PilotLedgerIncompleteReason[];
+export interface TrainingAttemptCandidateAssessment {
+  candidate: boolean;
+  reasons: TrainingAttemptCandidateReason[];
 }
 
 export interface TrainingSession {
@@ -360,11 +360,11 @@ export function assessTrainingSession(session: AssessableTrainingSession | Train
   return { valid: reasons.length === 0, reasons };
 }
 
-export function assessPilotLedgerCompleteness(session: TrainingSession): PilotLedgerAssessment {
-  const reasons: PilotLedgerIncompleteReason[] = [];
+export function assessTrainingAttemptCandidate(session: TrainingSession): TrainingAttemptCandidateAssessment {
+  const reasons: TrainingAttemptCandidateReason[] = [];
   if (!session.validity.valid) reasons.push("technically_invalid");
   if (!normalizeSessionNotes(session.notes ?? "")) reasons.push("missing_notes");
-  return { complete: reasons.length === 0, reasons };
+  return { candidate: reasons.length === 0, reasons };
 }
 
 function channelsFromLegacyRc(rc: TrainingSessionSample["rc"]) {

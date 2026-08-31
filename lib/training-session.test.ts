@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_TELEMETRY } from "./telemetry";
 import {
-  assessPilotLedgerCompleteness,
+  assessTrainingAttemptCandidate,
   appendTrainingSessionSample,
   appendTrainingSessionMarker,
   createTrainingSessionDraft,
   finishTrainingSession,
   markTrainingSessionExported,
   parseTrainingSession,
+  parseTrainingSessionDraft,
   recoverInterruptedTrainingSession,
   serializeTrainingSession,
   trainingSessionFilename,
@@ -166,20 +167,20 @@ describe("local training session schema v2", () => {
     expect(parseTrainingSession(serializeTrainingSession(secondExport))).toEqual(secondExport);
   });
 
-  it("keeps technical validity separate from pilot-ledger completeness", () => {
+  it("keeps technical validity separate from the 80 percent attempt candidate", () => {
     const valid = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
     expect(valid.validity).toEqual({ valid: true, reasons: [] });
-    expect(assessPilotLedgerCompleteness(valid)).toEqual({ complete: false, reasons: ["missing_notes"] });
+    expect(assessTrainingAttemptCandidate(valid)).toEqual({ candidate: false, reasons: ["missing_notes"] });
 
     const reviewed = withTrainingSessionNotes(valid, "压弯过早，下轮延后入弯");
     expect(reviewed.validity).toEqual(valid.validity);
-    expect(assessPilotLedgerCompleteness(reviewed)).toEqual({ complete: true, reasons: [] });
+    expect(assessTrainingAttemptCandidate(reviewed)).toEqual({ candidate: true, reasons: [] });
 
     const invalidReviewed = withTrainingSessionNotes(
       finishTrainingSession(createDraft("demo"), STARTED_AT + 1_000, STARTED_MONOTONIC + 1_000),
       "演示记录复盘",
     );
-    expect(assessPilotLedgerCompleteness(invalidReviewed)).toEqual({ complete: false, reasons: ["technically_invalid"] });
+    expect(assessTrainingAttemptCandidate(invalidReviewed)).toEqual({ candidate: false, reasons: ["technically_invalid"] });
   });
 
   it("reports mixed, short, duplicate, non-monotonic, anonymous and interrupted records", () => {
@@ -212,6 +213,19 @@ describe("local training session schema v2", () => {
     expect(recovered.durationMs).toBe(200);
     expect(recovered.endedAt).toBe(new Date(STARTED_AT + 200).toISOString());
     expect(recovered.validity.reasons).toContain("interrupted");
+  });
+
+  it("keeps old schema v2 drafts readable when workstation metadata did not exist", () => {
+    const currentDraft = createDraft();
+    const legacyDraft = { ...currentDraft } as Record<string, unknown>;
+    delete legacyDraft.workstationId;
+    delete legacyDraft.build;
+
+    expect(parseTrainingSessionDraft(legacyDraft)).toMatchObject({
+      schemaVersion: 2,
+      workstationId: null,
+      build: null,
+    });
   });
 
   it("migrates exported schema v1 sessions and derives the four legacy RC channels", () => {

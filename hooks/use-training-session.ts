@@ -252,25 +252,22 @@ export function useTrainingSession({
     setIsStarting(true);
     setStorageError(null);
     const id = uniqueLocalId("session");
-    const workstationId = workstationIdRef.current ?? getOrCreateBrowserWorkstationId();
-    if (!workstationId) {
-      setStorageError("开始记录失败：无法创建并持久化工作站 ID，请检查浏览器本地存储权限");
-      startingRef.current = false;
-      setIsStarting(false);
-      return;
-    }
-    workstationIdRef.current = workstationId;
-    const draft = createTrainingSessionDraft({
-      id,
-      workstationId,
-      build: PUBLIC_APP_BUILD,
-      athleteCode,
-      source,
-      startedAtEpochMs: Date.now(),
-      startedMonotonicMs: performance.now(),
-    });
 
     try {
+      const workstationId = workstationIdRef.current ?? getOrCreateBrowserWorkstationId();
+      if (!workstationId) {
+        throw new Error("无法创建并持久化工作站 ID，请检查浏览器本地存储权限");
+      }
+      workstationIdRef.current = workstationId;
+      const draft = createTrainingSessionDraft({
+        id,
+        workstationId,
+        build: PUBLIC_APP_BUILD,
+        athleteCode,
+        source,
+        startedAtEpochMs: Date.now(),
+        startedMonotonicMs: performance.now(),
+      });
       await store.saveDraft(draft);
       draftRef.current = draft;
       pendingSessionRef.current = null;

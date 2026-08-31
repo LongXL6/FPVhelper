@@ -2,25 +2,33 @@
 
 import { useState, type ChangeEvent } from "react";
 import {
-  assessPilotLedgerCompleteness,
+  assessTrainingAttemptCandidate,
   parseTrainingSession,
   type TrainingSession,
 } from "../lib/training-session";
 
+export const MAX_TRAINING_SESSION_FILE_BYTES = 16 * 1_024 * 1_024;
+
 export interface TrainingSessionFileInspection {
   session: TrainingSession;
   technicalValidityLabel: "有效" | "无效";
-  pilotLedgerLabel: "完整" | "不完整";
+  attemptCandidateLabel: "满足基础条件" | "不满足";
 }
 
 export function inspectTrainingSessionJson(input: string): TrainingSessionFileInspection {
   const session = parseTrainingSession(input);
-  const pilotLedger = assessPilotLedgerCompleteness(session);
+  const attemptCandidate = assessTrainingAttemptCandidate(session);
   return {
     session,
     technicalValidityLabel: session.validity.valid ? "有效" : "无效",
-    pilotLedgerLabel: pilotLedger.complete ? "完整" : "不完整",
+    attemptCandidateLabel: attemptCandidate.candidate ? "满足基础条件" : "不满足",
   };
+}
+
+export function trainingSessionFileSizeError(size: number) {
+  return size > MAX_TRAINING_SESSION_FILE_BYTES
+    ? "文件超过 16 MB，请确认选择的是单条 FPVHelper Session JSON"
+    : null;
 }
 
 function formatDuration(durationMs: number) {
@@ -48,6 +56,8 @@ export function TrainingSessionFileValidator() {
     setInspection(null);
     setError(null);
     try {
+      const sizeError = trainingSessionFileSizeError(file.size);
+      if (sizeError) throw new Error(sizeError);
       setInspection(inspectTrainingSessionJson(await file.text()));
     } catch (inspectionError) {
       setError(validationErrorMessage(inspectionError));
@@ -74,7 +84,8 @@ export function TrainingSessionFileValidator() {
           <span>时长<b>{formatDuration(inspection.session.durationMs)}</b></span>
           <span>样本<b>{inspection.session.sampleCount.toLocaleString()}</b></span>
           <span className={inspection.session.validity.valid ? "record-valid" : "record-invalid"}>技术有效<b>{inspection.technicalValidityLabel}</b></span>
-          <span className={inspection.pilotLedgerLabel === "完整" ? "record-valid" : "record-invalid"}>复盘完整（试点台账）<b>{inspection.pilotLedgerLabel}</b></span>
+          <span className={inspection.attemptCandidateLabel === "满足基础条件" ? "record-valid" : "record-invalid"}>80% 验收候选<b>{inspection.attemptCandidateLabel}</b></span>
+          <small>这里只检查技术有效与非空复盘备注；仍需外部台账、导出重解析和授权记录确认。</small>
         </div>
       ) : null}
       {error ? <p className="session-file-error" role="alert">{fileName}：{error}</p> : null}
