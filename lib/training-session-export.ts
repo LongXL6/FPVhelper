@@ -21,7 +21,7 @@ export type TrainingSessionSaveFilePicker = (options: {
   }>;
 }) => Promise<TrainingSessionFileHandle>;
 
-function trainingSessionBlob(session: TrainingSession) {
+export function createTrainingSessionBlob(session: TrainingSession) {
   return new Blob([serializeTrainingSession(session)], { type: "application/json" });
 }
 
@@ -35,7 +35,7 @@ export async function saveTrainingSessionWithPicker(
   session: TrainingSession,
   picker: TrainingSessionSaveFilePicker,
 ) {
-  const blob = trainingSessionBlob(session);
+  const blob = createTrainingSessionBlob(session);
   const handle = await picker({
     suggestedName: trainingSessionFilename(session),
     types: [{
@@ -50,7 +50,7 @@ export async function saveTrainingSessionWithPicker(
 }
 
 export function beginUnconfirmedTrainingSessionDownload(session: TrainingSession) {
-  const blob = trainingSessionBlob(session);
+  const blob = createTrainingSessionBlob(session);
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");

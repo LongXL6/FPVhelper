@@ -425,6 +425,17 @@ export function FlightDashboard() {
               : linkState === "unknown"
                 ? "等待 MSP_STATUS_EX 确认遥控链路"
                 : "已满足开始条件";
+  const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
+    ? `自动保存目录：${trainingSession.exportDirectoryName}`
+    : trainingSession.exportDirectoryState === "permission_required"
+      ? `需要重新授权：${trainingSession.exportDirectoryName ?? "已保存的目录"}`
+      : trainingSession.exportDirectoryState === "unsupported"
+        ? "当前浏览器不支持目录自动保存，将退回普通下载"
+        : trainingSession.exportDirectoryState === "loading"
+          ? "正在检查自动保存目录"
+          : trainingSession.exportDirectoryState === "error"
+            ? "目录设置读取失败，可重新选择"
+            : "尚未选择自动保存目录，将退回普通下载";
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
       ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
@@ -982,8 +993,30 @@ export function FlightDashboard() {
                 stickOverlayMode,
               })}
             />
-            <span>结束成功后自动下载 JSON</span>
+            <span>结束成功后自动保存 JSON</span>
           </label>
+          <div className="session-export-directory">
+            <span>
+              <b>自动保存文件夹</b>
+              <small>{exportDirectoryCopy}</small>
+            </span>
+            <span className="session-export-directory-actions">
+              <button
+                className="button session-directory-button"
+                type="button"
+                disabled={controlsLocked || trainingSession.exportDirectoryState === "loading" || trainingSession.exportDirectoryState === "unsupported"}
+                onClick={() => void trainingSession.configureExportDirectory()}
+              >{trainingSession.exportDirectoryState === "permission_required" ? "重新授权 / 更换" : trainingSession.exportDirectoryName ? "更换文件夹" : "选择文件夹"}</button>
+              {trainingSession.exportDirectoryName ? (
+                <button
+                  className="button session-directory-button"
+                  type="button"
+                  disabled={controlsLocked}
+                  onClick={() => void trainingSession.clearExportDirectory()}
+                >清除</button>
+              ) : null}
+            </span>
+          </div>
         </div>
 
         <TrainingStorageIntegrityNotice integrity={trainingSession.storageIntegrity} />

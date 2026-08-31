@@ -30,6 +30,15 @@ import {
   saveTrainingSessionWithPicker,
 } from "@/lib/training-session-export";
 import {
+  createTrainingSessionDirectoryStore,
+  getBrowserTrainingSessionDirectoryPicker,
+  getTrainingSessionDirectoryPermission,
+  requestTrainingSessionDirectoryPermission,
+  saveTrainingSessionToDirectory,
+  type TrainingSessionDirectoryHandle,
+  type TrainingSessionDirectoryStore,
+} from "@/lib/training-session-export-directory";
+import {
   countUniqueTrainingSamples,
   shouldWarnBeforeTrainingExit,
 } from "@/lib/training-session-summary";
@@ -51,10 +60,18 @@ interface UseTrainingSessionOptions {
 export interface TrainingSessionExportReceipt {
   receiptId: string;
   session: TrainingSession;
-  method: "download" | "auto";
+  method: "download" | "folder";
   bytes: number;
   exportedAtEpochMs: number;
 }
+
+export type TrainingSessionDirectoryState =
+  | "loading"
+  | "unsupported"
+  | "unconfigured"
+  | "permission_required"
+  | "ready"
+  | "error";
 
 interface TrainingSessionController {
   isRecording: boolean;
@@ -77,6 +94,8 @@ interface TrainingSessionController {
   unexportedCount: number;
   hasPendingSave: boolean;
   lastExport: TrainingSessionExportReceipt | null;
+  exportDirectoryState: TrainingSessionDirectoryState;
+  exportDirectoryName: string | null;
   canStart: boolean;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
@@ -84,6 +103,8 @@ interface TrainingSessionController {
   addMarker: (kind: Exclude<TrainingSessionMarkerKind, "manual">) => Promise<void>;
   updateLastSessionNotes: (notes: string) => Promise<void>;
   exportSession: (sessionId: string) => Promise<void>;
+  configureExportDirectory: () => Promise<void>;
+  clearExportDirectory: () => Promise<void>;
 }
 
 function uniqueLocalId(prefix: string) {
@@ -93,6 +114,10 @@ function uniqueLocalId(prefix: string) {
 
 function storageErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : "浏览器本地训练记录存储失败";
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 export function useTrainingSession({
@@ -123,9 +148,13 @@ export function useTrainingSession({
   const [unexportedValidCount, setUnexportedValidCount] = useState(0);
   const [hasPendingSave, setHasPendingSave] = useState(false);
   const [lastExport, setLastExport] = useState<TrainingSessionExportReceipt | null>(null);
+  const [exportDirectoryState, setExportDirectoryState] = useState<TrainingSessionDirectoryState>("loading");
+  const [exportDirectoryName, setExportDirectoryName] = useState<string | null>(null);
   const draftRef = useRef<TrainingSessionDraft | null>(null);
   const pendingSessionRef = useRef<TrainingSession | null>(null);
   const storeRef = useRef<TrainingSessionStore | null>(null);
+  const directoryStoreRef = useRef<TrainingSessionDirectoryStore | null>(null);
+  const directoryHandleRef = useRef<TrainingSessionDirectoryHandle | null>(null);
   const sessionsRef = useRef<TrainingSession[]>([]);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
@@ -199,6 +228,154 @@ export function useTrainingSession({
       setStorageError(`JSON 文件已写入，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
     }
   }, [refreshSessions]);
+
+  const exportStoredSessionToDirectory = useCallback(async (
+    session: TrainingSession,
+    store: TrainingSessionStore,
+  ) => {
+    const handle = directoryHandleRef.current;
+    if (!handle) {
+      return { confirmed: false, reason: "尚未选择自动保存文件夹" };
+    }
+
+    const permission = await getTrainingSessionDirectoryPermission(handle);
+    if (permission !== "granted") {
+      setExportDirectoryState("permission_required");
+      return { confirmed: false, reason: "自动保存文件夹需要重新授权" };
+    }
+
+    const exportedAtEpochMs = Date.now();
+    const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
+    let bytes: number;
+    try {
+      bytes = await saveTrainingSessionToDirectory(exportedSession, handle);
+    } catch (exportError) {
+      return {
+        confirmed: false,
+        reason: `自动保存文件夹写入失败：${storageErrorMessage(exportError)}`,
+      };
+    }
+
+    setLastExport({
+      receiptId: `${exportedSession.id}:${exportedSession.exportCount}`,
+      session: exportedSession,
+      method: "folder",
+      bytes,
+      exportedAtEpochMs,
+    });
+    setExportNotice(`已确认 JSON 写入“${handle.name}”；文件关闭完成。`);
+    setExportWarning(null);
+
+    try {
+      await store.saveSession(exportedSession);
+      await refreshSessions(store);
+      setStorageError(null);
+    } catch (saveError) {
+      setStorageError(`JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+    }
+    return { confirmed: true, reason: null };
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!getBrowserTrainingSessionDirectoryPicker()) {
+      let cancelled = false;
+      void Promise.resolve().then(() => {
+        if (!cancelled) setExportDirectoryState("unsupported");
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let cancelled = false;
+    const directoryStore = createTrainingSessionDirectoryStore();
+    directoryStoreRef.current = directoryStore;
+    void (async () => {
+      try {
+        const handle = await directoryStore.load();
+        if (cancelled) return;
+        directoryHandleRef.current = handle;
+        setExportDirectoryName(handle?.name ?? null);
+        if (!handle) {
+          setExportDirectoryState("unconfigured");
+          return;
+        }
+        const permission = await getTrainingSessionDirectoryPermission(handle);
+        if (cancelled) return;
+        setExportDirectoryState(permission === "granted" ? "ready" : "permission_required");
+      } catch (directoryError) {
+        if (cancelled) return;
+        setExportDirectoryState("error");
+        setExportWarning(`无法读取自动保存文件夹设置：${storageErrorMessage(directoryError)}`);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      directoryHandleRef.current = null;
+      if (directoryStoreRef.current === directoryStore) directoryStoreRef.current = null;
+      void directoryStore.close();
+    };
+  }, []);
+
+  const configureExportDirectory = useCallback(async () => {
+    const picker = getBrowserTrainingSessionDirectoryPicker();
+    const directoryStore = directoryStoreRef.current;
+    if (!picker || !directoryStore) {
+      setExportDirectoryState("unsupported");
+      setExportWarning("当前浏览器不支持文件夹自动保存；请使用最新版 Chrome/Edge，或继续手动导出。");
+      return;
+    }
+
+    try {
+      const existingHandle = directoryHandleRef.current;
+      if (existingHandle && await requestTrainingSessionDirectoryPermission(existingHandle)) {
+        setExportDirectoryState("ready");
+        setExportDirectoryName(existingHandle.name);
+        setExportWarning(null);
+        setExportNotice(`“${existingHandle.name}”已获得自动保存权限。`);
+        return;
+      }
+
+      const handle = await picker({
+        id: "fpvhelper-training-sessions",
+        mode: "readwrite",
+        startIn: "downloads",
+      });
+      if (!await requestTrainingSessionDirectoryPermission(handle)) {
+        setExportDirectoryState(existingHandle ? "permission_required" : "unconfigured");
+        setExportDirectoryName(existingHandle?.name ?? null);
+        setExportWarning("新文件夹未获得读写权限，设置未更改；自动保存仍会退回普通浏览器下载。");
+        return;
+      }
+      await directoryStore.save(handle);
+      directoryHandleRef.current = handle;
+      setExportDirectoryState("ready");
+      setExportDirectoryName(handle.name);
+      setExportWarning(null);
+      setExportNotice(`已选择“${handle.name}”；后续有效结束会自动写入 JSON。`);
+    } catch (directoryError) {
+      if (isAbortError(directoryError)) return;
+      setExportDirectoryState("error");
+      setExportWarning(`自动保存文件夹设置失败：${storageErrorMessage(directoryError)}`);
+    }
+  }, []);
+
+  const clearExportDirectory = useCallback(async () => {
+    const directoryStore = directoryStoreRef.current;
+    if (!directoryStore) return;
+    try {
+      await directoryStore.clear();
+      directoryHandleRef.current = null;
+      setExportDirectoryName(null);
+      setExportDirectoryState("unconfigured");
+      setExportWarning(null);
+      setExportNotice("已清除自动保存文件夹；需要时可重新选择。");
+    } catch (directoryError) {
+      setExportDirectoryState("error");
+      setExportWarning(`清除自动保存文件夹失败：${storageErrorMessage(directoryError)}`);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,14 +503,18 @@ export function useTrainingSession({
     }
 
     if (sessionStored && autoExport && storedSession) {
-      const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
-      setExportNotice(feedback.notice);
-      setExportWarning(feedback.warning);
+      const directoryResult = await exportStoredSessionToDirectory(storedSession, store);
+      if (!directoryResult.confirmed) {
+        const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
+        setExportNotice(feedback.notice);
+        setExportWarning(feedback.warning
+          ?? `${directoryResult.reason}；已退回普通浏览器下载，但浏览器不会确认文件是否真正落盘。Session 仍安全保存在本机且保持未导出状态。`);
+      }
     }
 
     finishingRef.current = false;
     setIsFinishing(false);
-  }, [autoExport, refreshSessions]);
+  }, [autoExport, exportStoredSessionToDirectory, refreshSessions]);
 
   const finishRecording = useCallback(async (
     interrupted: boolean,
@@ -507,6 +688,8 @@ export function useTrainingSession({
     unexportedCount: sessions.filter((session) => session.exportedAt === null).length,
     hasPendingSave,
     lastExport,
+    exportDirectoryState,
+    exportDirectoryName,
     canStart,
     startRecording,
     stopRecording,
@@ -514,5 +697,7 @@ export function useTrainingSession({
     addMarker,
     updateLastSessionNotes,
     exportSession,
+    configureExportDirectory,
+    clearExportDirectory,
   };
 }
