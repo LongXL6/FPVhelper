@@ -9,6 +9,7 @@ import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
 } from "@/components/training-storage-integrity-notice";
+import { AnalyticsWorkstationId } from "@/components/analytics-workstation-id";
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
@@ -477,7 +478,7 @@ export function FlightDashboard() {
     : analytics.status.reason === "configuration"
       ? "当前发布未开启客户统计。训练、记录与导出不受影响。"
       : analytics.status.reason === "opted_out"
-        ? "本机已永久关闭并清除了令牌与待发送队列。"
+        ? "本机已关闭统计并清除了令牌与待发送队列；随机工作站 ID 仍保留给本地 Session 台账，不会因此发送。"
         : analytics.status.reason === "rejected_token"
           ? "工作站令牌已被服务端拒绝；待发送事件仍保留在本机，请粘贴新令牌。"
         : analytics.status.state === "waiting_token"
@@ -1145,31 +1146,34 @@ export function FlightDashboard() {
           <p>{analyticsStatusCopy}</p>
         </div>
         {analytics.status.state === "waiting_token" ? (
-          <form
-            className="analytics-install-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const installed = analytics.installToken(analyticsTokenDraft.trim());
-              setAnalyticsTokenDraft("");
-              setAnalyticsInstallMessage(installed ? "工作站令牌已安装，统计已开启。" : "令牌格式无效或本机仍处于关闭状态。");
-            }}
-          >
-            <label htmlFor="analytics-workstation-token">
-              {analytics.status.reason === "rejected_token" ? "替换工作站令牌" : "一次性安装工作站令牌"}
-            </label>
-            <div>
-              <input
-                id="analytics-workstation-token"
-                type="password"
-                value={analyticsTokenDraft}
-                autoComplete="new-password"
-                spellCheck={false}
-                placeholder="由俱乐部管理员粘贴"
-                onChange={(event) => setAnalyticsTokenDraft(event.target.value)}
-              />
-              <button className="mini-button mini-button--active" type="submit" disabled={!analyticsTokenDraft.trim()}>安装并开启</button>
-            </div>
-          </form>
+          <div className="analytics-provisioning">
+            <AnalyticsWorkstationId workstationId={analytics.status.workstationId} />
+            <form
+              className="analytics-install-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const installed = analytics.installToken(analyticsTokenDraft.trim());
+                setAnalyticsTokenDraft("");
+                setAnalyticsInstallMessage(installed ? "工作站令牌已安装，统计已开启。" : "令牌格式无效或本机仍处于关闭状态。");
+              }}
+            >
+              <label htmlFor="analytics-workstation-token">
+                {analytics.status.reason === "rejected_token" ? "替换工作站令牌" : "一次性安装工作站令牌"}
+              </label>
+              <div>
+                <input
+                  id="analytics-workstation-token"
+                  type="password"
+                  value={analyticsTokenDraft}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  placeholder="由俱乐部管理员粘贴"
+                  onChange={(event) => setAnalyticsTokenDraft(event.target.value)}
+                />
+                <button className="mini-button mini-button--active" type="submit" disabled={!analyticsTokenDraft.trim()}>安装并开启</button>
+              </div>
+            </form>
+          </div>
         ) : null}
         {analytics.status.reason === "opted_out" ? (
           <button

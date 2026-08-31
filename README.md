@@ -43,6 +43,20 @@ Pilot Radio → 该选手预绑定的 Ground ELRS RX → 该选手独立 Bridge 
 
 假名化统计只允许随机工作站 ID、白名单事件、枚举环境类别、分类错误码、Session 时长与样本数等摘要；禁止姓名、选手代号、原始 UA、设备名、串口名、原始错误文本、视频、原始 RC 与 Binding phrase。不得引入第三方 analytics SDK。
 
+### 统计工作站登记
+
+独立 FPVHelper analytics Supabase、Vercel server-only 配置、客户规范域、书面确认与工程验收任一未完成时，生产统计保持关闭，不生成、不登记、不安装 token。配置完成后，页面在 `waiting_token` 状态显示可复制的完整随机 workstation UUID；复制不会启用或发送统计，该 ID 也作为本地 Session JSON 的工作站台账身份，关闭统计不会删除它。
+
+管理员只使用仓库内 CLI 生成登记材料：
+
+```bash
+npm run analytics:token -- issue  --workstation-id <UUID> --club-code <CODE>
+npm run analytics:token -- rotate --workstation-id <UUID> --club-code <CODE>
+npm run analytics:token -- revoke --workstation-id <UUID> --club-code <CODE>
+```
+
+CLI 不连接数据库、不接收 secret/数据库 URL/现有 token 参数。`issue`/`rotate` 生成 256-bit token，明文仅在私密终端显示一次；SQL/JSON 只包含 SHA-256 hash。完整的生成→登记→安装→验证→轮换/撤销流程见 [`docs/analytics-provisioning-runbook.md`](docs/analytics-provisioning-runbook.md)。
+
 ### Session JSON 保管
 
 - `athleteCode` 和 `notes` 是假名化训练数据，不是匿名数据；知道线下映射的人仍可识别选手。
@@ -80,6 +94,7 @@ npm run dev
 - 硬件与换人：[`docs/hardware-kit.md`](docs/hardware-kit.md)、[`docs/ground-rx-handoff-sop.md`](docs/ground-rx-handoff-sop.md)、[`docs/templates/hardware-acceptance-record.md`](docs/templates/hardware-acceptance-record.md)
 - 训练与对表：[`docs/templates/training-ledger.md`](docs/templates/training-ledger.md)、[`docs/dvr-alignment.md`](docs/dvr-alignment.md)
 - 数据与同意：[`docs/quote-data-appendix-draft.md`](docs/quote-data-appendix-draft.md)、[`docs/templates/guardian-consent-template.md`](docs/templates/guardian-consent-template.md)
+- 统计登记：[`docs/analytics-provisioning-runbook.md`](docs/analytics-provisioning-runbook.md)
 - 实验与协作：[`docs/vision-lap-experiment.md`](docs/vision-lap-experiment.md)、[`docs/development/agent-worktree-workflow.md`](docs/development/agent-worktree-workflow.md)
 - 实施规格与商业设计底稿：[`strategy-review-2026-08-31.md`](docs/designs/strategy-review-2026-08-31.md)、[`analytics-tracking-plan.md`](docs/designs/analytics-tracking-plan.md)、[`fpv-club-pricing-license.md`](docs/designs/fpv-club-pricing-license.md)
 

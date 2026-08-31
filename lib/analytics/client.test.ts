@@ -7,6 +7,7 @@ import {
 
 const TOKEN_A = `fpvh_ingest_${"a".repeat(43)}`;
 const TOKEN_B = `fpvh_ingest_${"b".repeat(43)}`;
+const FIRST_WORKSTATION_ID = "10000000-0000-4000-8000-000000000001";
 
 function createHarness(options: {
   search?: string;
@@ -108,6 +109,12 @@ describe("analytics client privacy and delivery", () => {
       enabled: true, environment: "production", runtime: harness.runtime, allowInTest: true, build: "test",
     });
     expect(missingToken.init()).toBe(false);
+    expect(missingToken.getLocalStatus()).toEqual({
+      state: "waiting_token",
+      reason: "missing_token",
+      workstationId: FIRST_WORKSTATION_ID,
+    });
+    expect(harness.values.get("fpvhelper.workstation.v1")).toBe(FIRST_WORKSTATION_ID);
     expect(harness.requests).toHaveLength(0);
 
     const disabled = new AnalyticsClient({
@@ -145,17 +152,20 @@ describe("analytics client privacy and delivery", () => {
     })).toEqual({ state: "off", reason: "hostname" });
     expect(resolveAnalyticsLocalStatus({
       hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: false, hasToken: false,
-    })).toEqual({ state: "waiting_token", reason: "missing_token" });
+      workstationId: FIRST_WORKSTATION_ID,
+    })).toEqual({ state: "waiting_token", reason: "missing_token", workstationId: FIRST_WORKSTATION_ID });
     expect(resolveAnalyticsLocalStatus({
       hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: false, hasToken: true,
+      workstationId: FIRST_WORKSTATION_ID,
     })).toEqual({ state: "enabled", reason: "installed" });
     expect(resolveAnalyticsLocalStatus({
       hostname: CUSTOMER_ANALYTICS_HOSTNAME,
       configured: true,
       optedOut: false,
       hasToken: true,
+      workstationId: FIRST_WORKSTATION_ID,
       authorizationBlocked: true,
-    })).toEqual({ state: "waiting_token", reason: "rejected_token" });
+    })).toEqual({ state: "waiting_token", reason: "rejected_token", workstationId: FIRST_WORKSTATION_ID });
     expect(resolveAnalyticsLocalStatus({
       hostname: CUSTOMER_ANALYTICS_HOSTNAME, configured: true, optedOut: true, hasToken: true,
     })).toEqual({ state: "off", reason: "opted_out" });
@@ -239,8 +249,12 @@ describe("analytics client privacy and delivery", () => {
     client.track("overlay_layout_reset", overlayProps());
     expect(await client.flush()).toBe(false);
     expect(client.getQueueLength()).toBe(1);
-    expect(client.getLocalStatus()).toEqual({ state: "waiting_token", reason: "rejected_token" });
-    expect(observedStatuses.at(-1)).toEqual({ state: "waiting_token", reason: "rejected_token" });
+    expect(client.getLocalStatus()).toEqual({
+      state: "waiting_token", reason: "rejected_token", workstationId: FIRST_WORKSTATION_ID,
+    });
+    expect(observedStatuses.at(-1)).toEqual({
+      state: "waiting_token", reason: "rejected_token", workstationId: FIRST_WORKSTATION_ID,
+    });
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
     harness.emit("pagehide");
     expect(harness.beacons).toHaveLength(0);
@@ -322,16 +336,19 @@ describe("analytics client privacy and delivery", () => {
     client.track("overlay_layout_reset", overlayProps());
     client.optOut();
     expect(harness.values.get("fpvhelper.analytics.opt-out.v1")).toBe("1");
-    expect(harness.values.has("fpvhelper.workstation.v1")).toBe(false);
+    expect(harness.values.get("fpvhelper.workstation.v1")).toBe(FIRST_WORKSTATION_ID);
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.queue.v1")).toBe(false);
     expect(client.getQueueLength()).toBe(0);
+    expect(client.getWorkstationId()).toBe(FIRST_WORKSTATION_ID);
+    expect(client.getLocalStatus()).toEqual({ state: "off", reason: "opted_out" });
     expect(client.setIngestToken(TOKEN_A)).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
   });
 
   it("?analytics=off persists opt-out and clears pre-existing local data", () => {
     const harness = createHarness({ search: "?analytics=off" });
+    harness.values.set("fpvhelper.workstation.v1", FIRST_WORKSTATION_ID);
     harness.values.set("fpvhelper.analytics.ingest-token.v1", TOKEN_A);
     harness.values.set("fpvhelper.analytics.queue.v1", "[{}]");
     const client = new AnalyticsClient({
@@ -339,9 +356,10 @@ describe("analytics client privacy and delivery", () => {
     });
     expect(client.init()).toBe(false);
     expect(harness.values.get("fpvhelper.analytics.opt-out.v1")).toBe("1");
-    expect(harness.values.has("fpvhelper.workstation.v1")).toBe(false);
+    expect(harness.values.get("fpvhelper.workstation.v1")).toBe(FIRST_WORKSTATION_ID);
     expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
     expect(harness.values.has("fpvhelper.analytics.queue.v1")).toBe(false);
+    expect(harness.requests).toHaveLength(0);
   });
 
   it("requires an explicit reactivation before a permanently opted-out workstation can reinstall", () => {
@@ -355,7 +373,11 @@ describe("analytics client privacy and delivery", () => {
     expect(client.setIngestToken(TOKEN_B)).toBe(false);
 
     expect(client.prepareReactivation()).toBe(true);
-    expect(client.getLocalStatus()).toEqual({ state: "waiting_token", reason: "missing_token" });
+    expect(client.getLocalStatus()).toEqual({
+      state: "waiting_token",
+      reason: "missing_token",
+      workstationId: FIRST_WORKSTATION_ID,
+    });
     expect(client.setIngestToken(TOKEN_B)).toBe(true);
     expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
   });

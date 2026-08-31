@@ -58,6 +58,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background-size: 28px 28px;
 }
 
+.app-error-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--carbon);
+}
+.app-error-card { width: min(560px, 100%); padding: 28px; border: 1px solid var(--line); background: var(--panel); }
+.app-error-card > span { color: var(--signal); font: 700 9px/1 var(--mono); letter-spacing: 0.12em; }
+.app-error-card h1 { margin: 12px 0 0; font: 800 30px/1.1 var(--display); }
+.app-error-card p { margin: 14px 0 20px; color: var(--muted); font: 500 12px/1.6 var(--mono); }
+
 .topbar {
   min-height: 88px;
   display: grid;
@@ -675,6 +687,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .analytics-card h2 { margin: 5px 0 0; font: 700 14px/1 var(--display); }
 .analytics-card p { max-width: 760px; margin: 7px 0 0; color: var(--quiet); font: 500 9px/1.5 var(--mono); }
 .analytics-card > small { grid-column: 1 / -1; color: var(--muted); font: 600 9px/1.4 var(--mono); }
+.analytics-provisioning { display: grid; gap: 10px; }
+.analytics-workstation-id { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 8px; }
+.analytics-workstation-id > span { grid-column: 1 / -1; color: var(--muted); font: 700 8px/1 var(--mono); letter-spacing: 0.08em; }
+.analytics-workstation-id code { overflow-wrap: anywhere; color: var(--signal); font: 600 10px/1.4 var(--mono); user-select: all; }
+.analytics-workstation-id > small { grid-column: 1 / -1; color: var(--quiet); font: 500 8px/1.4 var(--mono); }
 .analytics-install-form { display: grid; gap: 7px; }
 .analytics-install-form label { color: var(--muted); font: 700 8px/1 var(--mono); letter-spacing: 0.08em; }
 .analytics-install-form > div { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 7px; }

@@ -18,6 +18,7 @@
 - [ ] 每位参训选手已有独立、预绑定的地面 Bridge FC + ELRS RX 套件和台账编号。
 - [ ] 客户只使用 `race.fpvsuperapp.com`；`helper.longxl.com` 仅内部完整验证且不计生产数据。
 - [ ] 独立 FPVHelper Supabase、Vercel 路径和假名化统计已完成工程验收；若任一项未完成或书面确认未取得，统计保持关闭。
+- [ ] 如启用统计，已按 [`analytics-provisioning-runbook.md`](analytics-provisioning-runbook.md) 完成 workstation ID 复制、token hash 登记、一次性安装、同域请求/独立数据库验证和撤销演练。
 - [ ] 工作站按 [`workstation-install-checklist.md`](workstation-install-checklist.md) 检查。
 - [ ] 已完成一条真实 UVC + 独立地面桥 + 本地 JSON 的真机验收记录。
 
@@ -43,6 +44,7 @@
 2. 为每位选手登记独立地面桥套件；Binding phrase 不进入文档、日志或仓库。
 3. 收齐书面同意并建立线下代号映射；同意编号只进台账，不进 JSON。
 4. 在内部入口完成完整验证，结果标记为非生产。
+5. 仅在独立 analytics Supabase、生产接收路径、书面确认和工程验收全部完成后登记客户工作站；否则保持统计关闭。
 
 ### T-0：真机验收与起算
 

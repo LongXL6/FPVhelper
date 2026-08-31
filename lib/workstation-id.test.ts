@@ -12,7 +12,6 @@ const SECOND_ID = "20000000-0000-4000-8000-000000000002";
 afterEach(() => {
   vi.unstubAllGlobals();
 });
-
 describe("local workstation identity", () => {
   it("creates one persisted UUID and reuses it across sessions", () => {
     const values = new Map<string, string>();

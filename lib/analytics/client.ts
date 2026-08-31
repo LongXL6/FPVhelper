@@ -12,10 +12,8 @@ import {
 } from "./events";
 import {
   getOrCreateWorkstationId,
-  WORKSTATION_ID_STORAGE_KEY,
+  isWorkstationId,
 } from "../workstation-id";
-
-const WORKSTATION_KEY = WORKSTATION_ID_STORAGE_KEY;
 const TOKEN_KEY = "fpvhelper.analytics.ingest-token.v1";
 const QUEUE_KEY = "fpvhelper.analytics.queue.v1";
 const OPT_OUT_KEY = "fpvhelper.analytics.opt-out.v1";
@@ -31,7 +29,11 @@ export const CUSTOMER_ANALYTICS_HOSTNAME = "race.fpvsuperapp.com";
 
 export type AnalyticsLocalStatus =
   | { state: "off"; reason: "hostname" | "configuration" | "opted_out" }
-  | { state: "waiting_token"; reason: "missing_token" | "rejected_token" }
+  | {
+    state: "waiting_token";
+    reason: "missing_token" | "rejected_token";
+    workstationId: string;
+  }
   | { state: "enabled"; reason: "installed" };
 
 interface AnalyticsStorage {
@@ -167,13 +169,21 @@ export function resolveAnalyticsLocalStatus(options: {
   configured: boolean;
   optedOut: boolean;
   hasToken: boolean;
+  workstationId?: string | null;
   authorizationBlocked?: boolean;
 }): AnalyticsLocalStatus {
   if (!isCustomerAnalyticsHostname(options.hostname)) return { state: "off", reason: "hostname" };
   if (!options.configured) return { state: "off", reason: "configuration" };
   if (options.optedOut) return { state: "off", reason: "opted_out" };
-  if (options.authorizationBlocked) return { state: "waiting_token", reason: "rejected_token" };
-  if (!options.hasToken) return { state: "waiting_token", reason: "missing_token" };
+  if (!isWorkstationId(options.workstationId)) {
+    return { state: "off", reason: "configuration" };
+  }
+  if (options.authorizationBlocked) {
+    return { state: "waiting_token", reason: "rejected_token", workstationId: options.workstationId };
+  }
+  if (!options.hasToken) {
+    return { state: "waiting_token", reason: "missing_token", workstationId: options.workstationId };
+  }
   return { state: "enabled", reason: "installed" };
 }
 
@@ -214,20 +224,18 @@ export class AnalyticsClient {
       safeSet(runtime.storage, OPT_OUT_KEY, "1");
       safeRemove(runtime.storage, QUEUE_KEY);
       safeRemove(runtime.storage, TOKEN_KEY);
-      safeRemove(runtime.storage, WORKSTATION_KEY);
       this.queue = [];
       return false;
     }
     if (safeGet(runtime.storage, OPT_OUT_KEY) === "1") return false;
 
-    const workstationId = getOrCreateWorkstationId(runtime.storage, runtime.randomUuid);
+    const workstationId = this.ensureWorkstationId(runtime);
     if (!workstationId) return false;
 
     const configuredToken = this.installedToken ?? this.options.ingestToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? "";
     if (!isAnalyticsIngestToken(configuredToken)) return false;
     if (!safeSet(runtime.storage, TOKEN_KEY, configuredToken)) return false;
 
-    this.workstationId = workstationId;
     this.visitId = runtime.randomUuid();
     this.ingestToken = configuredToken;
     this.context = { ...DEFAULT_CONTEXT, ...this.options.initialContext };
@@ -398,7 +406,6 @@ export class AnalyticsClient {
     safeSet(runtime.storage, OPT_OUT_KEY, "1");
     safeRemove(runtime.storage, QUEUE_KEY);
     safeRemove(runtime.storage, TOKEN_KEY);
-    safeRemove(runtime.storage, WORKSTATION_KEY);
     this.installedToken = "";
     this.ingestToken = "";
     this.queue = [];
@@ -417,13 +424,13 @@ export class AnalyticsClient {
     safeRemove(runtime.storage, OPT_OUT_KEY);
     safeRemove(runtime.storage, TOKEN_KEY);
     safeRemove(runtime.storage, QUEUE_KEY);
-    safeRemove(runtime.storage, WORKSTATION_KEY);
     this.installedToken = "";
     this.ingestToken = "";
     this.queue = [];
     this.authorizationBlocked = false;
     this.resetBackoff();
     this.stop();
+    if (!this.ensureWorkstationId(runtime)) return false;
     this.notifyStatusChanged();
     return true;
   }
@@ -431,11 +438,17 @@ export class AnalyticsClient {
   getLocalStatus(): AnalyticsLocalStatus {
     const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
     if (!runtime) return { state: "off", reason: "configuration" };
+    const configured = productionAnalyticsEnabled(this.options);
+    const optedOut = safeGet(runtime.storage, OPT_OUT_KEY) === "1";
+    const workstationId = isCustomerAnalyticsHostname(runtime.hostname) && configured && !optedOut
+      ? this.ensureWorkstationId(runtime)
+      : null;
     return resolveAnalyticsLocalStatus({
       hostname: runtime.hostname,
-      configured: productionAnalyticsEnabled(this.options),
-      optedOut: safeGet(runtime.storage, OPT_OUT_KEY) === "1",
+      configured,
+      optedOut,
       hasToken: isAnalyticsIngestToken(this.installedToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? ""),
+      workstationId,
       authorizationBlocked: this.authorizationBlocked,
     });
   }
@@ -462,6 +475,14 @@ export class AnalyticsClient {
 
   getWorkstationId() {
     return this.workstationId || null;
+  }
+
+  private ensureWorkstationId(runtime: AnalyticsRuntime) {
+    if (isWorkstationId(this.workstationId)) return this.workstationId;
+    const workstationId = getOrCreateWorkstationId(runtime.storage, runtime.randomUuid);
+    if (!workstationId) return null;
+    this.workstationId = workstationId;
+    return workstationId;
   }
 
   private loadQueue() {
