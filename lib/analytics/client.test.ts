@@ -367,6 +367,11 @@ describe("analytics client privacy and delivery", () => {
     expect(harness.timerDelays()).toEqual([10_000]);
     expect(harness.requests).toHaveLength(0);
 
+    expect(harness.runTimerByDelay(10_000)).toBe(true);
+    await settle();
+    expect(harness.requests).toHaveLength(0);
+    expect(harness.timerDelays()).toEqual([10_000]);
+
     client.track("overlay_layout_reset", overlayProps());
     expect(harness.requests).toHaveLength(0);
     expect(harness.runTimerByDelay(10_000)).toBe(true);
@@ -374,6 +379,14 @@ describe("analytics client privacy and delivery", () => {
     expect(harness.requests).toHaveLength(1);
     expect(JSON.parse(harness.requests[0].init.body as string).ingest_token).toBe(TOKEN_B);
     expect(client.getQueueLength()).toBe(0);
+    expect(harness.timerDelays()).toEqual([10_000]);
+
+    client.optOut();
+    expect(harness.timerDelays()).toEqual([]);
+    expect(harness.listeners.get("online")?.size ?? 0).toBe(0);
+    expect(harness.listeners.get("pagehide")?.size ?? 0).toBe(0);
+    expect(harness.runTimerByDelay(10_000)).toBe(false);
+    expect(harness.requests).toHaveLength(1);
   });
 
   it("bounds a request with an abort signal and timeout even when fetch never resolves", async () => {

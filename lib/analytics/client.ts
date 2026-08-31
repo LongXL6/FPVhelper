@@ -623,6 +623,7 @@ export class AnalyticsClient {
     const retryDelay = Math.max(0, this.retryNotBefore - this.runtime.now());
     this.timer = this.runtime.setTimeout(() => {
       this.timer = null;
+      this.scheduleFlush();
       void this.flush();
     }, Math.max(delayMs, retryDelay));
   }
