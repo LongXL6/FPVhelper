@@ -26,6 +26,13 @@ import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { useWorkstationRuntime } from "@/hooks/use-workstation-runtime";
+import { PUBLIC_APP_BUILD } from "@/lib/app-version";
+import {
+  appendDiagnosticTransition,
+  buildLocalDiagnosticBundle,
+  downloadLocalDiagnosticBundle,
+  type LocalDiagnosticTransition,
+} from "@/lib/local-diagnostics";
 import { clamp } from "@/lib/telemetry";
 import {
   DEFAULT_TRAINING_SESSION_PREFERENCES,
@@ -165,6 +172,19 @@ function formatSessionStart(wallClockStartedAt: string) {
   return `${wallClockStartedAt.slice(0, 10)} ${wallClockStartedAt.slice(11, 19)}`;
 }
 
+function localDiagnosticEnvironment() {
+  return {
+    secureContext: window.isSecureContext,
+    online: navigator.onLine,
+    serialSupported: Boolean(navigator.serial),
+    mediaSupported: Boolean(navigator.mediaDevices?.getUserMedia),
+    indexedDbSupported: "indexedDB" in window,
+    directoryPickerSupported: "showDirectoryPicker" in window,
+    fullscreenSupported: document.fullscreenEnabled,
+    wakeLockSupported: "wakeLock" in navigator,
+  };
+}
+
 function overlayLayoutsWereDefault(entries: Array<{ storageKey: string; defaultLayout: { xPercent: number; yPercent: number; size: number } }>) {
   try {
     return entries.every(({ storageKey, defaultLayout }) => {
@@ -301,8 +321,10 @@ export function FlightDashboard() {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [analyticsTokenDraft, setAnalyticsTokenDraft] = useState("");
   const [analyticsInstallMessage, setAnalyticsInstallMessage] = useState<string | null>(null);
+  const [diagnosticNotice, setDiagnosticNotice] = useState<string | null>(null);
   const [workstationNotice, setWorkstationNotice] = useState<string | null>(null);
   const exportShortcutInFlightRef = useRef(false);
+  const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
   const telemetryControl = useBetaflightTelemetry();
   const {
     videoRef,
@@ -488,6 +510,32 @@ export function FlightDashboard() {
     captureSettings,
     errorSurface: analyticsErrorSurface,
   });
+
+  useEffect(() => {
+    diagnosticTransitionsRef.current = appendDiagnosticTransition(diagnosticTransitionsRef.current, {
+      connection,
+      source,
+      linkState,
+      videoState,
+      isRecording: trainingSession.isRecording,
+      parserQuality: telemetryControl.parserQuality,
+      serialErrorCode: telemetryControl.errorCode,
+      videoErrorCode,
+      storageReady: trainingSession.storageReady,
+      storageHasError: Boolean(trainingSession.storageError),
+    });
+  }, [
+    connection,
+    linkState,
+    source,
+    telemetryControl.errorCode,
+    telemetryControl.parserQuality,
+    trainingSession.isRecording,
+    trainingSession.storageError,
+    trainingSession.storageReady,
+    videoErrorCode,
+    videoState,
+  ]);
   const analyticsStatusLabel = analytics.status.state === "enabled"
     ? "已开启"
     : analytics.status.state === "waiting_token"
@@ -1200,6 +1248,66 @@ export function FlightDashboard() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="diagnostics-card" aria-label="本机诊断工具">
+        <div>
+          <span>LOCAL DIAGNOSTICS</span>
+          <h2>本机诊断 · 不自动上传</h2>
+          <p>诊断 JSON 只含构建号、浏览器能力和最近 200 次枚举状态变化；不含画面、选手代号、备注、设备名称或原始 RC 样本。</p>
+        </div>
+        <div className="diagnostics-actions">
+          <button
+            className="mini-button mini-button--active"
+            type="button"
+            onClick={() => {
+              const bundle = buildLocalDiagnosticBundle({
+                build: PUBLIC_APP_BUILD,
+                environment: localDiagnosticEnvironment(),
+                transitions: diagnosticTransitionsRef.current,
+              });
+              downloadLocalDiagnosticBundle(bundle);
+              setDiagnosticNotice("诊断 JSON 已交给浏览器下载；应用不会上传该文件。");
+            }}
+          >下载诊断 JSON</button>
+
+          {telemetryControl.rawCapture.state === "capturing" ? (
+            <button className="mini-button" type="button" onClick={telemetryControl.cancelRawCapture}>
+              取消原始夹具 · {Math.ceil(telemetryControl.rawCapture.remainingMs / 1_000)} 秒 · {telemetryControl.rawCapture.byteLength} B
+            </button>
+          ) : (
+            <button
+              className="mini-button"
+              type="button"
+              disabled={!bridgeIsLive}
+              onClick={() => {
+                const started = telemetryControl.startRawCapture();
+                setDiagnosticNotice(started
+                  ? "正在本机内存录制 60 秒串口原始字节；断线或达到 8 MiB 会提前结束。"
+                  : "请先连接桥接飞控并等待真实 MSP_RC 在线。");
+              }}
+            >录制 60 秒原始串口夹具</button>
+          )}
+
+          {telemetryControl.rawCapture.state === "ready" ? (
+            <>
+              <button
+                className="mini-button mini-button--active"
+                type="button"
+                disabled={telemetryControl.rawCapture.byteLength === 0}
+                onClick={() => {
+                  const downloaded = telemetryControl.downloadRawCapture();
+                  setDiagnosticNotice(downloaded
+                    ? "原始 .bin 已交给浏览器下载；文件只保留在本机。"
+                    : "没有可下载的原始串口字节。");
+                }}
+              >下载原始 .bin · {telemetryControl.rawCapture.byteLength} B</button>
+              <button className="mini-button" type="button" onClick={telemetryControl.cancelRawCapture}>清除内存夹具</button>
+            </>
+          ) : null}
+        </div>
+        <small>原始 .bin 可能包含完整 MSP 响应，只在你主动点击后采集；它不进入诊断 JSON、Session 或统计事件。</small>
+        {diagnosticNotice ? <small role="status">{diagnosticNotice}</small> : null}
       </section>
 
       <section className="analytics-card" aria-label="本机统计设置">

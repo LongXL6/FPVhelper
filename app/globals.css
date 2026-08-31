@@ -788,12 +788,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .analytics-enabled-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 
+.diagnostics-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, auto);
+  align-items: center;
+  gap: 12px 16px;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--line-soft);
+  background: #090f14;
+}
+.diagnostics-card > div:first-child > span { color: var(--quiet); font: 700 8px/1 var(--mono); letter-spacing: 0.12em; }
+.diagnostics-card h2 { margin: 5px 0 0; font: 700 14px/1 var(--display); }
+.diagnostics-card p { max-width: 760px; margin: 7px 0 0; color: var(--quiet); font: 500 9px/1.5 var(--mono); }
+.diagnostics-card > small { grid-column: 1 / -1; color: var(--muted); font: 600 9px/1.4 var(--mono); }
+.diagnostics-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+
 .dashboard-shell--coach { height: 100vh; min-height: 680px; overflow: hidden; padding: 0 14px 14px; }
 .dashboard-shell--coach .topbar { min-height: 78px; }
 .dashboard-shell--coach .workspace-grid { grid-template-columns: 1fr; height: calc(100vh - 92px); padding-top: 14px; }
 .dashboard-shell--coach .video-console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .dashboard-shell--coach .video-stage { min-height: 0; height: 100%; }
-.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .training-weekly-report, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
+.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .training-weekly-report, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .diagnostics-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
 .dashboard-shell--coach .workstation-shortcuts { display: none; }
 .dashboard-shell--coach .section-bar { min-height: 44px; }
 .dashboard-shell--coach .section-bar small { font-size: 12px; }
@@ -837,6 +853,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .training-weekly-report__heading { grid-template-columns: 1fr 180px; }
   .training-weekly-report__heading .mini-button { grid-column: 1 / -1; }
   .training-weekly-report__metrics { grid-template-columns: repeat(3, 1fr); }
+  .diagnostics-card { grid-template-columns: 1fr; align-items: stretch; }
+  .diagnostics-actions { justify-content: flex-start; }
 }
 
 @media (max-width: 720px) {

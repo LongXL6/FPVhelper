@@ -41,6 +41,7 @@ import {
   visibleStickPeak,
   type StickMotionVisualization,
 } from "@/lib/stick-motion";
+import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
 
 interface TelemetryController {
   telemetry: FlightTelemetry;
@@ -53,9 +54,13 @@ interface TelemetryController {
   parserStats: MspParserStats;
   parserQuality: MspParserQuality;
   linkState: LinkState;
+  rawCapture: RawSerialCaptureState;
   serialSupported: boolean;
   connectSerial: () => Promise<void>;
   useDemo: () => Promise<void>;
+  startRawCapture: () => boolean;
+  cancelRawCapture: () => void;
+  downloadRawCapture: () => boolean;
 }
 
 export function useBetaflightTelemetry(): TelemetryController {
@@ -85,6 +90,14 @@ export function useBetaflightTelemetry(): TelemetryController {
   const lastRcFrameAtRef = useRef<number | null>(null);
   const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
   const rightPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: 0 }));
+  const {
+    capture: rawCapture,
+    start: beginRawCapture,
+    ingest: ingestRawCapture,
+    finish: finishRawCapture,
+    cancel: cancelRawCapture,
+    download: downloadRawCapture,
+  } = useRawSerialCapture();
 
   const recordStickMotion = useCallback((
     sample: Pick<
@@ -136,6 +149,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     connectionAttemptRef.current += 1;
     const disconnectedAttempt = connectionAttemptRef.current;
     stopTimers();
+    finishRawCapture("disconnected");
     receivedRcFrameRef.current = false;
     lastRcFrameAtRef.current = null;
     setLinkState("unknown");
@@ -175,7 +189,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     }
 
     return disconnectedAttempt;
-  }, [stopTimers]);
+  }, [finishRawCapture, stopTimers]);
 
   const emitDemoFrame = useCallback(() => {
     if (!demoActiveRef.current) return;
@@ -310,6 +324,7 @@ export function useBetaflightTelemetry(): TelemetryController {
             break;
           }
           if (!value) continue;
+          ingestRawCapture(value);
           const frames = parserRef.current.push(value);
           setParserStats(parserRef.current.getStats());
           for (const frame of frames) {
@@ -325,8 +340,14 @@ export function useBetaflightTelemetry(): TelemetryController {
         }
       }
     },
-    [applyFrame],
+    [applyFrame, ingestRawCapture],
   );
+
+  const startRawCapture = useCallback(() => {
+    if (source !== "serial" || connection !== "live" || portRef.current === null) return false;
+    beginRawCapture();
+    return true;
+  }, [beginRawCapture, connection, source]);
 
   const connectSerial = useCallback(async () => {
     const serial = navigator.serial;
@@ -466,8 +487,12 @@ export function useBetaflightTelemetry(): TelemetryController {
     parserStats,
     parserQuality: mspParserQuality(parserStats),
     linkState,
+    rawCapture,
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),
     connectSerial,
     useDemo,
+    startRawCapture,
+    cancelRawCapture,
+    downloadRawCapture,
   };
 }
