@@ -13,6 +13,18 @@ export function analyticsObservedRcFrameDelta(previousSequence: number | null, c
   return Math.max(0, Math.round(currentSequence) - Math.round(previousSequence));
 }
 
+export function stoppedSessionIsFinal(options: {
+  isRecording: boolean;
+  hasPendingSave: boolean;
+  stoppedRecordingId: string | null;
+  sessionId: string | null;
+}) {
+  return !options.isRecording
+    && !options.hasPendingSave
+    && options.stoppedRecordingId !== null
+    && options.sessionId === options.stoppedRecordingId;
+}
+
 export function analyticsSerialLifecycleMetrics(options: {
   start: MspParserStats;
   end: MspParserStats;

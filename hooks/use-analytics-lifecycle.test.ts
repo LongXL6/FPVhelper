@@ -6,9 +6,21 @@ import {
   analyticsSerialWasLost,
   analyticsVideoWasLost,
   createAnalyticsEventDeduper,
+  stoppedSessionIsFinal,
 } from "../lib/analytics/lifecycle";
 
 describe("analytics lifecycle transition helpers", () => {
+  it("waits for the persisted final Session before emitting recording_stopped", () => {
+    const stopped = {
+      isRecording: false,
+      stoppedRecordingId: "session-1",
+      sessionId: "session-1",
+    };
+    expect(stoppedSessionIsFinal({ ...stopped, hasPendingSave: true })).toBe(false);
+    expect(stoppedSessionIsFinal({ ...stopped, hasPendingSave: false })).toBe(true);
+    expect(stoppedSessionIsFinal({ ...stopped, hasPendingSave: false, sessionId: "session-2" })).toBe(false);
+  });
+
   it("emits stall and resume only for genuine serial transitions", () => {
     expect(analyticsConnectionTransition("live", "stale", "serial")).toBe("stalled");
     expect(analyticsConnectionTransition("stale", "live", "serial")).toBe("resumed");

@@ -32,6 +32,7 @@ import {
   analyticsSerialWasLost,
   analyticsVideoWasLost,
   createAnalyticsEventDeduper,
+  stoppedSessionIsFinal,
 } from "@/lib/analytics/lifecycle";
 import type { SerialErrorCode, VideoCaptureErrorCode } from "@/lib/hardware-errors";
 import type { MspParserStats, TelemetrySource } from "@/lib/telemetry";
@@ -650,7 +651,13 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
 
     const stoppedId = pendingStoppedRecordingIdRef.current;
     const session = options.lastSession;
-    if (!options.isRecording && stoppedId && session?.id === stoppedId) {
+    if (stoppedSessionIsFinal({
+      isRecording: options.isRecording,
+      hasPendingSave: options.hasPendingSave,
+      stoppedRecordingId: stoppedId,
+      sessionId: session?.id ?? null,
+    })) {
+      if (!session) return;
       const now = performance.now();
       const hiddenMs = recordingHiddenMsRef.current + (
         recordingHiddenStartedAtRef.current === null ? 0 : now - recordingHiddenStartedAtRef.current
@@ -681,6 +688,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
   }, [
     options.athleteSet,
     options.connection,
+    options.hasPendingSave,
     options.isRecording,
     options.lastSession,
     options.sessionId,

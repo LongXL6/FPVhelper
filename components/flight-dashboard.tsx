@@ -313,6 +313,7 @@ export function FlightDashboard() {
   }, [addTrainingMarker, selectedMarkerKind, sessionIsRecording, toggleCoachMode]);
   const preferenceError = preferenceWriteError || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
+  const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
   const bridgeIsLive = source === "serial" && connection === "live";
   const groundRxReady = bridgeIsLive && linkState === "ok";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
@@ -729,8 +730,8 @@ export function FlightDashboard() {
             <span>LOCAL SESSION RECORDER</span>
             <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.hasPendingSave ? "记录待重试保存" : trainingSession.lastSession ? "最近记录已保存在本机" : "等待开始训练记录"}</h2>
           </div>
-          <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : trainingSession.lastSession?.validity.valid ? "session-state--valid" : trainingSession.lastSession ? "session-state--invalid" : ""}`}>
-            <i />{trainingSession.isRecording ? "REC" : trainingSession.lastSession?.validity.valid ? "VALID" : trainingSession.lastSession ? "INVALID" : "IDLE"}
+          <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : sessionIsFinalizing ? "" : trainingSession.lastSession?.validity.valid ? "session-state--valid" : trainingSession.lastSession ? "session-state--invalid" : ""}`}>
+            <i />{trainingSession.isRecording ? "REC" : sessionIsFinalizing ? "SAVING" : trainingSession.lastSession?.validity.valid ? "VALID" : trainingSession.lastSession ? "INVALID" : "IDLE"}
           </span>
         </div>
 
@@ -812,7 +813,7 @@ export function FlightDashboard() {
         <div className="session-note">
           <div>
             <p>草稿保存在浏览器 IndexedDB：开始即写、每 5 秒更新、结束即保存；刷新残留草稿会恢复为 interrupted，不会静默丢弃。</p>
-            {lastSessionValidity && !trainingSession.isRecording ? (
+            {lastSessionValidity && !trainingSession.isRecording && !sessionIsFinalizing ? (
               <>
                 <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
                 <p className={lastSessionAttemptCandidate?.candidate ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>
