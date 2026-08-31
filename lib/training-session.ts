@@ -101,6 +101,11 @@ export interface TrainingSession {
   samples: TrainingSessionSample[];
 }
 
+export interface TrainingSessionTermination {
+  interrupted: boolean;
+  interruptionReason: TrainingSessionInterruptionReason | null;
+}
+
 interface FinalizeTrainingSessionOptions {
   interrupted?: boolean;
   interruptionReason?: TrainingSessionInterruptionReason;
@@ -347,6 +352,42 @@ export function markTrainingSessionExported(session: TrainingSession, exportedAt
     exportedAt: new Date(exportedAtEpochMs).toISOString(),
     exportCount: session.exportCount + 1,
   };
+}
+
+function terminationPriority(termination: TrainingSessionTermination) {
+  if (termination.interruptionReason === "rx_link_lost") return 3;
+  if (termination.interruptionReason !== null || termination.interrupted) return 2;
+  return 1;
+}
+
+export function resolveTrainingSessionTermination(
+  current: TrainingSessionTermination | null,
+  next: TrainingSessionTermination,
+): TrainingSessionTermination {
+  if (!current || terminationPriority(next) > terminationPriority(current)) return next;
+  return current;
+}
+
+export function withTrainingSessionTermination(
+  session: TrainingSession,
+  termination: TrainingSessionTermination,
+): TrainingSession {
+  const resolved = resolveTrainingSessionTermination({
+    interrupted: session.interrupted,
+    interruptionReason: session.interruptionReason,
+  }, termination);
+  if (
+    resolved.interrupted === session.interrupted &&
+    resolved.interruptionReason === session.interruptionReason
+  ) {
+    return session;
+  }
+  const updated = {
+    ...session,
+    interrupted: resolved.interrupted,
+    interruptionReason: resolved.interruptionReason,
+  };
+  return { ...updated, validity: assessTrainingSession(updated) };
 }
 
 export function assessTrainingSession(session: AssessableTrainingSession | TrainingSession): TrainingSessionAssessment {

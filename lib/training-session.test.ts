@@ -10,8 +10,10 @@ import {
   parseTrainingSession,
   parseTrainingSessionDraft,
   recoverInterruptedTrainingSession,
+  resolveTrainingSessionTermination,
   serializeTrainingSession,
   trainingSessionFilename,
+  withTrainingSessionTermination,
   withTrainingSessionNotes,
   type TrainingSessionDraft,
 } from "./training-session";
@@ -244,6 +246,35 @@ describe("local training session schema v2", () => {
       validity: { valid: false, reasons: ["rx_link_lost"] },
     });
     expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("upgrades a manual stop when RX loss wins the same termination race", () => {
+    const manualStop = resolveTrainingSessionTermination(null, {
+      interrupted: false,
+      interruptionReason: null,
+    });
+    const rxLoss = resolveTrainingSessionTermination(manualStop, {
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+    });
+    const lateManualStop = resolveTrainingSessionTermination(rxLoss, {
+      interrupted: false,
+      interruptionReason: null,
+    });
+    const manuallyFinished = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+    );
+    const upgraded = withTrainingSessionTermination(manuallyFinished, lateManualStop);
+
+    expect(lateManualStop).toEqual({ interrupted: true, interruptionReason: "rx_link_lost" });
+    expect(upgraded).toMatchObject({
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+      validity: { valid: false },
+    });
+    expect(upgraded.validity.reasons).toContain("rx_link_lost");
   });
 
   it("keeps existing schema v2 sessions without interruptionReason readable", () => {

@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TrainingSession } from "../lib/training-session";
+import {
+  createStatusExFreshnessWatchdog,
+  STATUS_EX_STALE_TIMEOUT_MS,
+  type LinkState,
+} from "../lib/telemetry";
 import { requestUnconfirmedTrainingSessionDownload } from "./training-session-export-feedback";
 import { canStartTrainingSession } from "./training-session-start-guard";
 
@@ -21,6 +26,10 @@ const READY_TO_START = {
   linkState: "ok" as const,
   athleteCode: "PILOT-07",
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("useTrainingSession start guard", () => {
   it("keeps new training available when unreadable records are quarantined", () => {
@@ -87,6 +96,19 @@ describe("useTrainingSession start guard", () => {
     expect(canStartTrainingSession({ ...READY_TO_START, linkState: "lost" })).toBe(false);
     expect(canStartTrainingSession({ ...READY_TO_START, linkState: "ok" })).toBe(true);
     expect(canStartTrainingSession({ ...READY_TO_START, connection: "connecting", linkState: "ok" })).toBe(false);
+  });
+
+  it("blocks starting when STATUS_EX freshness expires while RC stays live", () => {
+    vi.useFakeTimers();
+    let linkState: LinkState = "ok";
+    const watchdog = createStatusExFreshnessWatchdog(() => {
+      linkState = "unknown";
+    });
+
+    expect(canStartTrainingSession({ ...READY_TO_START, linkState })).toBe(true);
+    watchdog.observe();
+    vi.advanceTimersByTime(STATUS_EX_STALE_TIMEOUT_MS);
+    expect(canStartTrainingSession({ ...READY_TO_START, linkState })).toBe(false);
   });
 
   it("keeps a stored session startable when the anchor download request itself fails", () => {

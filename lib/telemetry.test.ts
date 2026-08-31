@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMspV1Request,
   connectionStateAfterRcSilence,
+  createStatusExFreshnessWatchdog,
   createDemoTelemetry,
   decodeAnalog,
   decodeRc,
@@ -10,7 +11,12 @@ import {
   MSP,
   mspParserQuality,
   MspV1StreamParser,
+  STATUS_EX_STALE_TIMEOUT_MS,
 } from "./telemetry";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function responseFrame(command: number, payload: number[]) {
   let checksum = payload.length ^ command;
@@ -172,5 +178,38 @@ describe("MSP v1 telemetry", () => {
       0,
       2, 0, 0, 0, 0,
     ]))).toBe("unknown");
+  });
+
+  it("expires STATUS_EX freshness even while other telemetry can continue", () => {
+    vi.useFakeTimers();
+    const onStale = vi.fn();
+    const watchdog = createStatusExFreshnessWatchdog(onStale);
+
+    watchdog.observe();
+    vi.advanceTimersByTime(STATUS_EX_STALE_TIMEOUT_MS - 1);
+    expect(onStale).not.toHaveBeenCalled();
+
+    watchdog.observe();
+    vi.advanceTimersByTime(STATUS_EX_STALE_TIMEOUT_MS - 1);
+    expect(onStale).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onStale).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets the STATUS_EX watchdog across disconnect and reconnect", () => {
+    vi.useFakeTimers();
+    const firstConnectionStale = vi.fn();
+    const firstConnection = createStatusExFreshnessWatchdog(firstConnectionStale);
+
+    firstConnection.observe();
+    firstConnection.reset();
+    vi.advanceTimersByTime(STATUS_EX_STALE_TIMEOUT_MS);
+    expect(firstConnectionStale).not.toHaveBeenCalled();
+
+    const reconnectedStale = vi.fn();
+    const reconnected = createStatusExFreshnessWatchdog(reconnectedStale);
+    reconnected.observe();
+    vi.advanceTimersByTime(STATUS_EX_STALE_TIMEOUT_MS);
+    expect(reconnectedStale).toHaveBeenCalledTimes(1);
   });
 });

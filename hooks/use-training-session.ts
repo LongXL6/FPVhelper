@@ -16,11 +16,14 @@ import {
   finishTrainingSession,
   markTrainingSessionExported,
   recoverInterruptedTrainingSession,
+  resolveTrainingSessionTermination,
+  withTrainingSessionTermination,
   withTrainingSessionNotes,
   type TrainingSession,
   type TrainingSessionDraft,
   type TrainingSessionInterruptionReason,
   type TrainingSessionMarkerKind,
+  type TrainingSessionTermination,
 } from "@/lib/training-session";
 import {
   getBrowserTrainingSessionSaveFilePicker,
@@ -127,6 +130,7 @@ export function useTrainingSession({
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
   const workstationIdRef = useRef<string | null>(null);
+  const terminationRef = useRef<TrainingSessionTermination | null>(null);
 
   const applySessions = useCallback((nextSessions: TrainingSession[]) => {
     sessionsRef.current = nextSessions;
@@ -275,6 +279,7 @@ export function useTrainingSession({
       await store.saveDraft(draft);
       draftRef.current = draft;
       pendingSessionRef.current = null;
+      terminationRef.current = null;
       setSessionId(id);
       setSampleCount(0);
       setUniqueSampleCount(0);
@@ -292,18 +297,25 @@ export function useTrainingSession({
 
   const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
-    const session = pendingSessionRef.current;
     const store = storeRef.current;
-    if (!draft || !session || !store || finishingRef.current) return;
+    if (!draft || !pendingSessionRef.current || !store || finishingRef.current) return;
     finishingRef.current = true;
     setIsFinishing(true);
     setHasPendingSave(true);
 
     let sessionStored = false;
+    let storedSession: TrainingSession | null = null;
     try {
       await store.saveDraft(draft);
-      await store.completeSession(session);
-      await refreshSessions(store);
+      while (true) {
+        if (pendingSessionRef.current !== storedSession) {
+          storedSession = pendingSessionRef.current;
+          if (!storedSession) throw new Error("Session 终止状态丢失");
+          await store.completeSession(storedSession);
+        }
+        await refreshSessions(store);
+        if (pendingSessionRef.current === storedSession) break;
+      }
       draftRef.current = null;
       pendingSessionRef.current = null;
       setHasPendingSave(false);
@@ -313,8 +325,8 @@ export function useTrainingSession({
       setStorageError(`Session 尚未安全保存：${storageErrorMessage(saveError)}；记录仍保留在本页，可重试`);
     }
 
-    if (sessionStored && autoExport) {
-      const feedback = requestUnconfirmedTrainingSessionDownload(session);
+    if (sessionStored && autoExport && storedSession) {
+      const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
       setExportNotice(feedback.notice);
       setExportWarning(feedback.warning);
     }
@@ -327,12 +339,27 @@ export function useTrainingSession({
     interrupted: boolean,
     interruptionReason: TrainingSessionInterruptionReason | null = null,
   ) => {
+    const termination = resolveTrainingSessionTermination(terminationRef.current, {
+      interrupted,
+      interruptionReason,
+    });
+    terminationRef.current = termination;
+
+    const pendingSession = pendingSessionRef.current;
+    if (pendingSession) {
+      const upgradedSession = withTrainingSessionTermination(pendingSession, termination);
+      pendingSessionRef.current = upgradedSession;
+      setLastSession(upgradedSession);
+      if (!finishingRef.current) await persistPendingSession();
+      return;
+    }
+
     const draft = draftRef.current;
     if (!draft || finishingRef.current) return;
     setIsRecording(false);
     const session = finishTrainingSession(draft, Date.now(), performance.now(), {
-      interrupted,
-      ...(interruptionReason ? { interruptionReason } : {}),
+      interrupted: termination.interrupted,
+      ...(termination.interruptionReason ? { interruptionReason: termination.interruptionReason } : {}),
     });
     pendingSessionRef.current = session;
     setLastSession(session);
@@ -343,7 +370,9 @@ export function useTrainingSession({
     await persistPendingSession();
   }, [persistPendingSession]);
 
-  const stopRecording = useCallback(() => finishRecording(false), [finishRecording]);
+  const stopRecording = useCallback(() => linkState === "lost"
+    ? finishRecording(true, "rx_link_lost")
+    : finishRecording(false), [finishRecording, linkState]);
   const retryPendingSave = useCallback(() => persistPendingSession(), [persistPendingSession]);
 
   const addMarker = useCallback(async (kind: Exclude<TrainingSessionMarkerKind, "manual">) => {
@@ -383,7 +412,9 @@ export function useTrainingSession({
   }, [connection, finishRecording, isRecording, source]);
 
   useEffect(() => {
-    if (isRecording && linkState === "lost") void finishRecording(true, "rx_link_lost");
+    if (linkState === "lost" && (isRecording || draftRef.current || pendingSessionRef.current)) {
+      void finishRecording(true, "rx_link_lost");
+    }
   }, [finishRecording, isRecording, linkState]);
 
   useEffect(() => {

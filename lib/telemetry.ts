@@ -48,6 +48,35 @@ const STATUS_EX_MAX_FLIGHT_MODE_EXTRA_BYTES = 15;
 
 export const RC_FIRST_FRAME_TIMEOUT_MS = 5_000;
 export const RC_STALE_TIMEOUT_MS = 1_500;
+export const STATUS_EX_STALE_TIMEOUT_MS = 1_500;
+
+export interface StatusExFreshnessWatchdog {
+  observe: () => void;
+  reset: () => void;
+}
+
+export function createStatusExFreshnessWatchdog(
+  onStale: () => void,
+  timeoutMs = STATUS_EX_STALE_TIMEOUT_MS,
+): StatusExFreshnessWatchdog {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  return {
+    observe() {
+      if (timer !== null) clearTimeout(timer);
+      const nextTimer = setTimeout(() => {
+        if (timer !== nextTimer) return;
+        timer = null;
+        onStale();
+      }, timeoutMs);
+      timer = nextTimer;
+    },
+    reset() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
 
 export const EMPTY_MSP_PARSER_STATS: MspParserStats = {
   bytesReceived: 0,

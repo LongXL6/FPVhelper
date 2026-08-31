@@ -13,23 +13,25 @@ import {
 import {
   buildMspV1Request,
   connectionStateAfterRcSilence,
-  ConnectionState,
+  createStatusExFreshnessWatchdog,
   createDemoTelemetry,
   decodeAnalog,
   decodeRc,
   decodeStatusExLinkState,
   EMPTY_MSP_PARSER_STATS,
   EMPTY_TELEMETRY,
-  FlightTelemetry,
-  LinkState,
   MSP,
   mspParserQuality,
-  MspParserQuality,
-  MspParserStats,
   MspV1StreamParser,
   RC_FIRST_FRAME_TIMEOUT_MS,
   RC_STALE_TIMEOUT_MS,
-  TelemetrySource,
+  type ConnectionState,
+  type FlightTelemetry,
+  type LinkState,
+  type MspParserQuality,
+  type MspParserStats,
+  type StatusExFreshnessWatchdog,
+  type TelemetrySource,
 } from "@/lib/telemetry";
 import {
   advanceStickPeakTracker,
@@ -74,6 +76,7 @@ export function useBetaflightTelemetry(): TelemetryController {
   const demoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const firstFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusExWatchdogRef = useRef<StatusExFreshnessWatchdog | null>(null);
   const parserRef = useRef(new MspV1StreamParser());
   const sequenceRef = useRef(0);
   const connectionAttemptRef = useRef(0);
@@ -117,9 +120,11 @@ export function useBetaflightTelemetry(): TelemetryController {
     if (pollTimerRef.current !== null) clearInterval(pollTimerRef.current);
     if (firstFrameTimerRef.current !== null) clearTimeout(firstFrameTimerRef.current);
     if (staleTimerRef.current !== null) clearTimeout(staleTimerRef.current);
+    statusExWatchdogRef.current?.reset();
     pollTimerRef.current = null;
     firstFrameTimerRef.current = null;
     staleTimerRef.current = null;
+    statusExWatchdogRef.current = null;
   }, []);
 
   const stopTimers = useCallback(() => {
@@ -285,6 +290,7 @@ export function useBetaflightTelemetry(): TelemetryController {
       }
     } else if (command === MSP.STATUS_EX) {
       setLinkState(decodeStatusExLinkState(payload));
+      statusExWatchdogRef.current?.observe();
     }
   }, [armStaleWatchdog, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
@@ -386,6 +392,15 @@ export function useBetaflightTelemetry(): TelemetryController {
       setParserStats(EMPTY_MSP_PARSER_STATS);
       receivedRcFrameRef.current = false;
       lastRcFrameAtRef.current = null;
+      setLinkState("unknown");
+      statusExWatchdogRef.current = createStatusExFreshnessWatchdog(() => {
+        if (
+          connectionAttemptRef.current === connectionAttempt &&
+          portRef.current === port
+        ) {
+          setLinkState("unknown");
+        }
+      });
 
       firstFrameTimerRef.current = setTimeout(() => {
         void failSerial(serialIssue("serial_no_rc_frames"), connectionAttempt);
