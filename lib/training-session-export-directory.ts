@@ -38,6 +38,13 @@ export interface TrainingSessionDirectoryStore {
   close(): Promise<void>;
 }
 
+export type TrainingSessionDirectoryAction = "reauthorize" | "replace";
+
+export interface TrainingSessionDirectoryActionResult {
+  handle: TrainingSessionDirectoryHandle | null;
+  granted: boolean;
+}
+
 function requestValue<T>(request: IDBRequest<T>) {
   return new Promise<T>((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
@@ -61,18 +68,38 @@ export function createTrainingSessionDirectoryStore(
 
   const open = () => {
     if (databasePromise) return databasePromise;
-    databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const pendingDatabase = new Promise<IDBDatabase>((resolve, reject) => {
       const request = factory.open(databaseName, DIRECTORY_DATABASE_VERSION);
+      let settled = false;
       request.addEventListener("upgradeneeded", () => {
         if (!request.result.objectStoreNames.contains(DIRECTORY_STORE_NAME)) {
           request.result.createObjectStore(DIRECTORY_STORE_NAME);
         }
       });
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error ?? new Error("无法打开导出目录设置")));
-      request.addEventListener("blocked", () => reject(new Error("导出目录设置数据库升级被其他页面阻止")));
+      request.addEventListener("success", () => {
+        if (settled) {
+          request.result.close();
+          return;
+        }
+        settled = true;
+        resolve(request.result);
+      });
+      request.addEventListener("error", () => {
+        if (settled) return;
+        settled = true;
+        reject(request.error ?? new Error("无法打开导出目录设置"));
+      });
+      request.addEventListener("blocked", () => {
+        if (settled) return;
+        settled = true;
+        reject(new Error("导出目录设置数据库升级被其他页面阻止"));
+      });
     });
-    return databasePromise;
+    databasePromise = pendingDatabase;
+    void pendingDatabase.catch(() => {
+      if (databasePromise === pendingDatabase) databasePromise = null;
+    });
+    return pendingDatabase;
   };
 
   return {
@@ -96,9 +123,14 @@ export function createTrainingSessionDirectoryStore(
       await transactionDone(transaction);
     },
     async close() {
-      const database = await open();
-      database.close();
-      databasePromise = null;
+      const pendingDatabase = databasePromise;
+      if (!pendingDatabase) return;
+      try {
+        const database = await pendingDatabase;
+        database.close();
+      } finally {
+        if (databasePromise === pendingDatabase) databasePromise = null;
+      }
     },
   };
 }
@@ -128,6 +160,46 @@ export async function requestTrainingSessionDirectoryPermission(
   if (current !== "prompt" || !handle.requestPermission) return false;
   try {
     return await handle.requestPermission({ mode: "readwrite" }) === "granted";
+  } catch {
+    return false;
+  }
+}
+
+export async function runTrainingSessionDirectoryAction({
+  action,
+  existingHandle,
+  picker,
+}: {
+  action: TrainingSessionDirectoryAction;
+  existingHandle: TrainingSessionDirectoryHandle | null;
+  picker: TrainingSessionDirectoryPicker | null;
+}): Promise<TrainingSessionDirectoryActionResult> {
+  if (action === "reauthorize") {
+    if (!existingHandle) return { handle: null, granted: false };
+    return {
+      handle: existingHandle,
+      granted: await requestTrainingSessionDirectoryPermission(existingHandle),
+    };
+  }
+
+  if (!picker) return { handle: null, granted: false };
+  const handle = await picker({
+    id: "fpvhelper-training-sessions",
+    mode: "readwrite",
+    startIn: "downloads",
+  });
+  return {
+    handle,
+    granted: await requestTrainingSessionDirectoryPermission(handle),
+  };
+}
+
+export async function closeTrainingSessionDirectoryStoreSafely(
+  store: TrainingSessionDirectoryStore,
+): Promise<boolean> {
+  try {
+    await store.close();
+    return true;
   } catch {
     return false;
   }

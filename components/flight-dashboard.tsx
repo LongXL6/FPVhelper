@@ -434,7 +434,9 @@ export function FlightDashboard() {
         : trainingSession.exportDirectoryState === "loading"
           ? "正在检查自动保存目录"
           : trainingSession.exportDirectoryState === "error"
-            ? "目录设置读取失败，可重新选择"
+            ? trainingSession.exportDirectoryName
+              ? "目录访问失败，可重新授权或更换文件夹"
+              : "目录设置读取失败，可重新选择"
             : "尚未选择自动保存目录，将退回普通下载";
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
@@ -999,14 +1001,28 @@ export function FlightDashboard() {
             <span>
               <b>自动保存文件夹</b>
               <small>{exportDirectoryCopy}</small>
+              {trainingSession.exportDirectoryName
+                ? <small>再次自动导出同一 Session 会覆盖该文件夹内的同名 JSON。</small>
+                : null}
             </span>
             <span className="session-export-directory-actions">
+              {trainingSession.exportDirectoryName && (
+                trainingSession.exportDirectoryState === "permission_required"
+                || trainingSession.exportDirectoryState === "error"
+              ) ? (
+                <button
+                  className="button session-directory-button"
+                  type="button"
+                  disabled={controlsLocked}
+                  onClick={() => void trainingSession.reauthorizeExportDirectory()}
+                >重新授权</button>
+              ) : null}
               <button
                 className="button session-directory-button"
                 type="button"
                 disabled={controlsLocked || trainingSession.exportDirectoryState === "loading" || trainingSession.exportDirectoryState === "unsupported"}
                 onClick={() => void trainingSession.configureExportDirectory()}
-              >{trainingSession.exportDirectoryState === "permission_required" ? "重新授权 / 更换" : trainingSession.exportDirectoryName ? "更换文件夹" : "选择文件夹"}</button>
+              >{trainingSession.exportDirectoryName ? "更换文件夹" : "选择文件夹"}</button>
               {trainingSession.exportDirectoryName ? (
                 <button
                   className="button session-directory-button"

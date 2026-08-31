@@ -5,7 +5,9 @@ import {
   createTrainingSessionDirectoryStore,
   getTrainingSessionDirectoryPermission,
   requestTrainingSessionDirectoryPermission,
+  runTrainingSessionDirectoryAction,
   saveTrainingSessionToDirectory,
+  closeTrainingSessionDirectoryStoreSafely,
   type TrainingSessionDirectoryHandle,
 } from "./training-session-export-directory";
 
@@ -32,6 +34,48 @@ describe("training session export directory", () => {
     await store.close();
   });
 
+  it("retries opening the directory store after an open rejection", async () => {
+    const open = vi.fn(() => {
+      const request = new EventTarget() as IDBOpenDBRequest;
+      Object.defineProperty(request, "error", { value: new Error("open failed") });
+      queueMicrotask(() => request.dispatchEvent(new Event("error")));
+      return request;
+    });
+    const store = createTrainingSessionDirectoryStore({ open } as unknown as IDBFactory, "retry-open");
+
+    await expect(store.load()).rejects.toThrow("open failed");
+    await expect(store.load()).rejects.toThrow("open failed");
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a blocked open and closes a database that succeeds too late", async () => {
+    const close = vi.fn();
+    const open = vi.fn(() => {
+      const request = new EventTarget() as IDBOpenDBRequest;
+      Object.defineProperty(request, "result", { value: { close } });
+      queueMicrotask(() => {
+        request.dispatchEvent(new Event("blocked"));
+        request.dispatchEvent(new Event("success"));
+      });
+      return request;
+    });
+    const store = createTrainingSessionDirectoryStore({ open } as unknown as IDBFactory, "blocked-open");
+
+    await expect(store.load()).rejects.toThrow("数据库升级被其他页面阻止");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("contains a rejected close during StrictMode-style cleanup", async () => {
+    const store = {
+      load: async () => null,
+      save: async () => undefined,
+      clear: async () => undefined,
+      close: async () => { throw new Error("close failed"); },
+    };
+
+    await expect(closeTrainingSessionDirectoryStoreSafely(store)).resolves.toBe(false);
+  });
+
   it("queries permission without prompting during background work", async () => {
     const queryPermission = vi.fn(async () => "prompt" as const);
     const handle = { queryPermission } as unknown as TrainingSessionDirectoryHandle;
@@ -49,6 +93,29 @@ describe("training session export directory", () => {
 
     await expect(requestTrainingSessionDirectoryPermission(handle)).resolves.toBe(true);
     expect(requestPermission).toHaveBeenCalledWith({ mode: "readwrite" });
+  });
+
+  it("always opens the picker when replacing an already-authorized folder", async () => {
+    const existingQueryPermission = vi.fn(async () => "granted" as const);
+    const existingHandle = {
+      kind: "directory",
+      name: "Old Folder",
+      queryPermission: existingQueryPermission,
+    } as unknown as TrainingSessionDirectoryHandle;
+    const replacementHandle = {
+      kind: "directory",
+      name: "New Folder",
+      queryPermission: async () => "granted" as const,
+    } as unknown as TrainingSessionDirectoryHandle;
+    const picker = vi.fn(async () => replacementHandle);
+
+    await expect(runTrainingSessionDirectoryAction({
+      action: "replace",
+      existingHandle,
+      picker,
+    })).resolves.toEqual({ handle: replacementHandle, granted: true });
+    expect(picker).toHaveBeenCalledTimes(1);
+    expect(existingQueryPermission).not.toHaveBeenCalled();
   });
 
   it("fails closed when the stored handle cannot expose permission", async () => {
