@@ -1,9 +1,9 @@
 # FPVHelper Artifact 完成矩阵
 
-更新时间：2026-08-31  
+更新时间：2026-08-31
 代码基线：`1cba5b5`（本地集成分支；尚未推送）
-客户入口决定：`race.fpvsuperapp.com`  
-内部验证入口决定：`helper.longxl.com`  
+客户入口决定：`race.fpvsuperapp.com`
+内部验证入口决定：`helper.longxl.com`
 
 ## 1. 用途与证据边界
 
