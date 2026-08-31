@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DraggableStickOverlay,
-  storeStickOverlayLayout,
+  useStickOverlayPairLayout,
 } from "@/components/draggable-stick-overlay";
 import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
@@ -34,6 +34,10 @@ import {
   type LocalDiagnosticTransition,
 } from "@/lib/local-diagnostics";
 import { clamp } from "@/lib/telemetry";
+import {
+  stickOverlayPairIsDefault,
+  type StickOverlayPairLayout,
+} from "@/lib/stick-overlay-layout";
 import {
   DEFAULT_TRAINING_SESSION_PREFERENCES,
   loadTrainingSessionPreferences,
@@ -191,17 +195,6 @@ function localDiagnosticEnvironment() {
   };
 }
 
-function overlayLayoutsWereDefault(entries: Array<{ storageKey: string; defaultLayout: { xPercent: number; yPercent: number; size: number } }>) {
-  try {
-    return entries.every(({ storageKey, defaultLayout }) => {
-      const stored = window.localStorage.getItem(storageKey);
-      return stored === null || stored === JSON.stringify(defaultLayout);
-    });
-  } catch {
-    return false;
-  }
-}
-
 function SignalMark({ active }: { active: boolean }) {
   return (
     <span className="signal-mark" aria-hidden="true">
@@ -329,6 +322,7 @@ export function FlightDashboard() {
   const [analyticsInstallMessage, setAnalyticsInstallMessage] = useState<string | null>(null);
   const [diagnosticNotice, setDiagnosticNotice] = useState<string | null>(null);
   const [workstationNotice, setWorkstationNotice] = useState<string | null>(null);
+  const [overlayLayoutNotice, setOverlayLayoutNotice] = useState<string | null>(null);
   const exportShortcutInFlightRef = useRef(false);
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
   const telemetryControl = useBetaflightTelemetry();
@@ -357,6 +351,12 @@ export function FlightDashboard() {
     const timer = window.setTimeout(() => setWorkstationNotice(null), WORKSTATION_NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [workstationNotice]);
+
+  useEffect(() => {
+    if (!overlayLayoutNotice) return;
+    const timer = window.setTimeout(() => setOverlayLayoutNotice(null), 1_800);
+    return () => window.clearTimeout(timer);
+  }, [overlayLayoutNotice]);
 
   const updateTrainingPreferences = useCallback((preferences: TrainingSessionPreferences) => {
     try {
@@ -495,6 +495,30 @@ export function FlightDashboard() {
   const overlayLayoutScope = coachMode ? `coach.${stickOverlayMode}` : stickOverlayMode;
   const leftStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.left-stick.v1`;
   const rightStickStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.right-stick.v1`;
+  const overlayPairStorageKey = `fpvhelper.overlay.${overlayLayoutScope}.pair.v1`;
+  const defaultStickOverlayPair = useMemo<StickOverlayPairLayout>(() => ({
+    left: leftStickLayout,
+    right: rightStickLayout,
+    docked: false,
+    locked: false,
+  }), [leftStickLayout, rightStickLayout]);
+  const overlayPairStorageOptions = useMemo(() => ({
+    storageKey: overlayPairStorageKey,
+    leftStorageKey: leftStickStorageKey,
+    rightStorageKey: rightStickStorageKey,
+    defaultPair: defaultStickOverlayPair,
+  }), [defaultStickOverlayPair, leftStickStorageKey, overlayPairStorageKey, rightStickStorageKey]);
+  const { pairLayout: stickOverlayPair, storePairLayout: storeStickOverlayPair } = useStickOverlayPairLayout(overlayPairStorageOptions);
+  const updateStickOverlayPair = useCallback((pair: StickOverlayPairLayout, persist: boolean) => {
+    storeStickOverlayPair(pair, persist);
+    if (persist) setOverlayLayoutNotice(pair.locked ? "布局已保存 · 已锁定" : "布局已保存");
+  }, [storeStickOverlayPair]);
+  const toggleStickOverlayPairLock = useCallback(() => {
+    if (!stickOverlayPair.docked) return;
+    const nextPair = { ...stickOverlayPair, locked: !stickOverlayPair.locked };
+    storeStickOverlayPair(nextPair, true);
+    setOverlayLayoutNotice(nextPair.locked ? "左右摇杆已锁定" : "左右摇杆已解锁");
+  }, [stickOverlayPair, storeStickOverlayPair]);
   const analytics = useAnalyticsLifecycle({
     connection,
     source,
@@ -866,12 +890,17 @@ export function FlightDashboard() {
                     className="mini-button"
                     type="button"
                     onClick={() => {
-                      const wasDefault = overlayLayoutsWereDefault([
-                        { storageKey: leftStickStorageKey, defaultLayout: leftStickLayout },
-                        { storageKey: rightStickStorageKey, defaultLayout: rightStickLayout },
-                      ]);
-                      storeStickOverlayLayout(leftStickStorageKey, leftStickLayout);
-                      storeStickOverlayLayout(rightStickStorageKey, rightStickLayout);
+                      storeStickOverlayPair(stickOverlayPair, true);
+                      setOverlayLayoutNotice(stickOverlayPair.locked ? "布局已保存 · 已锁定" : "布局已保存");
+                    }}
+                  >{overlayLayoutNotice ?? "保存布局"}</button>
+                  <button
+                    className="mini-button"
+                    type="button"
+                    onClick={() => {
+                      const wasDefault = stickOverlayPairIsDefault(stickOverlayPair, defaultStickOverlayPair);
+                      storeStickOverlayPair(defaultStickOverlayPair, true);
+                      setOverlayLayoutNotice("已恢复默认布局");
                       analytics.trackOverlayLayoutReset(wasDefault);
                     }}
                   >重置叠层</button>
@@ -906,7 +935,8 @@ export function FlightDashboard() {
             {showStickOverlays || coachMode ? (
               <>
                 <DraggableStickOverlay
-                  storageKey={leftStickStorageKey}
+                  member="left"
+                  pairLayout={stickOverlayPair}
                   label="左摇杆"
                   xLabel="YAW"
                   yLabel="THR"
@@ -916,10 +946,14 @@ export function FlightDashboard() {
                   mode={stickOverlayMode}
                   trail={leftStickTrail}
                   peak={stickMotion.leftPeak}
-                  defaultLayout={leftStickLayout}
+                  onPairChange={updateStickOverlayPair}
+                  onInteractionStart={() => setOverlayLayoutNotice(null)}
+                  onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
+                  onToggleLock={toggleStickOverlayPairLock}
                 />
                 <DraggableStickOverlay
-                  storageKey={rightStickStorageKey}
+                  member="right"
+                  pairLayout={stickOverlayPair}
                   label="右摇杆"
                   xLabel="ROLL"
                   yLabel="PITCH"
@@ -929,7 +963,10 @@ export function FlightDashboard() {
                   mode={stickOverlayMode}
                   trail={rightStickTrail}
                   peak={stickMotion.rightPeak}
-                  defaultLayout={rightStickLayout}
+                  onPairChange={updateStickOverlayPair}
+                  onInteractionStart={() => setOverlayLayoutNotice(null)}
+                  onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
+                  onToggleLock={toggleStickOverlayPairLock}
                 />
               </>
             ) : null}
