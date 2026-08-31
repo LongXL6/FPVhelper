@@ -208,6 +208,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .onboarding-check[data-tone="optional"] span { color: var(--muted); }
 .onboarding-check p { margin: 7px 0 0; color: var(--quiet); font: 500 9px/1.5 var(--mono); }
 .onboarding-storage-warning { margin: 12px 0 0; padding: 10px 12px; border-left: 3px solid var(--alert); background: rgba(255, 107, 53, 0.08); color: #ffc0a8; font: 600 10px/1.5 var(--mono); }
+.onboarding-storage-warning--outside { margin: 8px 0 0 auto; max-width: 520px; }
 .onboarding-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 .error-banner {

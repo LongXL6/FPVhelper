@@ -34,6 +34,7 @@ function session(overrides: Partial<TrainingSession> & Pick<TrainingSession, "id
     sampleCount: 300,
     estimatedRcSampleRateHz: 5,
     interrupted: false,
+    interruptionReason: null,
     validity: { valid: reasons.length === 0, reasons },
     timing: { clock: "performance.now", wallClockStartedAt: "2026-08-31T08:00:00.000+08:00", videoOffsetCalibrated: false },
     video: { recorded: false, synchronized: false },

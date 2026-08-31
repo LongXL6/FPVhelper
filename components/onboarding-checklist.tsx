@@ -75,7 +75,7 @@ export function OnboardingChecklist() {
   const rememberDecision = (decision: OnboardingDecision) => {
     const warning = saveOnboardingDecision(browserStorage(), decision);
     setPersistenceWarning(warning);
-    if (!warning) setOpen(false);
+    setOpen(false);
   };
 
   return (
@@ -89,6 +89,12 @@ export function OnboardingChecklist() {
           setOpen(true);
         }}
       >安装检查</button>
+
+      {!open && persistenceWarning ? (
+        <p className="onboarding-storage-warning onboarding-storage-warning--outside" role="status">
+          {persistenceWarning}
+        </p>
+      ) : null}
 
       <dialog
         ref={dialogRef}

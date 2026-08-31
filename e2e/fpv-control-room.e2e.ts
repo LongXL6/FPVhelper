@@ -24,6 +24,24 @@ interface StoredSession {
   }>;
 }
 
+test("onboarding closes even when its local preference cannot be saved", async ({ page, context }) => {
+  await context.addInitScript(() => {
+    window.localStorage.removeItem("fpvhelper.onboarding.v1");
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "fpvhelper.onboarding.v1") throw new DOMException("Storage blocked", "SecurityError");
+      return setItem.call(this, key, value);
+    };
+  });
+
+  await page.goto("/");
+  const dialog = page.getByRole("dialog", { name: "首次使用检查" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "已了解" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole("status")).toContainText("本次可以关闭清单，但下次仍会显示");
+});
+
 test("fake media and read-only MSP bridge persist a local training session", async ({ page }) => {
   const analyticsRequests: Array<{ method: string; url: string }> = [];
   await page.route("**/api/events", async (route) => {

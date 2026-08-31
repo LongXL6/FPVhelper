@@ -68,6 +68,7 @@ export const test = base.extend<{ fakeHardware: void }>({
         "fpvhelper.analytics.ingest-token.v1",
         `fpvh_ingest_${"a".repeat(43)}`,
       );
+      window.localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
 
       const mspResponse = (command: number, payload: Uint8Array) => {
         let checksum = payload.byteLength ^ command;

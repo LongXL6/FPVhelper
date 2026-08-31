@@ -205,6 +205,7 @@ const INVALID_REASON_LABELS: Record<TrainingSessionInvalidReason, string> = {
   non_monotonic: "时间戳不严格单调",
   no_athlete_code: "缺少选手代号",
   interrupted: "中断结束",
+  rx_link_lost: "遥控链路丢失",
 };
 
 const MARKER_LABELS: Record<TrainingSessionMarkerKind, string> = {
