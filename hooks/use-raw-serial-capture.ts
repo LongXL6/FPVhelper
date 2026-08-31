@@ -9,7 +9,7 @@ import {
   RAW_SERIAL_CAPTURE_DURATION_MS,
   rawSerialCaptureFilename,
   type RawSerialCaptureBuffer,
-} from "@/lib/local-diagnostics";
+} from "../lib/local-diagnostics";
 
 export type RawSerialCaptureStopReason = "completed" | "size_limit" | "disconnected";
 
@@ -31,6 +31,8 @@ const IDLE_RAW_CAPTURE: RawSerialCaptureState = {
 
 export function useRawSerialCapture() {
   const [capture, setCapture] = useState<RawSerialCaptureState>(IDLE_RAW_CAPTURE);
+  const mountedRef = useRef(false);
+  const stateRef = useRef<RawSerialCaptureState["state"]>("idle");
   const bufferRef = useRef<RawSerialCaptureBuffer | null>(null);
   const deadlineRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -43,23 +45,30 @@ export function useRawSerialCapture() {
 
   const finish = useCallback((stopReason: RawSerialCaptureStopReason) => {
     const buffer = bufferRef.current;
-    if (!buffer || deadlineRef.current === null) return;
+    const deadline = deadlineRef.current;
+    if (!mountedRef.current || stateRef.current !== "capturing" || !buffer || deadline === null) return false;
+    const resolvedStopReason = stopReason !== "size_limit" && performance.now() >= deadline
+      ? "completed"
+      : stopReason;
     clearTimer();
+    stateRef.current = "ready";
     setCapture({
       state: "ready",
       startedAt: buffer.startedAt,
       remainingMs: 0,
       byteLength: buffer.byteLength,
-      stopReason,
+      stopReason: resolvedStopReason,
     });
+    return true;
   }, [clearTimer]);
 
   const start = useCallback(() => {
-    clearTimer();
+    if (!mountedRef.current || stateRef.current !== "idle" || bufferRef.current !== null) return false;
     const startedAt = new Date().toISOString();
     bufferRef.current = createRawSerialCaptureBuffer(startedAt);
     const deadline = performance.now() + RAW_SERIAL_CAPTURE_DURATION_MS;
     deadlineRef.current = deadline;
+    stateRef.current = "capturing";
     setCapture({
       state: "capturing",
       startedAt,
@@ -75,25 +84,32 @@ export function useRawSerialCapture() {
         finish("completed");
         return;
       }
-      setCapture((current) => ({
+      setCapture((current) => current.state !== "capturing" ? current : {
         ...current,
         remainingMs,
         byteLength: buffer?.byteLength ?? current.byteLength,
-      }));
+      });
     }, 250);
-  }, [clearTimer, finish]);
+    return true;
+  }, [finish]);
 
   const ingest = useCallback((chunk: Uint8Array) => {
     const current = bufferRef.current;
-    if (!current || deadlineRef.current === null) return;
+    const deadline = deadlineRef.current;
+    if (stateRef.current !== "capturing" || !current || deadline === null) return;
+    if (performance.now() >= deadline) {
+      finish("completed");
+      return;
+    }
     const next = appendRawSerialCaptureChunk(current, chunk);
     bufferRef.current = next;
-    setCapture((state) => ({ ...state, byteLength: next.byteLength }));
     if (next.truncated) finish("size_limit");
   }, [finish]);
 
   const cancel = useCallback(() => {
+    if (!mountedRef.current) return;
     clearTimer();
+    stateRef.current = "idle";
     bufferRef.current = null;
     setCapture(IDLE_RAW_CAPTURE);
   }, [clearTimer]);
@@ -105,7 +121,15 @@ export function useRawSerialCapture() {
     return true;
   }, [capture.state]);
 
-  useEffect(() => () => clearTimer(), [clearTimer]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearTimer();
+      stateRef.current = "idle";
+      bufferRef.current = null;
+    };
+  }, [clearTimer]);
 
   return { capture, start, ingest, finish, cancel, download };
 }

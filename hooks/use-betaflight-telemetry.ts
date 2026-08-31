@@ -345,8 +345,7 @@ export function useBetaflightTelemetry(): TelemetryController {
 
   const startRawCapture = useCallback(() => {
     if (source !== "serial" || connection !== "live" || portRef.current === null) return false;
-    beginRawCapture();
-    return true;
+    return beginRawCapture();
   }, [beginRawCapture, connection, source]);
 
   const connectSerial = useCallback(async () => {

@@ -72,6 +72,12 @@ const statusCopy = {
   error: "需要检查",
 } as const;
 
+const rawCaptureStopCopy = {
+  completed: "原始串口夹具已完成 60 秒录制，可以下载。",
+  size_limit: "原始串口夹具已达到 8 MiB 本地上限并提前结束，可以下载。",
+  disconnected: "串口在录制期间断开；断线前的原始字节已保留，可以下载。",
+} as const;
+
 const invalidReasonCopy: Record<TrainingSessionInvalidReason, string> = {
   source_not_ground_rc: "不是真实 GROUND_RC",
   mixed_sources: "混入其他数据源",
@@ -1271,25 +1277,22 @@ export function FlightDashboard() {
             }}
           >下载诊断 JSON</button>
 
-          {telemetryControl.rawCapture.state === "capturing" ? (
-            <button className="mini-button" type="button" onClick={telemetryControl.cancelRawCapture}>
-              取消原始夹具 · {Math.ceil(telemetryControl.rawCapture.remainingMs / 1_000)} 秒 · {telemetryControl.rawCapture.byteLength} B
-            </button>
-          ) : (
+          {telemetryControl.rawCapture.state === "idle" ? (
             <button
               className="mini-button"
               type="button"
               disabled={!bridgeIsLive}
               onClick={() => {
+                setDiagnosticNotice(null);
                 const started = telemetryControl.startRawCapture();
-                setDiagnosticNotice(started
-                  ? "正在本机内存录制 60 秒串口原始字节；断线或达到 8 MiB 会提前结束。"
-                  : "请先连接桥接飞控并等待真实 MSP_RC 在线。");
+                if (!started) setDiagnosticNotice("请先连接桥接飞控并等待真实 MSP_RC 在线。");
               }}
             >录制 60 秒原始串口夹具</button>
-          )}
-
-          {telemetryControl.rawCapture.state === "ready" ? (
+          ) : telemetryControl.rawCapture.state === "capturing" ? (
+            <button className="mini-button" type="button" onClick={telemetryControl.cancelRawCapture}>
+              取消原始夹具 · {Math.ceil(telemetryControl.rawCapture.remainingMs / 1_000)} 秒 · {telemetryControl.rawCapture.byteLength} B
+            </button>
+          ) : (
             <>
               <button
                 className="mini-button mini-button--active"
@@ -1302,11 +1305,23 @@ export function FlightDashboard() {
                     : "没有可下载的原始串口字节。");
                 }}
               >下载原始 .bin · {telemetryControl.rawCapture.byteLength} B</button>
-              <button className="mini-button" type="button" onClick={telemetryControl.cancelRawCapture}>清除内存夹具</button>
+              <button
+                className="mini-button"
+                type="button"
+                onClick={() => {
+                  telemetryControl.cancelRawCapture();
+                  setDiagnosticNotice(null);
+                }}
+              >清除内存夹具</button>
             </>
-          ) : null}
+          )}
         </div>
         <small>原始 .bin 可能包含完整 MSP 响应，只在你主动点击后采集；它不进入诊断 JSON、Session 或统计事件。</small>
+        {telemetryControl.rawCapture.state === "capturing" ? (
+          <small role="status">正在本机内存录制原始串口字节；断线或达到 8 MiB 会提前结束。</small>
+        ) : telemetryControl.rawCapture.state === "ready" && telemetryControl.rawCapture.stopReason ? (
+          <small role="status">{rawCaptureStopCopy[telemetryControl.rawCapture.stopReason]}</small>
+        ) : null}
         {diagnosticNotice ? <small role="status">{diagnosticNotice}</small> : null}
       </section>
 
