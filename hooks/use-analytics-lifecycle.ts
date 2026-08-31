@@ -8,6 +8,7 @@ import {
   initializeAnalytics,
   optOutAnalytics,
   prepareAnalyticsReactivation,
+  prepareAnalyticsTokenReplacement,
   setAnalyticsIngestToken,
   subscribeAnalyticsLocalStatus,
   trackAnalytics,
@@ -78,6 +79,7 @@ interface AnalyticsLifecycleController {
   trackOverlayModeChange: (from: AnalyticsOverlayMode, to: AnalyticsOverlayMode) => void;
   trackOverlayLayoutReset: (wasDefault: boolean) => void;
   installToken: (token: string) => boolean;
+  prepareTokenReplacement: () => boolean;
   optOut: () => void;
   prepareReactivation: () => boolean;
 }
@@ -810,6 +812,12 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     setStatus(getAnalyticsLocalStatus());
   }, [resetAnalyticsWindow]);
 
+  const prepareTokenReplacement = useCallback(() => {
+    const prepared = prepareAnalyticsTokenReplacement();
+    setStatus(getAnalyticsLocalStatus());
+    return prepared;
+  }, []);
+
   const prepareReactivation = useCallback(() => {
     const prepared = prepareAnalyticsReactivation();
     if (prepared) resetAnalyticsWindow();
@@ -826,6 +834,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     trackOverlayModeChange,
     trackOverlayLayoutReset,
     installToken,
+    prepareTokenReplacement,
     optOut,
     prepareReactivation,
   };

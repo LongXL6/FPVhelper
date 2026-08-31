@@ -31,7 +31,7 @@ export type AnalyticsLocalStatus =
   | { state: "off"; reason: "hostname" | "configuration" | "opted_out" }
   | {
     state: "waiting_token";
-    reason: "missing_token" | "rejected_token";
+    reason: "missing_token" | "rejected_token" | "replacement";
     workstationId: string;
   }
   | { state: "enabled"; reason: "installed" };
@@ -171,12 +171,16 @@ export function resolveAnalyticsLocalStatus(options: {
   hasToken: boolean;
   workstationId?: string | null;
   authorizationBlocked?: boolean;
+  replacementPending?: boolean;
 }): AnalyticsLocalStatus {
   if (!isCustomerAnalyticsHostname(options.hostname)) return { state: "off", reason: "hostname" };
   if (!options.configured) return { state: "off", reason: "configuration" };
   if (options.optedOut) return { state: "off", reason: "opted_out" };
   if (!isWorkstationId(options.workstationId)) {
     return { state: "off", reason: "configuration" };
+  }
+  if (options.replacementPending) {
+    return { state: "waiting_token", reason: "replacement", workstationId: options.workstationId };
   }
   if (options.authorizationBlocked) {
     return { state: "waiting_token", reason: "rejected_token", workstationId: options.workstationId };
@@ -198,6 +202,8 @@ export class AnalyticsClient {
   private inflight = false;
   private active = false;
   private authorizationBlocked = false;
+  private replacementPending = false;
+  private deliveryGeneration = 0;
   private installedToken: string | null = null;
   private readonly statusListeners = new Set<(status: AnalyticsLocalStatus) => void>();
   private backoffMs = 0;
@@ -323,6 +329,7 @@ export class AnalyticsClient {
     }
 
     if (this.inflight || !runtime.online()) return false;
+    const deliveryGeneration = this.deliveryGeneration;
     this.inflight = true;
     try {
       const response = await runtime.fetch(this.options.endpoint ?? "/api/events", {
@@ -332,6 +339,7 @@ export class AnalyticsClient {
         keepalive: true,
         credentials: "same-origin",
       });
+      if (deliveryGeneration !== this.deliveryGeneration) return false;
       if (response.ok || DROP_RESPONSE_STATUSES.has(response.status)) {
         const sentIds = new Set(events.map((event) => event.event_id));
         this.queue = this.queue.filter((event) => !sentIds.has(event.event_id));
@@ -340,6 +348,7 @@ export class AnalyticsClient {
       }
       if (response.status === 401 || response.status === 403) {
         this.authorizationBlocked = true;
+        this.replacementPending = false;
         safeRemove(runtime.storage, TOKEN_KEY);
         this.installedToken = "";
         this.ingestToken = "";
@@ -351,11 +360,14 @@ export class AnalyticsClient {
       }
       return response.ok;
     } catch {
-      this.applyBackoff(null);
+      if (deliveryGeneration === this.deliveryGeneration) this.applyBackoff(null);
       return false;
     } finally {
       this.inflight = false;
-      if (!this.authorizationBlocked) this.scheduleFlush(this.backoffMs || undefined);
+      if (!this.authorizationBlocked) {
+        if (deliveryGeneration !== this.deliveryGeneration) void this.flush();
+        else this.scheduleFlush(this.backoffMs || undefined);
+      }
     }
   }
 
@@ -371,6 +383,7 @@ export class AnalyticsClient {
     ) return false;
     this.installedToken = token;
     this.authorizationBlocked = false;
+    this.replacementPending = false;
     this.resetBackoff();
     if (!this.active) {
       if (!this.init()) {
@@ -386,6 +399,29 @@ export class AnalyticsClient {
     return true;
   }
 
+  prepareTokenReplacement() {
+    const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
+    if (
+      !runtime
+      || !this.active
+      || !isCustomerAnalyticsHostname(runtime.hostname)
+      || !productionAnalyticsEnabled(this.options)
+      || safeGet(runtime.storage, OPT_OUT_KEY) === "1"
+      || !isAnalyticsIngestToken(this.ingestToken)
+    ) return false;
+    safeRemove(runtime.storage, TOKEN_KEY);
+    this.installedToken = "";
+    this.ingestToken = "";
+    this.authorizationBlocked = true;
+    this.replacementPending = true;
+    this.deliveryGeneration += 1;
+    this.resetBackoff();
+    if (this.timer !== null) runtime.clearTimeout(this.timer);
+    this.timer = null;
+    this.notifyStatusChanged();
+    return true;
+  }
+
   clearIngestToken() {
     const runtime = this.runtime ?? this.options.runtime ?? browserRuntime();
     if (!runtime) return;
@@ -395,6 +431,8 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.queue = [];
     this.authorizationBlocked = false;
+    this.replacementPending = false;
+    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
@@ -409,6 +447,9 @@ export class AnalyticsClient {
     this.installedToken = "";
     this.ingestToken = "";
     this.queue = [];
+    this.authorizationBlocked = false;
+    this.replacementPending = false;
+    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
@@ -428,6 +469,8 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.queue = [];
     this.authorizationBlocked = false;
+    this.replacementPending = false;
+    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     if (!this.ensureWorkstationId(runtime)) return false;
@@ -450,6 +493,7 @@ export class AnalyticsClient {
       hasToken: isAnalyticsIngestToken(this.installedToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? ""),
       workstationId,
       authorizationBlocked: this.authorizationBlocked,
+      replacementPending: this.replacementPending,
     });
   }
 
@@ -582,6 +626,10 @@ export function setAnalyticsIngestToken(token: string) {
 
 export function clearAnalyticsIngestToken() {
   analyticsClient.clearIngestToken();
+}
+
+export function prepareAnalyticsTokenReplacement() {
+  return analyticsClient.prepareTokenReplacement();
 }
 
 export function optOutAnalytics() {

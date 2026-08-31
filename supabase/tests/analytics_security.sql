@@ -1,6 +1,6 @@
 begin;
 
-select plan(33);
+select plan(43);
 
 select has_table('public', 'app_events', 'app_events exists');
 select has_table('public', 'analytics_ingest_tokens', 'ingest token registry exists');
@@ -134,6 +134,68 @@ select throws_ok($sql$
     'admin'
   )
 $sql$, '23514', null, 'tokens are restricted to the event_ingest purpose');
+
+select lives_ok($sql$
+  insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
+  values ('50000000-0000-4000-8000-000000000001', repeat('1', 64), 'event_ingest')
+$sql$, 'a workstation token can be issued');
+select is((
+  select count(*)::integer from public.analytics_ingest_tokens
+  where workstation_id = '50000000-0000-4000-8000-000000000001' and revoked_at is null
+), 1, 'issue leaves exactly one active token');
+select throws_ok($sql$
+  insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
+  values ('50000000-0000-4000-8000-000000000001', repeat('2', 64), 'event_ingest')
+$sql$, '23505', null, 'a second active token for the same workstation is rejected');
+select lives_ok($sql$
+  with revoked as (
+    update public.analytics_ingest_tokens
+    set revoked_at = clock_timestamp()
+    where workstation_id = '50000000-0000-4000-8000-000000000001'
+      and revoked_at is null
+    returning workstation_id
+  )
+  insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
+  select workstation_id, repeat('2', 64), 'event_ingest' from revoked
+$sql$, 'rotation revokes and issues in one statement');
+select is((
+  select count(*)::integer from public.analytics_ingest_tokens
+  where workstation_id = '50000000-0000-4000-8000-000000000001' and revoked_at is null
+), 1, 'rotation leaves exactly one active token');
+select is((
+  select count(*)::integer from public.analytics_ingest_tokens
+  where workstation_id = '50000000-0000-4000-8000-000000000001' and revoked_at is not null
+), 1, 'rotation preserves one revoked predecessor');
+select lives_ok($sql$
+  update public.analytics_ingest_tokens
+  set revoked_at = clock_timestamp()
+  where workstation_id = '50000000-0000-4000-8000-000000000001'
+    and revoked_at is null
+$sql$, 'the active workstation token can be revoked');
+select is((
+  select count(*)::integer from public.analytics_ingest_tokens
+  where workstation_id = '50000000-0000-4000-8000-000000000001' and revoked_at is null
+), 0, 'revoke leaves no active token');
+
+insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
+values
+  ('60000000-0000-4000-8000-000000000001', repeat('3', 64), 'event_ingest'),
+  ('60000000-0000-4000-8000-000000000002', repeat('4', 64), 'event_ingest');
+select throws_ok($sql$
+  with revoked as (
+    update public.analytics_ingest_tokens
+    set revoked_at = clock_timestamp()
+    where workstation_id = '60000000-0000-4000-8000-000000000001'
+      and revoked_at is null
+    returning workstation_id
+  )
+  insert into public.analytics_ingest_tokens (workstation_id, token_hash, purpose)
+  select workstation_id, repeat('4', 64), 'event_ingest' from revoked
+$sql$, '23505', null, 'a conflicting replacement aborts the rotation statement');
+select is((
+  select count(*)::integer from public.analytics_ingest_tokens
+  where workstation_id = '60000000-0000-4000-8000-000000000001' and revoked_at is null
+), 1, 'failed rotation rolls back the predecessor revocation');
 
 select throws_ok($sql$
   insert into private.training_intent_ledger (week_start, intended_recordings, source)

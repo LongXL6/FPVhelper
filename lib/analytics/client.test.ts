@@ -14,6 +14,7 @@ function createHarness(options: {
   online?: boolean;
   statuses?: number[];
   responses?: Array<{ status: number; headers?: Record<string, string> }>;
+  responsePromises?: Array<Promise<Response>>;
   hostname?: string;
 } = {}) {
   const values = new Map<string, string>();
@@ -27,6 +28,7 @@ function createHarness(options: {
   let nowMs = Date.parse("2026-08-31T00:00:00.000Z");
   const statuses = [...(options.statuses ?? [204])];
   const responses = [...(options.responses ?? [])];
+  const responsePromises = [...(options.responsePromises ?? [])];
 
   const runtime = {
     storage: {
@@ -42,6 +44,8 @@ function createHarness(options: {
     monotonicNow: () => 1234,
     fetch: async (input: string, init: RequestInit) => {
       requests.push({ input, init });
+      const promised = responsePromises.shift();
+      if (promised) return promised;
       const configured = responses.shift();
       return new Response(null, configured ?? { status: statuses.shift() ?? 204 });
     },
@@ -122,6 +126,26 @@ describe("analytics client privacy and delivery", () => {
     });
     expect(disabled.init()).toBe(false);
     expect(harness.requests).toHaveLength(0);
+  });
+
+  it("never installs delivery triggers or sends through online, pagehide, timers, or beacon without a token", async () => {
+    const harness = createHarness();
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+
+    expect(client.init()).toBe(false);
+    expect(harness.listeners.get("online")?.size ?? 0).toBe(0);
+    expect(harness.listeners.get("pagehide")?.size ?? 0).toBe(0);
+    expect(harness.timers.size).toBe(0);
+    expect(client.track("overlay_layout_reset", overlayProps())).toBeNull();
+    harness.emit("online");
+    harness.emit("pagehide");
+    harness.runNextTimer();
+    expect(await client.flush()).toBe(false);
+    expect(await client.flush({ beacon: true })).toBe(false);
+    expect(harness.requests).toHaveLength(0);
+    expect(harness.beacons).toHaveLength(0);
   });
 
   it.each(["helper.longxl.com", "localhost", "127.0.0.1"])(
@@ -269,6 +293,49 @@ describe("analytics client privacy and delivery", () => {
     expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
     expect(harness.requests).toHaveLength(requestCountAfterFailure + 1);
     unsubscribe();
+  });
+
+  it("pauses an enabled client for explicit replacement, preserving identity and queue until the new token flushes", async () => {
+    let resolveOldRequest!: (response: Response) => void;
+    const oldRequest = new Promise<Response>((resolve) => { resolveOldRequest = resolve; });
+    const harness = createHarness({ responsePromises: [oldRequest] });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    expect(client.init()).toBe(true);
+    client.track("overlay_layout_reset", overlayProps());
+    const queuedBeforeReplacement = harness.values.get("fpvhelper.analytics.queue.v1");
+    const oldFlush = client.flush();
+    await settle();
+    expect(harness.requests).toHaveLength(1);
+
+    expect(client.prepareTokenReplacement()).toBe(true);
+    expect(client.getLocalStatus()).toEqual({
+      state: "waiting_token", reason: "replacement", workstationId: FIRST_WORKSTATION_ID,
+    });
+    expect(harness.values.has("fpvhelper.analytics.ingest-token.v1")).toBe(false);
+    expect(harness.values.get("fpvhelper.analytics.queue.v1")).toBe(queuedBeforeReplacement);
+    expect(harness.values.get("fpvhelper.workstation.v1")).toBe(FIRST_WORKSTATION_ID);
+    expect(harness.values.has("fpvhelper.analytics.opt-out.v1")).toBe(false);
+
+    harness.emit("online");
+    harness.emit("pagehide");
+    harness.runNextTimer();
+    await settle();
+    expect(harness.requests).toHaveLength(1);
+    expect(harness.beacons).toHaveLength(0);
+
+    resolveOldRequest(new Response(null, { status: 204 }));
+    expect(await oldFlush).toBe(false);
+    expect(client.getQueueLength()).toBe(1);
+    expect(harness.values.get("fpvhelper.analytics.queue.v1")).toBe(queuedBeforeReplacement);
+
+    expect(client.setIngestToken(TOKEN_B)).toBe(true);
+    await settle();
+    expect(harness.requests).toHaveLength(2);
+    expect(JSON.parse(harness.requests[1].init.body as string).ingest_token).toBe(TOKEN_B);
+    expect(client.getQueueLength()).toBe(0);
+    expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
   });
 
   it("retains a rate-limited batch and obeys Retry-After before replaying it", async () => {

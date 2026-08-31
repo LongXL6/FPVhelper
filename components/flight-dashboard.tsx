@@ -9,7 +9,10 @@ import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
 } from "@/components/training-storage-integrity-notice";
-import { AnalyticsWorkstationId } from "@/components/analytics-workstation-id";
+import {
+  AnalyticsTokenReplacementAction,
+  AnalyticsWorkstationId,
+} from "@/components/analytics-workstation-id";
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
@@ -481,6 +484,8 @@ export function FlightDashboard() {
         ? "本机已关闭统计并清除了令牌与待发送队列；随机工作站 ID 仍保留给本地 Session 台账，不会因此发送。"
         : analytics.status.reason === "rejected_token"
           ? "工作站令牌已被服务端拒绝；待发送事件仍保留在本机，请粘贴新令牌。"
+        : analytics.status.reason === "replacement"
+          ? "已暂停发送并清除旧令牌；工作站 ID 与待发送队列仍保留，请粘贴新令牌。"
         : analytics.status.state === "waiting_token"
           ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
       : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
@@ -1158,7 +1163,7 @@ export function FlightDashboard() {
               }}
             >
               <label htmlFor="analytics-workstation-token">
-                {analytics.status.reason === "rejected_token" ? "替换工作站令牌" : "一次性安装工作站令牌"}
+                {analytics.status.reason === "missing_token" ? "一次性安装工作站令牌" : "替换工作站令牌"}
               </label>
               <div>
                 <input
@@ -1186,15 +1191,26 @@ export function FlightDashboard() {
           >明确重新启用统计</button>
         ) : null}
         {analytics.status.state === "enabled" ? (
-          <button
-            className="mini-button"
-            type="button"
-            onClick={() => {
-              analytics.optOut();
-              setAnalyticsTokenDraft("");
-              setAnalyticsInstallMessage("已关闭并清除本机统计数据。");
-            }}
-          >关闭并清除本机统计数据</button>
+          <div className="analytics-enabled-actions">
+            <AnalyticsTokenReplacementAction
+              onReplace={() => {
+                const prepared = analytics.prepareTokenReplacement();
+                setAnalyticsTokenDraft("");
+                setAnalyticsInstallMessage(prepared
+                  ? "发送已暂停；旧令牌已清除，待发送队列与工作站 ID 保留。"
+                  : "当前状态无法更换工作站令牌。");
+              }}
+            />
+            <button
+              className="mini-button"
+              type="button"
+              onClick={() => {
+                analytics.optOut();
+                setAnalyticsTokenDraft("");
+                setAnalyticsInstallMessage("已关闭并清除本机统计数据。");
+              }}
+            >关闭并清除本机统计数据</button>
+          </div>
         ) : null}
         {analyticsInstallMessage ? <small role="status">{analyticsInstallMessage}</small> : null}
       </section>

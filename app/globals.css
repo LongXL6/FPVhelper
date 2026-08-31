@@ -705,6 +705,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--white);
   font: 600 10px/1 var(--mono);
 }
+.analytics-enabled-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 
 .dashboard-shell--coach { height: 100vh; min-height: 680px; overflow: hidden; padding: 0 14px 14px; }
 .dashboard-shell--coach .topbar { min-height: 78px; }

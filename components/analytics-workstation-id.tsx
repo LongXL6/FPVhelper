@@ -6,6 +6,18 @@ interface AnalyticsWorkstationIdProps {
   workstationId: string;
 }
 
+interface AnalyticsTokenReplacementActionProps {
+  onReplace: () => void;
+}
+
+export function AnalyticsTokenReplacementAction({ onReplace }: AnalyticsTokenReplacementActionProps) {
+  return (
+    <button className="mini-button" type="button" onClick={onReplace}>
+      更换工作站令牌
+    </button>
+  );
+}
+
 export function AnalyticsWorkstationId({ workstationId }: AnalyticsWorkstationIdProps) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
