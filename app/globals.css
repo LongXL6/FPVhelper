@@ -207,6 +207,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .workstation-banner--blocked { border-color: #f6bd48; background: rgba(246, 189, 72, 0.08); }
 .workstation-banner--blocked b { color: #f6bd48; }
 
+.workstation-shortcuts {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 14px 0 -2px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-soft);
+  background: #090f14;
+  color: var(--muted);
+  font: 600 10px/1.4 var(--mono);
+}
+.workstation-shortcuts > div { display: grid; gap: 3px; }
+.workstation-shortcuts b { color: var(--white); }
+.workstation-shortcuts label { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; white-space: nowrap; }
+.workstation-shortcuts input { width: 18px; height: 18px; accent-color: var(--signal); }
+.workstation-shortcuts label span { color: var(--signal); }
+
 .update-banner {
   display: flex;
   justify-content: space-between;
@@ -677,6 +695,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-shell--coach .video-console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .dashboard-shell--coach .video-stage { min-height: 0; height: 100%; }
 .dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
+.dashboard-shell--coach .workstation-shortcuts { display: none; }
 .dashboard-shell--coach .section-bar { min-height: 44px; }
 .dashboard-shell--coach .section-bar small { font-size: 12px; }
 .dashboard-shell--coach .hud-top-right, .dashboard-shell--coach .hud-bottom-left { display: none; }
@@ -728,6 +747,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .brand-mark span:nth-child(3) { top: 18px; }
   .top-actions { width: 100%; }
   .top-actions { flex-wrap: wrap; }
+  .workstation-shortcuts { align-items: flex-start; flex-direction: column; }
   .update-banner, .update-banner > div { align-items: flex-start; flex-direction: column; }
   .button { min-height: 36px; padding: 0 10px; font-size: 9px; }
   .button--primary { width: 100%; }

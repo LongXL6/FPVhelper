@@ -2,16 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  createWakeLockCoordinator,
   createWorkstationTabLease,
+  type ScreenWakeState,
+  type WakeLockSentinelLike,
   type WorkstationTabState,
 } from "@/lib/workstation-runtime";
-
-export type ScreenWakeState = "idle" | "requesting" | "active" | "released" | "unsupported" | "error";
-
-interface WakeLockSentinelLike {
-  release: () => Promise<void>;
-  addEventListener: (type: "release", listener: () => void, options?: AddEventListenerOptions) => void;
-}
 
 interface WakeLockManagerLike {
   request: (type: "screen") => Promise<WakeLockSentinelLike>;
@@ -57,39 +53,18 @@ export function useWorkstationRuntime({ keepAwake }: { keepAwake: boolean }) {
       };
     }
 
-    let active = true;
-    let sentinel: WakeLockSentinelLike | null = null;
-
-    const acquire = async () => {
-      if (!active || document.visibilityState !== "visible" || sentinel) return;
-      setWakeState("requesting");
-      try {
-        const nextSentinel = await wakeLock.request("screen");
-        if (!active) {
-          await nextSentinel.release();
-          return;
-        }
-        sentinel = nextSentinel;
-        setWakeState("active");
-        nextSentinel.addEventListener("release", () => {
-          if (sentinel === nextSentinel) sentinel = null;
-          if (active) setWakeState("released");
-        }, { once: true });
-      } catch {
-        if (active) setWakeState("error");
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") void acquire();
-    };
+    const coordinator = createWakeLockCoordinator({
+      request: () => wakeLock.request("screen"),
+      isVisible: () => document.visibilityState === "visible",
+      onState: setWakeState,
+    });
+    const handleVisibilityChange = () => coordinator.visibilityChanged();
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    void acquire();
+    void coordinator.acquire();
     return () => {
-      active = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      if (sentinel) void sentinel.release().catch(() => undefined);
+      coordinator.dispose();
     };
   }, [keepAwake]);
 
