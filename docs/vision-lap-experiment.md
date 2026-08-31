@@ -58,3 +58,15 @@
 | 结论 | 实验中 / 未达门槛 / 达到训练辅助门槛 |
 
 “达到训练辅助门槛”也必须附“非赛事认证”说明，并由产品负责人书面批准后才能修改宣传口径。
+
+## 本地评估支架
+
+仓库现提供纯本地评估器；它不会读取摄像头、训练模型或上传视频，也不能替代 YOLO 推理与真实计时器盲测。
+
+```bash
+npm run vision:evaluate -- /绝对路径/vision-test-run.json
+```
+
+输入必须声明 `split: "test"`、数据集/模型版本、`frozenAt`、首次打开 test 的 `testOpenedAt`、冻结的置信度与匹配/去重窗口，并包含逐事件真值与预测。评估器执行一对一匹配，单独统计误报、重复计数、低置信度待复核事件、Recall 和时间偏差 P95；只有所有固定门槛同时通过才返回 `passedTrainingAidThreshold: true`。输出始终带“实验圈数，不作为正式成绩或赛事计时”。`createVisionGateCrossingDetector()` 另提供方向、滞回、冷却和线性时间插值状态机，供未来本地 YOLO 推理结果接入；它不包含图像检测模型。
+
+数据集清单可用 `validateVisionDatasetManifest()` 校验：同一个 `sessionId` 只允许出现一次，整段 Session 不能跨 train/validation/test；每段必须登记本地文件 SHA-256、授权引用和删除日期。支架只能验证输入记录的一致性，不能证明授权真实、阈值确实在看 test 前冻结，仍需独立复核人签字。

@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "analytics:token": "node scripts/analytics-ingest-token.mts",
+    "vision:evaluate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/evaluate-vision-laps.mts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
