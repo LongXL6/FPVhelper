@@ -88,6 +88,16 @@ function createHarness(options: {
     nextTimerDelay() {
       return timers.values().next().value?.delayMs as number | undefined;
     },
+    timerDelays() {
+      return [...timers.values()].map((timer) => timer.delayMs);
+    },
+    runTimerByDelay(delayMs: number) {
+      const entry = [...timers.entries()].find(([, timer]) => timer.delayMs === delayMs);
+      if (!entry) return false;
+      timers.delete(entry[0]);
+      entry[1].callback();
+      return true;
+    },
   };
 }
 
@@ -296,18 +306,19 @@ describe("analytics client privacy and delivery", () => {
   });
 
   it("pauses an enabled client for explicit replacement, preserving identity and queue until the new token flushes", async () => {
-    let resolveOldRequest!: (response: Response) => void;
-    const oldRequest = new Promise<Response>((resolve) => { resolveOldRequest = resolve; });
-    const harness = createHarness({ responsePromises: [oldRequest] });
+    const oldRequest = new Promise<Response>(() => {});
+    const harness = createHarness({ responsePromises: [oldRequest, Promise.resolve(new Response(null, { status: 204 }))] });
     const client = new AnalyticsClient({
       enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
     });
     expect(client.init()).toBe(true);
     client.track("overlay_layout_reset", overlayProps());
     const queuedBeforeReplacement = harness.values.get("fpvhelper.analytics.queue.v1");
-    const oldFlush = client.flush();
+    void client.flush();
     await settle();
     expect(harness.requests).toHaveLength(1);
+    const oldSignal = harness.requests[0].init.signal as AbortSignal;
+    expect(oldSignal.aborted).toBe(false);
 
     expect(client.prepareTokenReplacement()).toBe(true);
     expect(client.getLocalStatus()).toEqual({
@@ -317,6 +328,7 @@ describe("analytics client privacy and delivery", () => {
     expect(harness.values.get("fpvhelper.analytics.queue.v1")).toBe(queuedBeforeReplacement);
     expect(harness.values.get("fpvhelper.workstation.v1")).toBe(FIRST_WORKSTATION_ID);
     expect(harness.values.has("fpvhelper.analytics.opt-out.v1")).toBe(false);
+    expect(oldSignal.aborted).toBe(true);
 
     harness.emit("online");
     harness.emit("pagehide");
@@ -325,17 +337,90 @@ describe("analytics client privacy and delivery", () => {
     expect(harness.requests).toHaveLength(1);
     expect(harness.beacons).toHaveLength(0);
 
-    resolveOldRequest(new Response(null, { status: 204 }));
-    expect(await oldFlush).toBe(false);
-    expect(client.getQueueLength()).toBe(1);
-    expect(harness.values.get("fpvhelper.analytics.queue.v1")).toBe(queuedBeforeReplacement);
-
     expect(client.setIngestToken(TOKEN_B)).toBe(true);
     await settle();
     expect(harness.requests).toHaveLength(2);
     expect(JSON.parse(harness.requests[1].init.body as string).ingest_token).toBe(TOKEN_B);
     expect(client.getQueueLength()).toBe(0);
     expect(client.getLocalStatus()).toEqual({ state: "enabled", reason: "installed" });
+
+    client.track("overlay_layout_reset", overlayProps());
+    expect(harness.requests).toHaveLength(2);
+    expect(harness.runTimerByDelay(10_000)).toBe(true);
+    await settle();
+    expect(harness.requests).toHaveLength(3);
+    expect(JSON.parse(harness.requests[2].init.body as string).ingest_token).toBe(TOKEN_B);
+    expect(client.getQueueLength()).toBe(0);
+  });
+
+  it("restores the periodic fake timer after empty-queue replacement so a later non-urgent event flushes", async () => {
+    const harness = createHarness();
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    expect(client.init()).toBe(true);
+    expect(harness.timerDelays()).toEqual([10_000]);
+
+    expect(client.prepareTokenReplacement()).toBe(true);
+    expect(harness.timerDelays()).toEqual([]);
+    expect(client.setIngestToken(TOKEN_B)).toBe(true);
+    expect(harness.timerDelays()).toEqual([10_000]);
+    expect(harness.requests).toHaveLength(0);
+
+    client.track("overlay_layout_reset", overlayProps());
+    expect(harness.requests).toHaveLength(0);
+    expect(harness.runTimerByDelay(10_000)).toBe(true);
+    await settle();
+    expect(harness.requests).toHaveLength(1);
+    expect(JSON.parse(harness.requests[0].init.body as string).ingest_token).toBe(TOKEN_B);
+    expect(client.getQueueLength()).toBe(0);
+  });
+
+  it("bounds a request with an abort signal and timeout even when fetch never resolves", async () => {
+    const harness = createHarness({ responsePromises: [new Promise<Response>(() => {})] });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    client.init();
+    client.track("overlay_layout_reset", overlayProps());
+    void client.flush();
+    await settle();
+
+    const signal = harness.requests[0].init.signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    expect(harness.timerDelays()).toContain(15_000);
+    expect(harness.runTimerByDelay(15_000)).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(harness.timerDelays()).toEqual([5_000]);
+  });
+
+  it("does not let an aborted old generation finally clear a newer inflight request", async () => {
+    let rejectOldRequest!: (reason: Error) => void;
+    let resolveNewRequest!: (response: Response) => void;
+    const oldRequest = new Promise<Response>((_, reject) => { rejectOldRequest = reject; });
+    const newRequest = new Promise<Response>((resolve) => { resolveNewRequest = resolve; });
+    const harness = createHarness({ responsePromises: [oldRequest, newRequest] });
+    const client = new AnalyticsClient({
+      enabled: true, environment: "production", ingestToken: TOKEN_A, runtime: harness.runtime, allowInTest: true, build: "test",
+    });
+    client.init();
+    client.track("overlay_layout_reset", overlayProps());
+    const oldFlush = client.flush();
+    await settle();
+
+    expect(client.prepareTokenReplacement()).toBe(true);
+    expect(client.setIngestToken(TOKEN_B)).toBe(true);
+    await settle();
+    expect(harness.requests).toHaveLength(2);
+
+    rejectOldRequest(new Error("aborted old generation"));
+    expect(await oldFlush).toBe(false);
+    expect(await client.flush()).toBe(false);
+    expect(harness.requests).toHaveLength(2);
+
+    resolveNewRequest(new Response(null, { status: 204 }));
+    await settle();
+    expect(client.getQueueLength()).toBe(0);
   });
 
   it("retains a rate-limited batch and obeys Retry-After before replaying it", async () => {

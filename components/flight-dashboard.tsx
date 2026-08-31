@@ -12,6 +12,7 @@ import {
 import {
   AnalyticsTokenReplacementAction,
   AnalyticsWorkstationId,
+  prepareAnalyticsTokenReplacementAction,
 } from "@/components/analytics-workstation-id";
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
@@ -1194,11 +1195,9 @@ export function FlightDashboard() {
           <div className="analytics-enabled-actions">
             <AnalyticsTokenReplacementAction
               onReplace={() => {
-                const prepared = analytics.prepareTokenReplacement();
+                const result = prepareAnalyticsTokenReplacementAction(analytics);
                 setAnalyticsTokenDraft("");
-                setAnalyticsInstallMessage(prepared
-                  ? "发送已暂停；旧令牌已清除，待发送队列与工作站 ID 保留。"
-                  : "当前状态无法更换工作站令牌。");
+                setAnalyticsInstallMessage(result.message);
               }}
             />
             <button

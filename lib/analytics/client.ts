@@ -22,6 +22,7 @@ const MAX_QUEUE_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const FLUSH_SIZE = 20;
 const MAX_BATCH_BYTES = 32 * 1_024;
 const FLUSH_INTERVAL_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 const INITIAL_BACKOFF_MS = 5_000;
 const MAX_BACKOFF_MS = 5 * 60 * 1_000;
 const DROP_RESPONSE_STATUSES = new Set([400, 413, 415, 422]);
@@ -83,6 +84,12 @@ export interface AnalyticsClientOptions {
 
 export interface TrackOptions {
   urgent?: boolean;
+}
+
+interface InflightDelivery {
+  controller: AbortController;
+  generation: number;
+  timeoutTimer: number | null;
 }
 
 const DEFAULT_CONTEXT: AnalyticsClientContext = {
@@ -199,7 +206,7 @@ export class AnalyticsClient {
   private queue: AnyAnalyticsEvent[] = [];
   private context: AnalyticsClientContext = { ...DEFAULT_CONTEXT };
   private timer: number | null = null;
-  private inflight = false;
+  private inflight: InflightDelivery | null = null;
   private active = false;
   private authorizationBlocked = false;
   private replacementPending = false;
@@ -329,8 +336,19 @@ export class AnalyticsClient {
     }
 
     if (this.inflight || !runtime.online()) return false;
-    const deliveryGeneration = this.deliveryGeneration;
-    this.inflight = true;
+    const request: InflightDelivery = {
+      controller: new AbortController(),
+      generation: this.deliveryGeneration,
+      timeoutTimer: null,
+    };
+    this.inflight = request;
+    request.timeoutTimer = runtime.setTimeout(() => {
+      if (this.inflight !== request) return;
+      request.controller.abort();
+      this.inflight = null;
+      this.applyBackoff(null);
+      this.scheduleFlush(this.backoffMs);
+    }, REQUEST_TIMEOUT_MS);
     try {
       const response = await runtime.fetch(this.options.endpoint ?? "/api/events", {
         method: "POST",
@@ -338,8 +356,9 @@ export class AnalyticsClient {
         body,
         keepalive: true,
         credentials: "same-origin",
+        signal: request.controller.signal,
       });
-      if (deliveryGeneration !== this.deliveryGeneration) return false;
+      if (this.inflight !== request || request.generation !== this.deliveryGeneration) return false;
       if (response.ok || DROP_RESPONSE_STATUSES.has(response.status)) {
         const sentIds = new Set(events.map((event) => event.event_id));
         this.queue = this.queue.filter((event) => !sentIds.has(event.event_id));
@@ -360,13 +379,13 @@ export class AnalyticsClient {
       }
       return response.ok;
     } catch {
-      if (deliveryGeneration === this.deliveryGeneration) this.applyBackoff(null);
+      if (this.inflight === request && request.generation === this.deliveryGeneration) this.applyBackoff(null);
       return false;
     } finally {
-      this.inflight = false;
-      if (!this.authorizationBlocked) {
-        if (deliveryGeneration !== this.deliveryGeneration) void this.flush();
-        else this.scheduleFlush(this.backoffMs || undefined);
+      if (request.timeoutTimer !== null) runtime.clearTimeout(request.timeoutTimer);
+      if (this.inflight === request) {
+        this.inflight = null;
+        if (this.active && !this.authorizationBlocked) this.scheduleFlush(this.backoffMs || undefined);
       }
     }
   }
@@ -393,7 +412,8 @@ export class AnalyticsClient {
       }
     } else {
       this.ingestToken = token;
-      void this.flush();
+      this.scheduleFlush();
+      if (this.queue.length > 0 && runtime.online()) void this.flush();
     }
     this.notifyStatusChanged();
     return true;
@@ -414,7 +434,7 @@ export class AnalyticsClient {
     this.ingestToken = "";
     this.authorizationBlocked = true;
     this.replacementPending = true;
-    this.deliveryGeneration += 1;
+    this.invalidateDelivery(runtime);
     this.resetBackoff();
     if (this.timer !== null) runtime.clearTimeout(this.timer);
     this.timer = null;
@@ -432,7 +452,6 @@ export class AnalyticsClient {
     this.queue = [];
     this.authorizationBlocked = false;
     this.replacementPending = false;
-    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
@@ -449,7 +468,6 @@ export class AnalyticsClient {
     this.queue = [];
     this.authorizationBlocked = false;
     this.replacementPending = false;
-    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     this.notifyStatusChanged();
@@ -470,7 +488,6 @@ export class AnalyticsClient {
     this.queue = [];
     this.authorizationBlocked = false;
     this.replacementPending = false;
-    this.deliveryGeneration += 1;
     this.resetBackoff();
     this.stop();
     if (!this.ensureWorkstationId(runtime)) return false;
@@ -506,6 +523,7 @@ export class AnalyticsClient {
 
   stop() {
     if (!this.runtime) return;
+    this.invalidateDelivery(this.runtime);
     if (this.timer !== null) this.runtime.clearTimeout(this.timer);
     this.timer = null;
     this.runtime.removeWindowListener("online", this.handleOnline);
@@ -527,6 +545,15 @@ export class AnalyticsClient {
     if (!workstationId) return null;
     this.workstationId = workstationId;
     return workstationId;
+  }
+
+  private invalidateDelivery(runtime: AnalyticsRuntime) {
+    this.deliveryGeneration += 1;
+    const request = this.inflight;
+    if (!request) return;
+    this.inflight = null;
+    if (request.timeoutTimer !== null) runtime.clearTimeout(request.timeoutTimer);
+    request.controller.abort();
   }
 
   private loadQueue() {
