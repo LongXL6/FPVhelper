@@ -3,6 +3,7 @@ import { parseTrainingSession, type TrainingSession, type TrainingSessionInvalid
 import {
   buildTrainingWeeklyReport,
   formatTrainingWeeklyReportMarkdown,
+  MAX_INTENDED_RECORDINGS,
   MAX_REPORT_FILE_BYTES,
   MAX_REPORT_FILES,
   MAX_REPORT_TOTAL_BYTES,
@@ -11,7 +12,7 @@ import {
   type TrainingWeeklyReportSessionInput,
 } from "./training-weekly-report";
 
-const WINDOW_START = Date.parse("2026-08-31T00:00:00.000Z");
+const WINDOW_START = new Date(2026, 7, 31, 0, 0, 0, 0).getTime();
 
 function session(overrides: Partial<TrainingSession> & Pick<TrainingSession, "id">): TrainingSession {
   const reasons = overrides.validity?.reasons ?? [];
@@ -78,6 +79,7 @@ describe("training weekly report", () => {
       workstationCount: 2,
       athleteCount: 2,
       intendedRecordings: null,
+      intentLedgerStatus: "missing",
       completedSessionCount: 2,
       validCount: 1,
       validCoveragePercent: null,
@@ -100,6 +102,62 @@ describe("training weekly report", () => {
     expect(report.completedSessionCount).toBe(2);
     expect(report.validCoveragePercent).toBe(33.3);
     expect(report.exportCoveragePercent).toBe(33.3);
+  });
+
+  it("returns null coverage when an intent ledger of 1 is smaller than 2 completed sessions", () => {
+    const report = build([
+      reportInput(session({ id: "completed-1" })),
+      reportInput(session({ id: "completed-2" })),
+    ], 1);
+    const markdown = formatTrainingWeeklyReportMarkdown(report);
+
+    expect(report).toMatchObject({
+      intendedRecordings: 1,
+      completedSessionCount: 2,
+      intentLedgerStatus: "session-count-mismatch",
+      validCoveragePercent: null,
+      exportCoveragePercent: null,
+    });
+    expect(markdown).toContain("台账与 Session 范围不一致，待核对");
+    expect(markdown).not.toMatch(/1\d{2}\.\d%/);
+  });
+
+  it("returns null coverage when a zero intent ledger conflicts with completed sessions", () => {
+    const report = build([reportInput(session({ id: "completed" }))], 0);
+
+    expect(report).toMatchObject({
+      intendedRecordings: 0,
+      completedSessionCount: 1,
+      intentLedgerStatus: "session-count-mismatch",
+      validCoveragePercent: null,
+      exportCoveragePercent: null,
+    });
+  });
+
+  it("rejects huge, unsafe and fractional intended recording counts", () => {
+    expect(() => build([], MAX_INTENDED_RECORDINGS + 1)).toThrow("0…1,000,000");
+    expect(() => build([], Number.MAX_SAFE_INTEGER + 1)).toThrow("0…1,000,000");
+    expect(() => build([], 1.5)).toThrow("0…1,000,000");
+  });
+
+  it("rejects a week boundary that is not local Monday midnight", () => {
+    const localTuesday = new Date(2026, 8, 1, 0, 0, 0, 0).getTime();
+    const localMondayNoon = new Date(2026, 7, 31, 12, 0, 0, 0).getTime();
+
+    expect(() => build([], undefined, localTuesday)).toThrow("本地周一 00:00");
+    expect(() => build([], undefined, localMondayNoon)).toThrow("本地周一 00:00");
+  });
+
+  it("calculates bounded coverage when the ledger equals or exceeds completed sessions", () => {
+    const sessions = [
+      reportInput(session({ id: "completed-1" })),
+      reportInput(session({ id: "completed-2" })),
+    ];
+    const equal = build(sessions, 2);
+    const greater = build(sessions, 4);
+
+    expect(equal).toMatchObject({ intentLedgerStatus: "valid", validCoveragePercent: 100, exportCoveragePercent: 100 });
+    expect(greater).toMatchObject({ intentLedgerStatus: "valid", validCoveragePercent: 50, exportCoveragePercent: 50 });
   });
 
   it("deduplicates identical IDs, preserves imported-file evidence and excludes conflicting payloads", () => {
@@ -207,6 +265,7 @@ describe("training weekly report", () => {
     const markdown = formatTrainingWeeklyReportMarkdown(build([]));
     expect(markdown).toContain("不证明运动员能力提升");
     expect(markdown).toContain("不等于商业尝试分母");
+    expect(markdown).toContain("不是最终 80% 业务验收率");
     expect(MAX_REPORT_FILES).toBe(20);
     expect(MAX_REPORT_FILE_BYTES).toBe(5 * 1_024 * 1_024);
     expect(MAX_REPORT_TOTAL_BYTES).toBe(20 * 1_024 * 1_024);

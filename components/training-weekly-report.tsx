@@ -8,6 +8,8 @@ import {
   MAX_REPORT_FILE_BYTES,
   MAX_REPORT_FILES,
   MAX_REPORT_TOTAL_BYTES,
+  MAX_INTENDED_RECORDINGS,
+  type TrainingWeeklyReport as TrainingWeeklyReportResult,
   type TrainingWeeklyReportSessionInput,
 } from "../lib/training-weekly-report";
 
@@ -29,16 +31,39 @@ function serverWeekStartSnapshot() {
   return "";
 }
 
-function localDateStartEpochMs(value: string) {
+export function validateTrainingWeekStartInput(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
+  if (!match) return { epochMs: null, error: "请选择有效的本地日期" };
   const year = Number(match[1]);
   const monthIndex = Number(match[2]) - 1;
   const day = Number(match[3]);
   const date = new Date(year, monthIndex, day);
-  return date.getFullYear() === year && date.getMonth() === monthIndex && date.getDate() === day
-    ? date.getTime()
-    : null;
+  if (date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
+    return { epochMs: null, error: "请选择有效的本地日期" };
+  }
+  if (date.getDay() !== 1) return { epochMs: null, error: "周开始必须选择本地周一" };
+  return { epochMs: date.getTime(), error: null };
+}
+
+export function validateIntendedRecordingsInput(value: string) {
+  if (value === "") return { intendedRecordings: undefined, error: null };
+  if (!/^\d+$/.test(value)) {
+    return { intendedRecordings: undefined, error: `请输入 0…${MAX_INTENDED_RECORDINGS.toLocaleString("en-US")} 的整数` };
+  }
+  const intendedRecordings = Number(value);
+  if (!Number.isSafeInteger(intendedRecordings) || intendedRecordings > MAX_INTENDED_RECORDINGS) {
+    return { intendedRecordings: undefined, error: `请输入 0…${MAX_INTENDED_RECORDINGS.toLocaleString("en-US")} 的整数` };
+  }
+  return { intendedRecordings, error: null };
+}
+
+function coverageLabel(
+  report: TrainingWeeklyReportResult,
+  value: number | null,
+) {
+  if (report.intentLedgerStatus === "missing") return "— 待台账";
+  if (report.intentLedgerStatus === "session-count-mismatch") return "— 待核对";
+  return value === null ? "—" : `${value.toFixed(1)}%`;
 }
 
 function yieldToMainThread() {
@@ -63,22 +88,25 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   const weekStart = selectedWeekStart ?? localWeekStart;
-  const windowStartedAtEpochMs = localDateStartEpochMs(weekStart);
-  const intendedRecordings = /^\d+$/.test(intendedRecordingsInput)
-    ? Number(intendedRecordingsInput)
-    : undefined;
+  const weekValidation = validateTrainingWeekStartInput(weekStart);
+  const intendedValidation = validateIntendedRecordingsInput(intendedRecordingsInput);
+  const weekFieldError = selectedWeekStart === null ? null : weekValidation.error;
   const reportSessions = useMemo<TrainingWeeklyReportSessionInput[]>(() => [
     ...localSessions.map((session) => ({ session, source: "browser-local" as const })),
     ...importedSessions,
   ], [importedSessions, localSessions]);
   const report = useMemo(
-    () => windowStartedAtEpochMs === null ? null : buildTrainingWeeklyReport({
+    () => weekValidation.epochMs === null ? null : buildTrainingWeeklyReport({
       sessions: reportSessions,
-      windowStartedAtEpochMs,
-      intendedRecordings,
+      windowStartedAtEpochMs: weekValidation.epochMs,
+      intendedRecordings: intendedValidation.error ? undefined : intendedValidation.intendedRecordings,
     }),
-    [intendedRecordings, reportSessions, windowStartedAtEpochMs],
+    [intendedValidation.error, intendedValidation.intendedRecordings, reportSessions, weekValidation.epochMs],
   );
+  const intendedFieldError = intendedValidation.error
+    ?? (report?.intentLedgerStatus === "session-count-mismatch"
+      ? "台账与 Session 范围不一致，待核对"
+      : null);
   const markdown = useMemo(() => report ? formatTrainingWeeklyReportMarkdown(report) : "", [report]);
 
   const importFiles = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -137,19 +165,29 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
         </div>
         <label>
           <span>周一开始日期</span>
-          <input type="date" value={weekStart} onChange={(event) => setSelectedWeekStart(event.target.value)} />
+          <input
+            type="date"
+            value={weekStart}
+            aria-invalid={weekFieldError !== null}
+            aria-describedby={weekFieldError ? "training-week-error" : undefined}
+            onChange={(event) => setSelectedWeekStart(event.target.value)}
+          />
+          {weekFieldError ? <small id="training-week-error" className="training-weekly-report__field-error" role="alert">{weekFieldError}</small> : null}
         </label>
         <label>
           <span>计划录像次数（外部台账）</span>
           <input
             type="number"
             min="0"
-            max="1000000"
+            max={MAX_INTENDED_RECORDINGS}
             step="1"
             value={intendedRecordingsInput}
             placeholder="待台账"
+            aria-invalid={intendedFieldError !== null}
+            aria-describedby={intendedFieldError ? "training-intended-error" : undefined}
             onChange={(event) => setIntendedRecordingsInput(event.target.value)}
           />
+          {intendedFieldError ? <small id="training-intended-error" className="training-weekly-report__field-error" role="alert">{intendedFieldError}</small> : null}
         </label>
         <label className="mini-button mini-button--active">
           选择多个 Session JSON
@@ -162,18 +200,18 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
           <span>工作站<b>{report.workstationCount}</b></span>
           <span>已完成 Session<b>{report.completedSessionCount}</b></span>
           <span>技术有效<b>{report.validCount}</b></span>
-          <span>有效覆盖率<b>{report.intendedRecordings === null ? "— 待台账" : report.validCoveragePercent === null ? "—" : `${report.validCoveragePercent.toFixed(1)}%`}</b></span>
+          <span>技术有效 ÷ 台账<b>{coverageLabel(report, report.validCoveragePercent)}</b></span>
           <span>已确认文件<b>{report.confirmedFileCount}</b></span>
-          <span>文件覆盖率<b>{report.intendedRecordings === null ? "— 待台账" : report.exportCoveragePercent === null ? "—" : `${report.exportCoveragePercent.toFixed(1)}%`}</b></span>
+          <span>确认文件 ÷ 台账<b>{coverageLabel(report, report.exportCoveragePercent)}</b></span>
           <span>Marker<b>{report.markerCount}</b></span>
         </div>
-      ) : <p className="training-weekly-report__pending" role="status">正在读取浏览器本地周起始日期…</p>}
+      ) : <p className="training-weekly-report__pending" role="status">{weekFieldError ?? "正在读取浏览器本地周起始日期…"}</p>}
 
       <div className="training-weekly-report__output">
         <div>
           <b>{importSummary}</b>
           <small>完全重复记录会去重；同 ID 内容冲突会排除并要求人工核对。导入文件经重解析后算文件证据；本浏览器记录只采信一致的导出时间与次数。</small>
-          <small>20 Hz 左右的打杆数据不会被包装成运动员进步分数；未填写外部训练意图台账时，商业覆盖率保持“— 待台账”。</small>
+          <small>“技术有效 ÷ 台账”和“确认文件 ÷ 台账”是采集完整性指标，不是最终 80% 业务验收率；缺少台账时保持“— 待台账”。</small>
           {report && report.conflictingSessionIds.length > 0 ? <p role="alert">有 {report.conflictingSessionIds.length} 条冲突 Session 已排除。</p> : null}
           {error ? <p role="alert">{error}</p> : null}
         </div>

@@ -675,6 +675,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .training-weekly-report__heading p { margin: 7px 0 0; color: var(--muted); font: 600 12px/1.5 var(--mono); }
 .training-weekly-report__heading > label { display: grid; gap: 7px; color: var(--muted); font: 700 11px/1.2 var(--mono); }
 .training-weekly-report__heading input[type="date"], .training-weekly-report__heading input[type="number"] { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); background: var(--carbon); color: var(--white); color-scheme: dark; }
+.training-weekly-report__field-error { color: #f6bd48; font: 600 11px/1.4 var(--mono); }
 .training-weekly-report__heading .mini-button { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 36px; cursor: pointer; }
 .training-weekly-report__heading .mini-button:focus-within { outline: 2px solid var(--signal); outline-offset: 3px; }
 .training-weekly-report__heading .mini-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
