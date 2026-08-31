@@ -24,14 +24,25 @@ export interface FakeSerialMetrics {
   lastBaudRate: number | null;
 }
 
+export interface FakeSerialPortMetrics {
+  portIndex: number;
+  openCalls: number;
+  closeCalls: number;
+  rcResponses: number;
+  requestedCommands: number[];
+  rcChannelsUs: number[];
+}
+
 interface FakeSerialControl {
   holdNextWrite: () => void;
   attemptClose: () => Promise<string>;
+  disconnectPort: (portIndex: number) => void;
 }
 
 declare global {
   interface Window {
     __fpvFakeSerial: FakeSerialMetrics;
+    __fpvFakeSerialPorts: FakeSerialPortMetrics[];
     __fpvFakeSerialControl: FakeSerialControl;
   }
 }
@@ -64,6 +75,19 @@ export const test = base.extend<{ fakeHardware: void }>({
       };
       let holdNextWrite = false;
       window.__fpvFakeSerial = metrics;
+      window.__fpvFakeSerialPorts = [
+        [1_600, 1_400, 1_550, 1_250, 1_000, 1_000, 1_000, 1_000],
+        [1_400, 1_600, 1_450, 1_750, 1_000, 1_000, 1_000, 1_000],
+        [1_700, 1_300, 1_600, 1_500, 1_000, 1_000, 1_000, 1_000],
+        [1_300, 1_700, 1_400, 1_900, 1_000, 1_000, 1_000, 1_000],
+      ].map((rcChannelsUs, portIndex) => ({
+        portIndex,
+        openCalls: 0,
+        closeCalls: 0,
+        rcResponses: 0,
+        requestedCommands: [],
+        rcChannelsUs,
+      }));
       window.localStorage.setItem(
         "fpvhelper.analytics.ingest-token.v1",
         `fpvh_ingest_${"a".repeat(43)}`,
@@ -160,7 +184,10 @@ export const test = base.extend<{ fakeHardware: void }>({
         private aborted = false;
         private pendingWrite: (() => void) | null = null;
 
-        constructor(private readonly readable: FakeReadable) {}
+        constructor(
+          private readonly readable: FakeReadable,
+          private readonly portMetrics: FakeSerialPortMetrics,
+        ) {}
 
         getWriter() {
           if (this.locked) throw new TypeError("Writable stream is already locked");
@@ -171,11 +198,13 @@ export const test = base.extend<{ fakeHardware: void }>({
               if (!this.activeWriter || this.aborted) return Promise.reject(new DOMException("Writer is not active", "InvalidStateError"));
               const command = validateReadRequest(request);
               metrics.requestedCommands.push(command);
+              this.portMetrics.requestedCommands.push(command);
 
               let payload: Uint8Array;
               if (command === 105) {
-                payload = uint16Payload([1_600, 1_400, 1_550, 1_250, 1_000, 1_000, 1_000, 1_000]);
+                payload = uint16Payload(this.portMetrics.rcChannelsUs);
                 metrics.rcResponses += 1;
+                this.portMetrics.rcResponses += 1;
               } else if (command === 150) {
                 payload = new Uint8Array(21);
                 payload[15] = 0;
@@ -221,11 +250,17 @@ export const test = base.extend<{ fakeHardware: void }>({
         readable: FakeReadable | null = null;
         writable: FakeWritable | null = null;
 
+        constructor(readonly portMetrics: FakeSerialPortMetrics) {}
+
         async open(options: { baudRate: number }) {
+          if (this.readable || this.writable) {
+            throw new DOMException("Serial port is already open", "InvalidStateError");
+          }
           metrics.openCalls += 1;
+          this.portMetrics.openCalls += 1;
           metrics.lastBaudRate = options.baudRate;
           this.readable = new FakeReadable();
-          this.writable = new FakeWritable(this.readable);
+          this.writable = new FakeWritable(this.readable, this.portMetrics);
         }
 
         async close() {
@@ -235,6 +270,7 @@ export const test = base.extend<{ fakeHardware: void }>({
             throw new DOMException("Serial streams are still locked", "InvalidStateError");
           }
           metrics.closeCalls += 1;
+          this.portMetrics.closeCalls += 1;
           this.readable = null;
           this.writable = null;
         }
@@ -244,28 +280,50 @@ export const test = base.extend<{ fakeHardware: void }>({
         }
       }
 
-      const port = new FakeSerialPort();
+      const ports = window.__fpvFakeSerialPorts.map((portMetrics) => new FakeSerialPort(portMetrics));
+      const authorizedPorts: FakeSerialPort[] = [];
+      const disconnectListeners = new Set<EventListenerOrEventListenerObject>();
+      const serial = {
+        async getPorts() {
+          return [...authorizedPorts];
+        },
+        async requestPort() {
+          const portIndex = Math.min(metrics.requestPortCalls, ports.length - 1);
+          const port = ports[portIndex];
+          metrics.requestPortCalls += 1;
+          if (!authorizedPorts.includes(port)) authorizedPorts.push(port);
+          return port;
+        },
+        addEventListener(type: string, listener: EventListenerOrEventListenerObject | null) {
+          if (type === "disconnect" && listener) disconnectListeners.add(listener);
+        },
+        removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null) {
+          if (type === "disconnect" && listener) disconnectListeners.delete(listener);
+        },
+        emitDisconnect(port: FakeSerialPort) {
+          const event = { target: port } as unknown as Event;
+          disconnectListeners.forEach((listener) => {
+            if (typeof listener === "function") listener.call(serial, event);
+            else listener.handleEvent(event);
+          });
+        },
+      };
       window.__fpvFakeSerialControl = {
         holdNextWrite: () => {
           holdNextWrite = true;
         },
         attemptClose: async () => {
           try {
-            await port.close();
+            await ports[0].close();
             return "resolved";
           } catch (error) {
             return error instanceof DOMException ? error.name : "unknown_error";
           }
         },
-      };
-      const serial = new EventTarget() as EventTarget & {
-        getPorts: () => Promise<FakeSerialPort[]>;
-        requestPort: () => Promise<FakeSerialPort>;
-      };
-      serial.getPorts = async () => [];
-      serial.requestPort = async () => {
-        metrics.requestPortCalls += 1;
-        return port;
+        disconnectPort: (portIndex) => {
+          const port = ports[portIndex];
+          if (port) serial.emitDisconnect(port);
+        },
       };
 
       Object.defineProperty(navigator, "serial", {

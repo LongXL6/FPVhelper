@@ -105,6 +105,81 @@ test("independent video inputs open together and keep one active telemetry viewp
   await expect(page.locator('.video-viewport[data-source-id="video-source-2"]')).toHaveClass(/is-live/);
 });
 
+test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ page }) => {
+  await page.route("**/api/events", (route) => route.abort("blockedbyclient"));
+  await page.goto("/");
+  await page.getByRole("button", { name: "+ 独立输入" }).click();
+
+  const firstViewport = page.locator('.video-viewport[data-source-id="video-source-1"]');
+  const secondViewport = page.locator('.video-viewport[data-source-id="video-source-2"]');
+  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
+  await firstViewport.locator(".video-viewport-select").click();
+  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-01");
+
+  await firstViewport.getByRole("button", { name: "连接 PILOT-01 桥接飞控" }).click();
+  await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-source", "serial");
+  await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "live");
+
+  await secondViewport.getByRole("button", { name: "连接 PILOT-02 桥接飞控" }).click();
+  await expect(secondViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-source", "serial");
+  await expect(secondViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "live");
+  await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-2");
+  await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK -20");
+  await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK +20");
+  await expect(page.locator(".hud-bottom-left")).toContainText("YAW STICK -10");
+  await expect(page.locator(".throttle-ladder")).toContainText("75%");
+  await expect(firstViewport.locator(".pilot-mini-telemetry")).toContainText("THR 25%");
+
+  await firstViewport.locator(".video-viewport-select").click();
+  await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK +20");
+  await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK -20");
+  await expect(page.locator(".hud-bottom-left")).toContainText("YAW STICK +10");
+  await expect(page.locator(".throttle-ladder")).toContainText("25%");
+
+  const recordButton = page.getByRole("button", { name: "● 开始记录" });
+  await expect(recordButton).toBeEnabled();
+  await recordButton.click();
+  await expect(page.getByRole("heading", { name: "正在记录 PILOT-01" })).toBeVisible();
+  await expect(secondViewport.locator(".video-viewport-select")).toBeDisabled();
+  const uniqueSampleCount = page.locator(".session-stats span").filter({ hasText: "独立样本" }).locator("b");
+  await expect.poll(async () => Number((await uniqueSampleCount.textContent()) ?? "0")).toBeGreaterThanOrEqual(3);
+  await page.getByRole("button", { name: "■ 结束记录" }).click();
+  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+
+  await secondViewport.locator(".video-viewport-select").click();
+  await expect(recordButton).toBeEnabled();
+  await recordButton.click();
+  await expect(page.getByRole("heading", { name: "正在记录 PILOT-02" })).toBeVisible();
+  await expect.poll(async () => Number((await uniqueSampleCount.textContent()) ?? "0")).toBeGreaterThanOrEqual(3);
+  await page.getByRole("button", { name: "■ 结束记录" }).click();
+  await expect(page.locator(".today-records-card")).toContainText("共 2 条");
+
+  const sessions = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fpvhelper-training", 1);
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const transaction = database.transaction("sessions", "readonly");
+    const request = transaction.objectStore("sessions").getAll();
+    return await new Promise<Array<{ athleteCode: string; samples: Array<{ channelsUs: number[] }> }>>((resolve, reject) => {
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+  });
+  const pilotOne = sessions.find((session) => session.athleteCode === "PILOT-01");
+  const pilotTwo = sessions.find((session) => session.athleteCode === "PILOT-02");
+  expect(pilotOne?.samples[0]?.channelsUs.slice(0, 4)).toEqual([1_600, 1_400, 1_550, 1_250]);
+  expect(pilotTwo?.samples[0]?.channelsUs.slice(0, 4)).toEqual([1_400, 1_600, 1_450, 1_750]);
+
+  const secondResponsesBefore = await page.evaluate(() => window.__fpvFakeSerialPorts[1].rcResponses);
+  await page.evaluate(() => window.__fpvFakeSerialControl.disconnectPort(0));
+  await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "error");
+  await expect(secondViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "live");
+  await expect.poll(() => page.evaluate(() => window.__fpvFakeSerialPorts[1].rcResponses)).toBeGreaterThan(secondResponsesBefore);
+  expect(await page.evaluate(() => window.__fpvFakeSerialPorts[1].closeCalls)).toBe(0);
+});
+
 test("fake media and read-only MSP bridge persist a local training session", async ({ page }) => {
   const analyticsRequests: Array<{ method: string; url: string }> = [];
   await page.route("**/api/events", async (route) => {

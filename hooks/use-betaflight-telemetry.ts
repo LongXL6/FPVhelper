@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   classifySerialError,
-  selectPreviouslyAuthorizedPort,
   serialDisconnectDecision,
   serialIssue,
   serialPreflightIssue,
@@ -43,7 +42,7 @@ import {
 } from "@/lib/stick-motion";
 import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
 
-interface TelemetryController {
+export interface TelemetryController {
   telemetry: FlightTelemetry;
   throttleHistory: number[];
   stickMotion: StickMotionVisualization;
@@ -63,7 +62,11 @@ interface TelemetryController {
   downloadRawCapture: () => boolean;
 }
 
-export function useBetaflightTelemetry(): TelemetryController {
+export function useBetaflightTelemetry({
+  demoPlaybackActive = true,
+}: {
+  demoPlaybackActive?: boolean;
+} = {}): TelemetryController {
   const [telemetry, setTelemetry] = useState(EMPTY_TELEMETRY);
   const [throttleHistory, setThrottleHistory] = useState<number[]>([]);
   const [stickMotion, setStickMotion] = useState<StickMotionVisualization>(EMPTY_STICK_MOTION);
@@ -74,7 +77,6 @@ export function useBetaflightTelemetry(): TelemetryController {
   const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
   const [linkState, setLinkState] = useState<LinkState>("unknown");
   const portRef = useRef<SerialPort | null>(null);
-  const lastAuthorizedPortRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -86,6 +88,7 @@ export function useBetaflightTelemetry(): TelemetryController {
   const sequenceRef = useRef(0);
   const connectionAttemptRef = useRef(0);
   const demoActiveRef = useRef(false);
+  const demoPlaybackActiveRef = useRef(demoPlaybackActive);
   const receivedRcFrameRef = useRef(false);
   const lastRcFrameAtRef = useRef<number | null>(null);
   const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
@@ -210,7 +213,11 @@ export function useBetaflightTelemetry(): TelemetryController {
     setLinkState("unknown");
     demoActiveRef.current = true;
     emitDemoFrame();
-    demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    if (demoPlaybackActiveRef.current) {
+      demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    } else {
+      demoActiveRef.current = false;
+    }
   }, [emitDemoFrame, resetStickMotion, stopTimers]);
 
   const failSerial = useCallback(async (issue: SerialIssue, connectionAttempt: number) => {
@@ -362,6 +369,11 @@ export function useBetaflightTelemetry(): TelemetryController {
       return;
     }
 
+    const portSelection = serial.requestPort().then(
+      (port) => ({ port, error: null as unknown }),
+      (requestError: unknown) => ({ port: null, error: requestError }),
+    );
+
     const connectionAttempt = await disconnect();
     if (connectionAttemptRef.current !== connectionAttempt) return;
     startDemo();
@@ -369,24 +381,19 @@ export function useBetaflightTelemetry(): TelemetryController {
     setError(null);
     setErrorCode(null);
 
-    let port: SerialPort;
-    try {
-      const authorizedPorts = await serial.getPorts();
-      port =
-        selectPreviouslyAuthorizedPort(authorizedPorts, lastAuthorizedPortRef.current) ??
-        (await serial.requestPort());
-    } catch (requestError) {
+    const selection = await portSelection;
+    if (!selection.port) {
       if (connectionAttemptRef.current !== connectionAttempt) return;
-      const issue = classifySerialError(requestError, "picker");
+      const issue = classifySerialError(selection.error, "picker");
       setConnection(issue.code === "serial_picker_cancelled" ? "demo" : "error");
       setSource("demo");
       setErrorCode(issue.code);
       setError(issue.message);
       return;
     }
+    const port = selection.port;
 
     if (connectionAttemptRef.current !== connectionAttempt) return;
-    lastAuthorizedPortRef.current = port;
 
     try {
       await port.open({ baudRate: 115200, bufferSize: 4096 });
@@ -457,8 +464,10 @@ export function useBetaflightTelemetry(): TelemetryController {
   }, [disconnect, failSerial, readLoop, startDemo]);
 
   useEffect(() => {
-    demoActiveRef.current = true;
-    demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    if (demoPlaybackActiveRef.current) {
+      demoActiveRef.current = true;
+      demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    }
     const serial = navigator.serial;
     const handleSerialDisconnect = (event: Event) => {
       if (serialDisconnectDecision(portRef.current, event.target as SerialPort | null) === "ignore") {
@@ -474,6 +483,19 @@ export function useBetaflightTelemetry(): TelemetryController {
       void disconnect();
     };
   }, [disconnect, emitDemoFrame, failSerial]);
+
+  useEffect(() => {
+    demoPlaybackActiveRef.current = demoPlaybackActive;
+    if (source !== "demo") return;
+    if (!demoPlaybackActive) {
+      stopDemoTimer();
+      return;
+    }
+    if (demoTimerRef.current !== null) return;
+    demoActiveRef.current = true;
+    emitDemoFrame();
+    demoTimerRef.current = setInterval(emitDemoFrame, 50);
+  }, [demoPlaybackActive, emitDemoFrame, source, stopDemoTimer]);
 
   return {
     telemetry,

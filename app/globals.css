@@ -441,6 +441,68 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .video-viewport-select.is-active { border-color: var(--signal); color: var(--signal); }
 .video-viewport-select span { overflow: hidden; font: 700 7px/1 var(--mono); letter-spacing: 0.1em; text-overflow: ellipsis; white-space: nowrap; }
 .video-viewport-select b { overflow: hidden; color: var(--white); font: 700 9px/1.2 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.pilot-viewport-telemetry {
+  position: absolute;
+  z-index: 7;
+  top: 48px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(240px, calc(100% - 24px));
+  min-height: 27px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid rgba(130, 151, 163, 0.46);
+  background: rgba(5, 11, 16, 0.84);
+  transform: translateX(-50%);
+}
+.pilot-viewport-telemetry > span { display: flex; align-items: center; min-width: 0; gap: 5px; }
+.pilot-viewport-telemetry > span i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--quiet); }
+.pilot-viewport-telemetry--live > span i { background: var(--signal); box-shadow: 0 0 8px rgba(50, 182, 233, 0.8); }
+.pilot-viewport-telemetry--connecting > span i, .pilot-viewport-telemetry--stale > span i { background: #f6bd48; }
+.pilot-viewport-telemetry--error > span i { background: #ff3e4d; }
+.pilot-viewport-telemetry b { color: var(--white); font: 700 8px/1 var(--mono); letter-spacing: 0.06em; }
+.pilot-viewport-telemetry small { overflow: hidden; color: var(--quiet); font: 600 7px/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.pilot-viewport-telemetry button {
+  min-width: 48px;
+  height: 19px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  background: #111a21;
+  color: var(--muted);
+  font: 700 7px/1 var(--mono);
+  cursor: pointer;
+}
+.pilot-viewport-telemetry button:disabled { cursor: default; opacity: 0.45; }
+.pilot-viewport-telemetry--live button { border-color: rgba(50, 182, 233, 0.66); color: var(--signal); }
+.pilot-mini-telemetry {
+  position: absolute;
+  z-index: 6;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(130, 151, 163, 0.4);
+  background: rgba(3, 8, 12, 0.78);
+  pointer-events: none;
+}
+.pilot-mini-stick {
+  --mini-stick-tone: var(--signal);
+  position: relative;
+  display: block;
+  width: 54px;
+  height: 44px;
+  border: 1px solid rgba(130, 151, 163, 0.45);
+  background-image: linear-gradient(transparent calc(50% - 0.5px), rgba(130, 151, 163, 0.35) 50%, transparent calc(50% + 0.5px)), linear-gradient(90deg, transparent calc(50% - 0.5px), rgba(130, 151, 163, 0.35) 50%, transparent calc(50% + 0.5px));
+}
+.pilot-mini-stick--orange { --mini-stick-tone: var(--alert); }
+.pilot-mini-stick i { position: absolute; width: 6px; height: 6px; margin: -3px; border: 1px solid var(--white); border-radius: 50%; background: var(--mini-stick-tone); box-shadow: 0 0 7px var(--mini-stick-tone); }
+.pilot-mini-stick small { position: absolute; right: 2px; bottom: 2px; color: var(--quiet); font: 600 5px/1 var(--mono); }
+.pilot-mini-telemetry strong { padding: 0 3px 2px; color: var(--white); font: 800 8px/1 var(--mono); white-space: nowrap; }
+.video-viewport .demo-watermark { top: 83px; }
 
 .demo-watermark {
   position: absolute;

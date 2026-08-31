@@ -7,7 +7,7 @@ export const MINIMUM_VALID_SESSION_SAMPLES = 300;
 
 export type RecordedTelemetrySource = "demo" | "ground_rc";
 export type TrainingSessionMarkerKind = "manual" | "crash" | "gate_hit" | "clean" | "throttle";
-export type TrainingSessionInterruptionReason = "rx_link_lost" | "telemetry_unavailable" | "page_closed";
+export type TrainingSessionInterruptionReason = "rx_link_lost" | "telemetry_unavailable" | "channel_changed" | "page_closed";
 export type TrainingSessionInvalidReason =
   | "source_not_ground_rc"
   | "mixed_sources"
@@ -144,7 +144,7 @@ function requireRecordedSource(value: unknown, field: string): RecordedTelemetry
 
 function optionalInterruptionReason(value: unknown): TrainingSessionInterruptionReason | null {
   if (value === null || value === undefined) return null;
-  if (value === "rx_link_lost" || value === "telemetry_unavailable" || value === "page_closed") return value;
+  if (value === "rx_link_lost" || value === "telemetry_unavailable" || value === "channel_changed" || value === "page_closed") return value;
   throw new Error("interruptionReason 不是支持的中断原因");
 }
 

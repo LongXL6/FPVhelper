@@ -20,8 +20,13 @@ import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
 import { TrainingWeeklyReport } from "@/components/training-weekly-report";
-import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
+import {
+  createPilotTelemetryWorkspaceStore,
+  PilotTelemetryWorkspaceHost,
+  usePilotTelemetryController,
+  type PilotTelemetryWorkspaceStore,
+} from "@/hooks/use-pilot-telemetry-workspace";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import {
   useVideoWorkspaceCapture,
@@ -99,6 +104,104 @@ const statusCopy = {
   stale: "数据已停滞",
   error: "需要检查",
 } as const;
+
+function MiniStickIndicator({
+  label,
+  x,
+  y,
+  tone,
+}: {
+  label: string;
+  x: number;
+  y: number;
+  tone: "orange" | "blue";
+}) {
+  return (
+    <span className={`pilot-mini-stick pilot-mini-stick--${tone}`}>
+      <i
+        style={{
+          left: `${clamp((x + 100) / 2, 0, 100)}%`,
+          top: `${clamp((100 - y) / 2, 0, 100)}%`,
+        }}
+      />
+      <small>{label}</small>
+    </span>
+  );
+}
+
+function PilotViewportTelemetry({
+  pilotChannelId,
+  label,
+  active,
+  controlsLocked,
+  store,
+  onActivate,
+  onBeginSerialConnect,
+  onDemoReturnIntentional,
+}: {
+  pilotChannelId: string;
+  label: string;
+  active: boolean;
+  controlsLocked: boolean;
+  store: PilotTelemetryWorkspaceStore;
+  onActivate: () => void;
+  onBeginSerialConnect: (pilotChannelId: string) => void;
+  onDemoReturnIntentional: () => void;
+}) {
+  const controller = usePilotTelemetryController(store, pilotChannelId);
+  const isSerial = controller.source === "serial";
+  const isConnecting = controller.connection === "connecting";
+  const buttonLabel = isConnecting
+    ? `取消 ${label} 飞控连接`
+    : isSerial
+      ? `断开 ${label} 桥接飞控`
+      : `连接 ${label} 桥接飞控`;
+
+  return (
+    <>
+      <div
+        className={`pilot-viewport-telemetry pilot-viewport-telemetry--${controller.connection}`}
+        data-telemetry-source={controller.source}
+        data-telemetry-connection={controller.connection}
+        title={controller.error ?? undefined}
+      >
+        <span><i /><b>{isSerial ? "GROUND_RC" : "DEMO"}</b><small>{statusCopy[controller.connection]}</small></span>
+        <button
+          type="button"
+          aria-label={buttonLabel}
+          disabled={controlsLocked || (!controller.serialSupported && !isConnecting && !isSerial)}
+          onClick={() => {
+            if (isConnecting || isSerial) {
+              if (active) onDemoReturnIntentional();
+              void controller.useDemo();
+              return;
+            }
+            onActivate();
+            onBeginSerialConnect(pilotChannelId);
+            void controller.connectSerial();
+          }}
+        >{isConnecting ? "取消" : isSerial ? "断开" : "连接飞控"}</button>
+      </div>
+      {!active ? (
+        <div className="pilot-mini-telemetry" aria-label={`${label} 实时打杆`}>
+          <MiniStickIndicator
+            label="YAW / THR"
+            x={controller.telemetry.yawStickPercent}
+            y={controller.telemetry.throttleStickPercent * 2 - 100}
+            tone="orange"
+          />
+          <MiniStickIndicator
+            label="ROLL / PITCH"
+            x={controller.telemetry.rollStickPercent}
+            y={controller.telemetry.pitchStickPercent}
+            tone="blue"
+          />
+          <strong>THR {Math.round(controller.telemetry.throttleStickPercent)}%</strong>
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 function WorkspaceVideoElement({
   sourceId,
@@ -426,9 +529,9 @@ export function FlightDashboard() {
   const [diagnosticNotice, setDiagnosticNotice] = useState<string | null>(null);
   const [workstationNotice, setWorkstationNotice] = useState<string | null>(null);
   const [overlayLayoutNotice, setOverlayLayoutNotice] = useState<string | null>(null);
+  const [telemetryWorkspaceStore] = useState(createPilotTelemetryWorkspaceStore);
   const exportShortcutInFlightRef = useRef(false);
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
-  const telemetryControl = useBetaflightTelemetry();
   const activeSource = activeVideoSource(videoWorkspace);
   const activeChannel = activePilotChannel(videoWorkspace);
   const activeViewport = activeVideoViewport(videoWorkspace);
@@ -455,10 +558,20 @@ export function FlightDashboard() {
       channel: videoWorkspace.pilotChannels.find((candidate) => candidate.id === viewport.pilotChannelId),
     }))
   ));
+  const pilotChannelIds = videoWorkspace.pilotChannels.map((channel) => channel.id);
+  const telemetryControl = usePilotTelemetryController(telemetryWorkspaceStore, activeChannel?.id);
   const athleteCode = activeChannel?.athleteCode ?? "";
   const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
   const version = useVersionCheck();
-  const trainingSession = useTrainingSession({ telemetry, source, connection, linkState, athleteCode, autoExport });
+  const trainingSession = useTrainingSession({
+    telemetry,
+    source,
+    connection,
+    linkState,
+    athleteCode,
+    autoExport,
+    inputKey: activeChannel?.id ?? "unassigned",
+  });
   const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording });
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
     ? notesDraft
@@ -647,6 +760,7 @@ export function FlightDashboard() {
     setOverlayLayoutNotice(nextPair.locked ? "左右摇杆已锁定" : "左右摇杆已解锁");
   }, [stickOverlayPair, storeStickOverlayPair]);
   const analytics = useAnalyticsLifecycle({
+    telemetryContextKey: activeChannel?.id ?? "unassigned",
     connection,
     source,
     videoState,
@@ -821,6 +935,11 @@ export function FlightDashboard() {
   }, [singleKeyShortcutsEnabled]);
   return (
     <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
+      <PilotTelemetryWorkspaceHost
+        pilotChannelIds={pilotChannelIds}
+        activePilotChannelId={activeChannel?.id}
+        store={telemetryWorkspaceStore}
+      />
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
@@ -1197,6 +1316,20 @@ export function FlightDashboard() {
                       <span>{isActive ? "CURRENT" : sourceConfig.label}</span>
                       <b>{tileLabel}</b>
                     </button>
+
+                    <PilotViewportTelemetry
+                      pilotChannelId={viewport.pilotChannelId}
+                      label={tileLabel}
+                      active={isActive}
+                      controlsLocked={controlsLocked}
+                      store={telemetryWorkspaceStore}
+                      onActivate={() => {
+                        const selectedSource = selectVideoSource(videoWorkspace, sourceConfig.id);
+                        commitVideoWorkspace(selectPilotChannel(selectedSource, viewport.pilotChannelId));
+                      }}
+                      onBeginSerialConnect={analytics.beginSerialConnect}
+                      onDemoReturnIntentional={analytics.markDemoReturnIntentional}
+                    />
 
                     {isActive ? (
                       <>

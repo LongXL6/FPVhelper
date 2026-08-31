@@ -60,6 +60,7 @@ interface UseTrainingSessionOptions {
   linkState: LinkState;
   athleteCode: string;
   autoExport: boolean;
+  inputKey: string;
 }
 
 export interface TrainingSessionExportReceipt {
@@ -133,6 +134,7 @@ export function useTrainingSession({
   linkState,
   athleteCode,
   autoExport,
+  inputKey,
 }: UseTrainingSessionOptions): TrainingSessionController {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -157,6 +159,7 @@ export function useTrainingSession({
   const [exportDirectoryState, setExportDirectoryState] = useState<TrainingSessionDirectoryState>("loading");
   const [exportDirectoryName, setExportDirectoryName] = useState<string | null>(null);
   const draftRef = useRef<TrainingSessionDraft | null>(null);
+  const recordingInputKeyRef = useRef<string | null>(null);
   const pendingSessionRef = useRef<TrainingSession | null>(null);
   const storeRef = useRef<TrainingSessionStore | null>(null);
   const directoryStoreRef = useRef<TrainingSessionDirectoryStore | null>(null);
@@ -488,6 +491,7 @@ export function useTrainingSession({
       });
       await store.saveDraft(draft);
       draftRef.current = draft;
+      recordingInputKeyRef.current = inputKey;
       pendingSessionRef.current = null;
       terminationRef.current = null;
       setSessionId(id);
@@ -503,7 +507,7 @@ export function useTrainingSession({
       startingRef.current = false;
       setIsStarting(false);
     }
-  }, [athleteCode, canStart, source]);
+  }, [athleteCode, canStart, inputKey, source]);
 
   const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
@@ -527,6 +531,7 @@ export function useTrainingSession({
         if (pendingSessionRef.current === storedSession) break;
       }
       draftRef.current = null;
+      recordingInputKeyRef.current = null;
       pendingSessionRef.current = null;
       setHasPendingSave(false);
       setStorageError(null);
@@ -610,26 +615,34 @@ export function useTrainingSession({
 
   useEffect(() => {
     if (!isRecording || source !== "serial" || connection !== "live") return;
+    if (recordingInputKeyRef.current !== inputKey) return;
     const draft = draftRef.current;
     if (!draft || telemetry.monotonicTimestampMs < draft.startedMonotonicMs) return;
     if (appendTrainingSessionSample(draft, telemetry, source)) {
       setSampleCount(draft.samples.length);
       setUniqueSampleCount(countUniqueTrainingSamples(draft.samples));
     }
-  }, [connection, isRecording, source, telemetry]);
+  }, [connection, inputKey, isRecording, source, telemetry]);
+
+  useEffect(() => {
+    if (!isRecording || recordingInputKeyRef.current === inputKey) return;
+    void finishRecording(true, "channel_changed");
+  }, [finishRecording, inputKey, isRecording]);
 
   useEffect(() => {
     if (!isRecording) return;
+    if (recordingInputKeyRef.current !== inputKey) return;
     if (source !== "serial" || connection !== "live") {
       void finishRecording(true, "telemetry_unavailable");
     }
-  }, [connection, finishRecording, isRecording, source]);
+  }, [connection, finishRecording, inputKey, isRecording, source]);
 
   useEffect(() => {
+    if (recordingInputKeyRef.current !== inputKey) return;
     if (linkState === "lost" && (isRecording || draftRef.current || pendingSessionRef.current)) {
       void finishRecording(true, "rx_link_lost");
     }
-  }, [finishRecording, isRecording, linkState]);
+  }, [finishRecording, inputKey, isRecording, linkState]);
 
   useEffect(() => {
     if (!isRecording) return;

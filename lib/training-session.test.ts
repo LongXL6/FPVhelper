@@ -289,6 +289,37 @@ describe("local training session schema v2", () => {
     expect(upgraded.validity.reasons).toContain("rx_link_lost");
   });
 
+  it("persists a channel change as an interrupted schema v2 session", () => {
+    const channelChange = resolveTrainingSessionTermination(null, {
+      interrupted: true,
+      interruptionReason: "channel_changed",
+    });
+    const laterTelemetryEffect = resolveTrainingSessionTermination(channelChange, {
+      interrupted: true,
+      interruptionReason: "telemetry_unavailable",
+    });
+    const session = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+      {
+        interrupted: laterTelemetryEffect.interrupted,
+        ...(laterTelemetryEffect.interruptionReason
+          ? { interruptionReason: laterTelemetryEffect.interruptionReason }
+          : {}),
+      },
+    );
+
+    expect(laterTelemetryEffect).toEqual({ interrupted: true, interruptionReason: "channel_changed" });
+    expect(session).toMatchObject({
+      interrupted: true,
+      interruptionReason: "channel_changed",
+      validity: { valid: false },
+    });
+    expect(session.validity.reasons).toContain("interrupted");
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
   it("keeps existing schema v2 sessions without interruptionReason readable", () => {
     const session = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
     const storedBeforeLinkIntegrity = { ...session } as Partial<typeof session>;

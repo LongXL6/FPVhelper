@@ -49,6 +49,7 @@ export type AnalyticsErrorSurface =
   | { kind: "storage"; message: string };
 
 interface UseAnalyticsLifecycleOptions {
+  telemetryContextKey: string;
   connection: AnalyticsConnectionState;
   source: TelemetrySource;
   videoState: AnalyticsVideoState;
@@ -72,7 +73,7 @@ interface UseAnalyticsLifecycleOptions {
 
 interface AnalyticsLifecycleController {
   status: AnalyticsLocalStatus;
-  beginSerialConnect: () => void;
+  beginSerialConnect: (telemetryContextKey?: string) => void;
   beginVideoConnect: () => void;
   markVideoDisconnectIntentional: () => void;
   markDemoReturnIntentional: () => void;
@@ -87,6 +88,7 @@ interface AnalyticsLifecycleController {
 interface PendingAttempt {
   index: number;
   startedAt: number;
+  telemetryContextKey?: string;
 }
 
 interface LatestSnapshot {
@@ -233,6 +235,8 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
   const pendingStoppedRecordingIdRef = useRef<string | null>(null);
   const previousConnectionRef = useRef(options.connection);
   const previousSourceRef = useRef(options.source);
+  const previousTelemetryContextKeyRef = useRef(options.telemetryContextKey);
+  const skipTelemetryTransitionRef = useRef(false);
   const previousVideoStateRef = useRef(options.videoState);
   const videoDisconnectIntentionalRef = useRef(false);
   const demoReturnRef = useRef<{
@@ -468,6 +472,39 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
   }, [emitSerialLost]);
 
   useEffect(() => {
+    if (previousTelemetryContextKeyRef.current === options.telemetryContextKey) return;
+    const now = performance.now();
+    if (serialLiveStartedAtRef.current !== null) {
+      serialLiveMsTotalRef.current += now - serialLiveStartedAtRef.current;
+    }
+    previousTelemetryContextKeyRef.current = options.telemetryContextKey;
+    previousConnectionRef.current = options.connection;
+    previousSourceRef.current = options.source;
+    previousTelemetrySequenceRef.current = options.source === "serial" ? options.telemetrySequence : null;
+    serialConnectionParserLatestRef.current = options.parserStats;
+    serialConnectionParserStartRef.current = options.parserStats;
+    serialConnectionRcFrameStartRef.current = observedRcFramesRef.current;
+    serialLiveStartedAtRef.current = options.source === "serial" && options.connection === "live" ? now : null;
+    serialConnectionStartedAtRef.current = options.source === "serial"
+      && (options.connection === "live" || options.connection === "stale") ? now : null;
+    stallStartedAtRef.current = options.connection === "stale" ? now : null;
+    demoReturnRef.current = null;
+    if (
+      pendingSerialRef.current?.telemetryContextKey
+      && pendingSerialRef.current.telemetryContextKey !== options.telemetryContextKey
+    ) {
+      pendingSerialRef.current = null;
+    }
+    skipTelemetryTransitionRef.current = true;
+  }, [
+    options.connection,
+    options.parserStats,
+    options.source,
+    options.telemetryContextKey,
+    options.telemetrySequence,
+  ]);
+
+  useEffect(() => {
     if (options.source !== "serial") {
       previousTelemetrySequenceRef.current = null;
       return;
@@ -490,6 +527,10 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
   }, [options.parserStats, options.source]);
 
   useEffect(() => {
+    if (skipTelemetryTransitionRef.current) {
+      skipTelemetryTransitionRef.current = false;
+      return;
+    }
     const now = performance.now();
     const previous = previousConnectionRef.current;
     const previousSource = previousSourceRef.current;
@@ -572,7 +613,14 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     }
     previousConnectionRef.current = options.connection;
     previousSourceRef.current = options.source;
-  }, [emitSerialLost, options.connection, options.isRecording, options.serialErrorCode, options.source]);
+  }, [
+    emitSerialLost,
+    options.connection,
+    options.isRecording,
+    options.serialErrorCode,
+    options.source,
+    options.telemetryContextKey,
+  ]);
 
   useEffect(() => {
     const now = performance.now();
@@ -739,9 +787,13 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
     if (eventId) statsRef.current.errorCount += 1;
   }, [options.errorSurface, options.isRecording]);
 
-  const beginSerialConnect = useCallback(() => {
+  const beginSerialConnect = useCallback((telemetryContextKey = options.telemetryContextKey) => {
     serialAttemptIndexRef.current += 1;
-    const attempt = { index: serialAttemptIndexRef.current, startedAt: performance.now() };
+    const attempt = {
+      index: serialAttemptIndexRef.current,
+      startedAt: performance.now(),
+      telemetryContextKey,
+    };
     if (!options.serialSupported) {
       trackAnalytics("serial_connect_result", {
         ok: false,
@@ -753,7 +805,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
       return;
     }
     pendingSerialRef.current = attempt;
-  }, [options.serialSupported]);
+  }, [options.serialSupported, options.telemetryContextKey]);
 
   const beginVideoConnect = useCallback(() => {
     videoAttemptIndexRef.current += 1;
