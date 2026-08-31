@@ -50,24 +50,59 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
 
   await page.getByRole("button", { name: "四分屏" }).click();
-  const secondPilot = page.getByRole("button", { name: "选手 2" });
+  const secondPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 2" });
   await expect(secondPilot).toBeVisible();
   await secondPilot.click();
   await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
 
-  const croppedVideo = page.locator("video.video-feed--cropped");
-  await expect(croppedVideo).toHaveCSS("width", /.+/);
-  await expect.poll(() => croppedVideo.evaluate((video) => ({
+  const croppedVideos = page.locator("video.video-feed--cropped");
+  await expect(croppedVideos).toHaveCount(4);
+  await expect.poll(() => croppedVideos.nth(1).evaluate((video) => ({
     width: video.style.width,
     height: video.style.height,
     left: video.style.left,
     top: video.style.top,
   }))).toEqual({ width: "200%", height: "200%", left: "-100%", top: "0%" });
 
+  await page.getByRole("button", { name: "打开画面" }).click();
+  await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
+  await expect.poll(() => croppedVideos.evaluateAll((videos) => {
+    const streams = videos.map((video) => (video as HTMLVideoElement).srcObject);
+    return streams.length === 4
+      && streams.every((stream) => stream instanceof MediaStream && stream === streams[0]);
+  })).toBe(true);
+
   await page.reload();
-  await expect(page.getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".video-viewport-tabs").getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("textbox", { name: "选手代号" })).toHaveValue("PILOT-02");
-  await expect(page.locator("video.video-feed--cropped")).toBeAttached();
+  await expect(page.locator("video.video-feed--cropped")).toHaveCount(4);
+});
+
+test("independent video inputs open together and keep one active telemetry viewport", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "+ 独立输入" }).click();
+
+  const viewports = page.locator(".video-viewport");
+  await expect(viewports).toHaveCount(2);
+  await page.getByRole("button", { name: "打开全部" }).click();
+  await expect(page.getByText("2/2 路 UVC 在线")).toBeVisible();
+  await expect.poll(() => viewports.locator("video").evaluateAll((videos) => {
+    const streams = videos.map((video) => (video as HTMLVideoElement).srcObject);
+    return streams.length === 2
+      && streams.every((stream) => stream instanceof MediaStream)
+      && streams[0] !== streams[1];
+  })).toBe(true);
+
+  await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-2");
+  await expect(page.locator(".video-viewport .hud-top-left")).toHaveCount(1);
+  await page.locator('.video-viewport[data-source-id="video-source-1"] .video-viewport-select').click();
+  await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-1");
+  await expect(page.locator(".video-viewport.is-active .hud-top-left")).toHaveCount(1);
+
+  await page.getByRole("button", { name: "断开画面", exact: true }).click();
+  await expect(page.getByText("1/2 路 UVC 在线")).toBeVisible();
+  await expect(page.locator('.video-viewport[data-source-id="video-source-1"]')).not.toHaveClass(/is-live/);
+  await expect(page.locator('.video-viewport[data-source-id="video-source-2"]')).toHaveClass(/is-live/);
 });
 
 test("fake media and read-only MSP bridge persist a local training session", async ({ page }) => {

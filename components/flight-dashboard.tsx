@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import {
   DraggableStickOverlay,
   useStickOverlayPairLayout,
@@ -23,10 +23,15 @@ import { TrainingWeeklyReport } from "@/components/training-weekly-report";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
-import { useVideoCapture } from "@/hooks/use-video-capture";
+import {
+  useVideoWorkspaceCapture,
+  videoSourceRuntime,
+  type VideoWorkspaceElementRegistrar,
+} from "@/hooks/use-video-workspace-capture";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { useWorkstationRuntime } from "@/hooks/use-workstation-runtime";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
+import type { SerialErrorCode, VideoCaptureErrorCode } from "@/lib/hardware-errors";
 import {
   appendDiagnosticTransition,
   buildLocalDiagnosticBundle,
@@ -94,6 +99,53 @@ const statusCopy = {
   stale: "数据已停滞",
   error: "需要检查",
 } as const;
+
+function WorkspaceVideoElement({
+  sourceId,
+  cropped,
+  style,
+  registerVideoElement,
+}: {
+  sourceId: string;
+  cropped: boolean;
+  style: CSSProperties | undefined;
+  registerVideoElement: VideoWorkspaceElementRegistrar;
+}) {
+  const videoRef = useCallback((element: HTMLVideoElement | null) => (
+    registerVideoElement(sourceId, element)
+  ), [registerVideoElement, sourceId]);
+
+  return (
+    <video
+      ref={videoRef}
+      className={cropped ? "video-feed--cropped" : undefined}
+      style={style}
+      muted
+      playsInline
+    />
+  );
+}
+
+function useDashboardAnalyticsErrorSurface({
+  storageError,
+  preferenceError,
+  serialErrorCode,
+  videoErrorCode,
+}: {
+  storageError: string | null;
+  preferenceError: string | null;
+  serialErrorCode: SerialErrorCode | null;
+  videoErrorCode: VideoCaptureErrorCode | null;
+}) {
+  return useMemo<AnalyticsErrorSurface | null>(() => {
+    if (storageError || preferenceError) {
+      return { kind: "storage", message: storageError || preferenceError || "本机存储异常" };
+    }
+    if (serialErrorCode) return { kind: "serial", code: serialErrorCode };
+    if (videoErrorCode) return { kind: "video", code: videoErrorCode };
+    return null;
+  }, [preferenceError, serialErrorCode, storageError, videoErrorCode]);
+}
 
 const rawCaptureStopCopy = {
   completed: "原始串口夹具已完成 60 秒录制，可以下载。",
@@ -377,22 +429,32 @@ export function FlightDashboard() {
   const exportShortcutInFlightRef = useRef(false);
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
   const telemetryControl = useBetaflightTelemetry();
-  const {
-    videoRef,
-    devices: videoDevices,
-    selectedDeviceId,
-    captureSettings,
-    state: videoState,
-    error: videoError,
-    errorCode: videoErrorCode,
-    setSelectedDeviceId,
-    connect: connectVideo,
-    disconnect: disconnectVideo,
-  } = useVideoCapture();
   const activeSource = activeVideoSource(videoWorkspace);
   const activeChannel = activePilotChannel(videoWorkspace);
   const activeViewport = activeVideoViewport(videoWorkspace);
   const sourceViewports = activeSource ? videoViewportsForSource(videoWorkspace, activeSource) : [];
+  const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
+  const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
+  const videoDevices = videoCapture.devices;
+  const selectedDeviceId = activeSource?.deviceId ?? "";
+  const captureSettings = activeVideoRuntime.captureSettings;
+  const videoState = activeVideoRuntime.state;
+  const videoError = activeVideoRuntime.error;
+  const videoErrorCode = activeVideoRuntime.errorCode;
+  const liveVideoSourceCount = videoWorkspace.sources.filter(
+    (sourceConfig) => videoSourceRuntime(videoCapture.runtimes, sourceConfig.id).state === "live",
+  ).length;
+  const connectingVideoSourceCount = videoWorkspace.sources.filter(
+    (sourceConfig) => videoSourceRuntime(videoCapture.runtimes, sourceConfig.id).state === "connecting",
+  ).length;
+  const anyVideoLive = liveVideoSourceCount > 0;
+  const workspaceTiles = videoWorkspace.sources.flatMap((sourceConfig) => (
+    videoViewportsForSource(videoWorkspace, sourceConfig).map((viewport) => ({
+      sourceConfig,
+      viewport,
+      channel: videoWorkspace.pilotChannels.find((candidate) => candidate.id === viewport.pilotChannelId),
+    }))
+  ));
   const athleteCode = activeChannel?.athleteCode ?? "";
   const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
   const version = useVersionCheck();
@@ -482,7 +544,7 @@ export function FlightDashboard() {
   }, []);
   const preferenceError = preferenceWriteError || videoWorkspaceWriteError || loadedVideoWorkspace.error || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
-  const videoTopologyLocked = controlsLocked || videoState === "connecting" || videoState === "live";
+  const activeVideoControlsLocked = controlsLocked || videoState === "connecting" || videoState === "live";
   const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
   const tabStartBlockReason = workstationTabStartBlockReason(workstation.tabState);
   const tabAllowsStart = tabStartBlockReason === null;
@@ -495,16 +557,6 @@ export function FlightDashboard() {
         captureSettings.frameRate ? `${captureSettings.frameRate.toFixed(1)} FPS` : null,
       ].filter(Boolean).join(" · ")
     : "";
-  const activeViewportTransform = activeViewport ? videoViewportTransform(activeViewport) : null;
-  const videoCropStyle = activeSource?.layout === "quad" && activeViewportTransform
-    ? {
-        width: `${activeViewportTransform.widthPercent}%`,
-        height: `${activeViewportTransform.heightPercent}%`,
-        left: `${activeViewportTransform.leftPercent}%`,
-        top: `${activeViewportTransform.topPercent}%`,
-        objectFit: "fill" as const,
-      }
-    : undefined;
   const rcSourceLabel = source === "demo" ? "DEMO" : "GROUND_RC";
   const bridgeSourceLabel = source === "demo" ? "DEMO" : "GROUND_BRIDGE";
   const timecode = formatLocalTimecode(telemetry.timestamp);
@@ -557,14 +609,12 @@ export function FlightDashboard() {
   const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
   const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
   const visibleError = trainingSession.storageError || preferenceError || error || videoError;
-  const analyticsErrorSurface = useMemo<AnalyticsErrorSurface | null>(() => {
-    if (trainingSession.storageError || preferenceError) {
-      return { kind: "storage", message: trainingSession.storageError || preferenceError || "本机存储异常" };
-    }
-    if (telemetryControl.errorCode) return { kind: "serial", code: telemetryControl.errorCode };
-    if (videoErrorCode) return { kind: "video", code: videoErrorCode };
-    return null;
-  }, [preferenceError, telemetryControl.errorCode, trainingSession.storageError, videoErrorCode]);
+  const analyticsErrorSurface = useDashboardAnalyticsErrorSurface({
+    storageError: trainingSession.storageError,
+    preferenceError,
+    serialErrorCode: telemetryControl.errorCode,
+    videoErrorCode,
+  });
   const leftStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.left), [stickMotion.samples]);
   const rightStickTrail = useMemo(() => stickMotion.samples.map((sample) => sample.right), [stickMotion.samples]);
   const leftStickLayout = coachMode ? COACH_LEFT_STICK_LAYOUT : stickOverlayMode === "trail" ? TRAIL_LEFT_STICK_LAYOUT : SIMPLE_LEFT_STICK_LAYOUT;
@@ -912,10 +962,9 @@ export function FlightDashboard() {
                 <span className="sr-only">视频采集设备</span>
                 <select
                   value={selectedDeviceId}
-                  disabled={videoTopologyLocked}
+                  disabled={activeVideoControlsLocked}
                   onChange={(event) => {
                     const deviceId = event.target.value;
-                    setSelectedDeviceId(deviceId);
                     if (activeSource) {
                       commitVideoWorkspace(setVideoSourceDevice(videoWorkspace, activeSource.id, deviceId));
                     }
@@ -934,7 +983,7 @@ export function FlightDashboard() {
                   className="mini-button"
                   onClick={() => {
                     analytics.markVideoDisconnectIntentional();
-                    disconnectVideo();
+                    if (activeSource) videoCapture.disconnectSource(activeSource.id);
                   }}
                 >断开画面</button>
               ) : (
@@ -944,10 +993,33 @@ export function FlightDashboard() {
                   title={tabAllowsStart ? "打开视频采集画面" : tabStartBlockReason ?? undefined}
                   onClick={() => {
                     analytics.beginVideoConnect();
-                    void connectVideo();
+                    if (activeSource) void videoCapture.connectSource(activeSource.id);
                   }}
                 >{videoState === "connecting" ? "正在打开" : "打开画面"}</button>
               )}
+              {videoWorkspace.sources.length > 1 ? (
+                anyVideoLive || connectingVideoSourceCount > 0 ? (
+                  <button
+                    className="mini-button"
+                    type="button"
+                    disabled={controlsLocked}
+                    onClick={() => {
+                      analytics.markVideoDisconnectIntentional();
+                      videoCapture.disconnectAll();
+                    }}
+                  >断开全部</button>
+                ) : (
+                  <button
+                    className="mini-button mini-button--active"
+                    type="button"
+                    disabled={!tabAllowsStart || controlsLocked}
+                    onClick={() => {
+                      analytics.beginVideoConnect();
+                      void videoCapture.connectAll();
+                    }}
+                  >打开全部</button>
+                )
+              ) : null}
               <button
                 className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
                 type="button"
@@ -1004,11 +1076,10 @@ export function FlightDashboard() {
               <span>输入档案</span>
               <select
                 value={videoWorkspace.activeSourceId}
-                disabled={videoTopologyLocked}
+                disabled={controlsLocked}
                 onChange={(event) => {
                   const nextWorkspace = selectVideoSource(videoWorkspace, event.target.value);
                   commitVideoWorkspace(nextWorkspace);
-                  setSelectedDeviceId(activeVideoSource(nextWorkspace)?.deviceId ?? "");
                 }}
               >
                 {videoWorkspace.sources.map((sourceConfig) => (
@@ -1019,22 +1090,20 @@ export function FlightDashboard() {
             <button
               className="mini-button"
               type="button"
-              disabled={videoTopologyLocked}
+              disabled={controlsLocked}
               onClick={() => {
                 const nextWorkspace = addVideoSource(videoWorkspace);
                 commitVideoWorkspace(nextWorkspace);
-                setSelectedDeviceId("");
               }}
             >+ 独立输入</button>
             <button
               className="mini-button"
               type="button"
-              disabled={videoTopologyLocked || videoWorkspace.sources.length <= 1 || !activeSource}
+              disabled={controlsLocked || videoState === "live" || videoState === "connecting" || videoWorkspace.sources.length <= 1 || !activeSource}
               onClick={() => {
                 if (!activeSource) return;
                 const nextWorkspace = removeVideoSource(videoWorkspace, activeSource.id);
                 commitVideoWorkspace(nextWorkspace);
-                setSelectedDeviceId(activeVideoSource(nextWorkspace)?.deviceId ?? "");
               }}
             >移除输入</button>
             <span className="video-workspace-divider" aria-hidden="true" />
@@ -1077,90 +1146,132 @@ export function FlightDashboard() {
                 })}
               </div>
             ) : null}
-            <small>配置仅保存在本机；当前版本一次连接一个活动输入</small>
+            <small>配置仅保存在本机 · 已连接 {liveVideoSourceCount}/{videoWorkspace.sources.length} 路</small>
           </div>
 
-          <div className={`video-stage ${videoState === "live" ? "has-video" : ""}`}>
-            <video
-              ref={videoRef}
-              className={activeSource?.layout === "quad" ? "video-feed--cropped" : undefined}
-              style={videoCropStyle}
-              muted
-              playsInline
-            />
-            <div className="video-idle">
-              <div className="flight-gate" aria-hidden="true"><span /><span /></div>
-              <p>选择 HDMI 采集卡后打开画面</p>
-              <small>浏览器读取 UVC 视频设备 · 不录制 · 不上传</small>
-            </div>
+          <div className={`video-stage ${anyVideoLive ? "has-video" : ""} ${workspaceTiles.length > 1 ? "video-stage--multi" : ""}`}>
+            <div className="video-feed-grid" data-viewport-count={workspaceTiles.length}>
+              {workspaceTiles.map(({ sourceConfig, viewport, channel }) => {
+                const runtime = videoSourceRuntime(videoCapture.runtimes, sourceConfig.id);
+                const viewportTransform = videoViewportTransform(viewport);
+                const isActive = viewport.pilotChannelId === videoWorkspace.activePilotChannelId;
+                const tileLabel = channel?.athleteCode.trim() || `${sourceConfig.label} · ${viewport.label}`;
+                const cropStyle = sourceConfig.layout === "quad"
+                  ? {
+                      width: `${viewportTransform.widthPercent}%`,
+                      height: `${viewportTransform.heightPercent}%`,
+                      left: `${viewportTransform.leftPercent}%`,
+                      top: `${viewportTransform.topPercent}%`,
+                      objectFit: "fill" as const,
+                    }
+                  : undefined;
+                return (
+                  <div
+                    key={viewport.id}
+                    className={`video-viewport ${runtime.state === "live" ? "is-live" : ""} ${isActive ? "is-active" : ""}`}
+                    data-source-id={sourceConfig.id}
+                    data-pilot-channel-id={viewport.pilotChannelId}
+                  >
+                    <WorkspaceVideoElement
+                      sourceId={sourceConfig.id}
+                      cropped={sourceConfig.layout === "quad"}
+                      style={cropStyle}
+                      registerVideoElement={videoCapture.registerVideoElement}
+                    />
+                    <div className="video-idle">
+                      <div className="flight-gate" aria-hidden="true"><span /><span /></div>
+                      <p>{runtime.state === "connecting" ? "正在打开视频" : sourceConfig.label}</p>
+                      <small>{runtime.error ?? "浏览器本地 UVC · 不录制 · 不上传"}</small>
+                    </div>
+                    <button
+                      className={`video-viewport-select ${isActive ? "is-active" : ""}`}
+                      type="button"
+                      aria-pressed={isActive}
+                      disabled={controlsLocked}
+                      title={isActive ? "当前遥测与 Session 选手" : `切换遥测与 Session 到 ${tileLabel}`}
+                      onClick={() => {
+                        const selectedSource = selectVideoSource(videoWorkspace, sourceConfig.id);
+                        commitVideoWorkspace(selectPilotChannel(selectedSource, viewport.pilotChannelId));
+                      }}
+                    >
+                      <span>{isActive ? "CURRENT" : sourceConfig.label}</span>
+                      <b>{tileLabel}</b>
+                    </button>
 
-            <DemoTelemetryWatermark source={source} />
-
-            <div className="hud hud-top-left">
-              <span>{source === "demo" ? "SIM" : "MSP"}</span>
-              <b>{source === "demo" ? "演示遥测" : "桥接飞控"}</b>
-            </div>
-            <div className="hud hud-top-right">
-              <b>{telemetry.groundBridgeVoltage === null ? "—" : telemetry.groundBridgeVoltage.toFixed(1)} V</b>
-              <span>{source === "demo" ? "DEMO BRIDGE VOLTAGE" : "GROUND BRIDGE VOLTAGE"}</span>
-            </div>
-            <div className={`coach-status coach-status--${connection}`}>
-              <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
-              <b>{trainingSession.isRecording ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}` : "REC 待命"}</b>
-              <strong>THR {Math.round(telemetry.throttleStickPercent)}%</strong>
-            </div>
-            {showStickOverlays || coachMode ? (
-              <>
-                <DraggableStickOverlay
-                  member="left"
-                  pairLayout={stickOverlayPair}
-                  label="左摇杆"
-                  xLabel="YAW"
-                  yLabel="THR"
-                  x={telemetry.yawStickPercent}
-                  y={telemetry.throttleStickPercent * 2 - 100}
-                  tone="orange"
-                  mode={stickOverlayMode}
-                  trail={leftStickTrail}
-                  peak={stickMotion.leftPeak}
-                  onPairChange={updateStickOverlayPair}
-                  onInteractionStart={() => setOverlayLayoutNotice(null)}
-                  onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
-                  onToggleLock={toggleStickOverlayPairLock}
-                />
-                <DraggableStickOverlay
-                  member="right"
-                  pairLayout={stickOverlayPair}
-                  label="右摇杆"
-                  xLabel="ROLL"
-                  yLabel="PITCH"
-                  x={telemetry.rollStickPercent}
-                  y={telemetry.pitchStickPercent}
-                  tone="blue"
-                  mode={stickOverlayMode}
-                  trail={rightStickTrail}
-                  peak={stickMotion.rightPeak}
-                  onPairChange={updateStickOverlayPair}
-                  onInteractionStart={() => setOverlayLayoutNotice(null)}
-                  onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
-                  onToggleLock={toggleStickOverlayPairLock}
-                />
-              </>
-            ) : null}
-            <div className="hud hud-bottom-left">
-              <span>ROLL STICK <b>{formatSigned(telemetry.rollStickPercent)}</b></span>
-              <span>PITCH STICK <b>{formatSigned(telemetry.pitchStickPercent)}</b></span>
-              <span>YAW STICK <b>{formatSigned(telemetry.yawStickPercent)}</b></span>
-            </div>
-            <div className="throttle-ladder">
-              <span>THR STICK</span>
-              <div><i style={{ height: `${telemetry.throttleStickPercent}%` }} /></div>
-              <b>{Math.round(telemetry.throttleStickPercent)}%</b>
+                    {isActive ? (
+                      <>
+                        <DemoTelemetryWatermark source={source} />
+                        <div className="hud hud-top-left">
+                          <span>{source === "demo" ? "SIM" : "MSP"}</span>
+                          <b>{source === "demo" ? "演示遥测" : "桥接飞控"}</b>
+                        </div>
+                        <div className="hud hud-top-right">
+                          <b>{telemetry.groundBridgeVoltage === null ? "—" : telemetry.groundBridgeVoltage.toFixed(1)} V</b>
+                          <span>{source === "demo" ? "DEMO BRIDGE VOLTAGE" : "GROUND BRIDGE VOLTAGE"}</span>
+                        </div>
+                        <div className={`coach-status coach-status--${connection}`}>
+                          <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
+                          <b>{trainingSession.isRecording ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}` : "REC 待命"}</b>
+                          <strong>THR {Math.round(telemetry.throttleStickPercent)}%</strong>
+                        </div>
+                        {showStickOverlays || coachMode ? (
+                          <>
+                            <DraggableStickOverlay
+                              member="left"
+                              pairLayout={stickOverlayPair}
+                              label="左摇杆"
+                              xLabel="YAW"
+                              yLabel="THR"
+                              x={telemetry.yawStickPercent}
+                              y={telemetry.throttleStickPercent * 2 - 100}
+                              tone="orange"
+                              mode={stickOverlayMode}
+                              trail={leftStickTrail}
+                              peak={stickMotion.leftPeak}
+                              onPairChange={updateStickOverlayPair}
+                              onInteractionStart={() => setOverlayLayoutNotice(null)}
+                              onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
+                              onToggleLock={toggleStickOverlayPairLock}
+                            />
+                            <DraggableStickOverlay
+                              member="right"
+                              pairLayout={stickOverlayPair}
+                              label="右摇杆"
+                              xLabel="ROLL"
+                              yLabel="PITCH"
+                              x={telemetry.rollStickPercent}
+                              y={telemetry.pitchStickPercent}
+                              tone="blue"
+                              mode={stickOverlayMode}
+                              trail={rightStickTrail}
+                              peak={stickMotion.rightPeak}
+                              onPairChange={updateStickOverlayPair}
+                              onInteractionStart={() => setOverlayLayoutNotice(null)}
+                              onInteractionCommit={(pair) => setOverlayLayoutNotice(pair.docked ? "摇杆已吸附 · 布局已保存" : "布局已保存")}
+                              onToggleLock={toggleStickOverlayPairLock}
+                            />
+                          </>
+                        ) : null}
+                        <div className="hud hud-bottom-left">
+                          <span>ROLL STICK <b>{formatSigned(telemetry.rollStickPercent)}</b></span>
+                          <span>PITCH STICK <b>{formatSigned(telemetry.pitchStickPercent)}</b></span>
+                          <span>YAW STICK <b>{formatSigned(telemetry.yawStickPercent)}</b></span>
+                        </div>
+                        <div className="throttle-ladder">
+                          <span>THR STICK</span>
+                          <div><i style={{ height: `${telemetry.throttleStickPercent}%` }} /></div>
+                          <b>{Math.round(telemetry.throttleStickPercent)}%</b>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
           <div className="video-footer">
-            <span><SignalMark active={videoState === "live"} />{videoState === "live" ? "UVC 采集正常" : "未接入采集卡"}</span>
+            <span><SignalMark active={anyVideoLive} />{anyVideoLive ? `${liveVideoSourceCount}/${videoWorkspace.sources.length} 路 UVC 在线` : "未接入采集卡"}</span>
             <span>画面与遥测在浏览器本地合成</span>
             <span className="timecode">TC {timecode}</span>
           </div>
