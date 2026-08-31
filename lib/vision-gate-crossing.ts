@@ -19,6 +19,7 @@ export interface VisionGateCrossingConfig {
   confidenceThreshold: number;
   hysteresisDistance: number;
   cooldownMs: number;
+  maxSampleGapMs: number;
 }
 
 function stableSide(distance: number, hysteresisDistance: number): -1 | 0 | 1 {
@@ -41,6 +42,7 @@ export function createVisionGateCrossingDetector(config: VisionGateCrossingConfi
   }
   if (!Number.isFinite(config.hysteresisDistance) || config.hysteresisDistance <= 0) throw new Error("hysteresisDistance 必须大于 0");
   if (!Number.isFinite(config.cooldownMs) || config.cooldownMs < 0) throw new Error("cooldownMs 不能为负数");
+  if (!Number.isFinite(config.maxSampleGapMs) || config.maxSampleGapMs <= 0) throw new Error("maxSampleGapMs 必须大于 0");
 
   let previousStableSide: -1 | 1 | null = null;
   let previousStableSample: VisionGateSample | null = null;
@@ -52,7 +54,12 @@ export function createVisionGateCrossingDetector(config: VisionGateCrossingConfi
       if (!Number.isFinite(sample.timestampMs) || sample.timestampMs < lastTimestamp) throw new Error("门检测时间戳必须单调");
       if (!Number.isFinite(sample.signedDistance)) throw new Error("signedDistance 必须是有限数值");
       if (!Number.isFinite(sample.confidence) || sample.confidence < 0 || sample.confidence > 1) throw new Error("confidence 必须在 0 至 1");
+      const sampleGapMs = sample.timestampMs - lastTimestamp;
       lastTimestamp = sample.timestampMs;
+      if (sampleGapMs > config.maxSampleGapMs) {
+        previousStableSide = null;
+        previousStableSample = null;
+      }
       if (sample.confidence < config.confidenceThreshold) return null;
 
       const side = stableSide(sample.signedDistance, config.hysteresisDistance);

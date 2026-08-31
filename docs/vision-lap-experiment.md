@@ -22,7 +22,7 @@
 2. 每个 Session 整段划入 train、validation 或 test，禁止同一录像切片跨集合，避免相邻帧泄漏。
 3. test 集在阈值冻结前保持不可见；至少 300 次真值全部来自 test。
 4. 视频素材必须有书面授权、明确保留/删除日期和访问人；不得把当前试点 DVR 默认收走。
-5. 保存数据集版本、文件哈希、授权引用、场景标签和排除原因；不保存真实姓名。
+5. 保存数据集版本、每个 Session 唯一的文件哈希、授权引用、场景标签和排除原因；同一文件哈希不得以不同 Session 或 split 重复登记，不保存真实姓名。
 
 ## 标注规范
 
@@ -64,9 +64,11 @@
 仓库现提供纯本地评估器；它不会读取摄像头、训练模型或上传视频，也不能替代 YOLO 推理与真实计时器盲测。
 
 ```bash
-npm run vision:evaluate -- /绝对路径/vision-test-run.json
+npm run vision:evaluate -- /绝对路径/vision-test-run.json /绝对路径/vision-dataset-manifest.json
 ```
 
-输入必须声明 `split: "test"`、数据集/模型版本、`frozenAt`、首次打开 test 的 `testOpenedAt`、冻结的置信度与匹配/去重窗口，并包含逐事件真值与预测。评估器执行一对一匹配，单独统计误报、重复计数、低置信度待复核事件、Recall 和时间偏差 P95；只有所有固定门槛同时通过才返回 `passedTrainingAidThreshold: true`。输出始终带“实验圈数，不作为正式成绩或赛事计时”。`createVisionGateCrossingDetector()` 另提供方向、滞回、冷却和线性时间插值状态机，供未来本地 YOLO 推理结果接入；它不包含图像检测模型。
+evaluation schema v2 必须声明 `split: "test"`、manifest 文件 SHA-256、数据集/模型版本、`frozenAt`、首次打开 test 的 `testOpenedAt`、冻结的置信度与匹配/去重窗口，并包含逐事件真值与预测。manifest schema v2 同时冻结模型/阈值、完整 split 清单、每段文件 SHA-256、真值数，以及 venue / lighting / videoSystem 各至少两个取值的最低真值覆盖要求。CLI 对第二个文件的原始内容计算 SHA-256；评估器再验证 manifest、拒绝重复 Session 或跨 Session 重复文件哈希，并要求 evaluation 覆盖 manifest 的全部 test Session 且逐段真值数相等。
 
-数据集清单可用 `validateVisionDatasetManifest()` 校验：同一个 `sessionId` 只允许出现一次，整段 Session 不能跨 train/validation/test；每段必须登记本地文件 SHA-256、授权引用和删除日期。支架只能验证输入记录的一致性，不能证明授权真实、阈值确实在看 test 前冻结，仍需独立复核人签字。
+一对一匹配先最大化匹配数，再最小化总时间误差，最后按时间戳与 ID 稳定决胜；单独统计误报、重复计数、低置信度待复核事件、Recall、场景覆盖和时间偏差 P95。`frozenAt` 必须严格早于 `testOpenedAt`，只有全部固定门槛同时通过才返回 `passedTrainingAidThreshold: true`。输出始终带“实验圈数，不作为正式成绩或赛事计时”。`createVisionGateCrossingDetector()` 另提供方向、滞回、冷却、最大采样间隔和线性时间插值状态机；超过 `maxSampleGapMs` 时会清除跨帧跟踪状态且不补造 crossing。它供未来本地 YOLO 推理结果接入，不包含图像检测模型。
+
+数据集清单可用 `validateVisionDatasetManifest()` 校验。评估支架保持纯本地运行，不读取摄像头、不上传视频；它能证明输入与所给 manifest 的哈希及结构一致，但不能证明授权记录真实或 test 打开时间没有被伪造，仍需独立复核人签字。
