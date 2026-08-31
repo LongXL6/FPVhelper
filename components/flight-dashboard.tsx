@@ -311,8 +311,6 @@ export function FlightDashboard() {
   const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
   const version = useVersionCheck();
   const trainingSession = useTrainingSession({ telemetry, source, connection, linkState, athleteCode, autoExport });
-  const addTrainingMarker = trainingSession.addMarker;
-  const sessionIsRecording = trainingSession.isRecording;
   const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording });
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
     ? notesDraft
