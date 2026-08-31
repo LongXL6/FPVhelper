@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_TELEMETRY } from "./telemetry";
 import {
+  assessPilotLedgerCompleteness,
   appendTrainingSessionSample,
   appendTrainingSessionMarker,
   createTrainingSessionDraft,
@@ -16,10 +17,14 @@ import {
 
 const STARTED_AT = 1_700_000_000_000;
 const STARTED_MONOTONIC = 1_000;
+const WORKSTATION_ID = "10000000-0000-4000-8000-000000000001";
+const BUILD = "0.2.0+test";
 
 function createDraft(source: "demo" | "serial" = "serial", athleteCode = "PILOT-07") {
   return createTrainingSessionDraft({
     id: "session-12345678",
+    workstationId: WORKSTATION_ID,
+    build: BUILD,
     athleteCode,
     source,
     startedAtEpochMs: STARTED_AT,
@@ -91,6 +96,48 @@ describe("local training session schema v2", () => {
     expect(trainingSessionFilename(session)).toMatch(/^fpv-session-\d{8}-\d{6}-PILOT-07-12345678\.json$/);
   });
 
+  it("writes workstation and trusted public-build metadata into new schema v2 JSON", () => {
+    const draft = createTrainingSessionDraft({
+      id: "session-metadata",
+      workstationId: WORKSTATION_ID,
+      build: "0.2.0+1234567",
+      athleteCode: "PILOT-07",
+      source: "serial",
+      startedAtEpochMs: STARTED_AT,
+      startedMonotonicMs: STARTED_MONOTONIC,
+    });
+    for (let sequence = 1; sequence <= 300; sequence += 1) addSample(draft, sequence);
+
+    const session = finishTrainingSession(draft, STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    expect(session).toMatchObject({
+      schemaVersion: 2,
+      workstationId: "10000000-0000-4000-8000-000000000001",
+      build: "0.2.0+1234567",
+    });
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("rejects untrusted workstation and public-build metadata before recording", () => {
+    const baseOptions = {
+      id: "session-invalid-metadata",
+      athleteCode: "PILOT-07",
+      source: "serial" as const,
+      startedAtEpochMs: STARTED_AT,
+      startedMonotonicMs: STARTED_MONOTONIC,
+    };
+
+    expect(() => createTrainingSessionDraft({
+      ...baseOptions,
+      workstationId: "machine-name",
+      build: BUILD,
+    })).toThrow("workstationId 必须是 UUID");
+    expect(() => createTrainingSessionDraft({
+      ...baseOptions,
+      workstationId: WORKSTATION_ID,
+      build: "<script>alert(1)</script>",
+    })).toThrow("build 必须是可信的公开构建标识");
+  });
+
   it("records typed manual markers with monotonic elapsed and local wall-clock timestamps", () => {
     const draft = createDraft();
 
@@ -117,6 +164,22 @@ describe("local training session schema v2", () => {
     expect(firstExport).toMatchObject({ exportCount: 1, exportedAt: new Date(STARTED_AT + 61_000).toISOString() });
     expect(secondExport).toMatchObject({ exportCount: 2, exportedAt: new Date(STARTED_AT + 62_000).toISOString() });
     expect(parseTrainingSession(serializeTrainingSession(secondExport))).toEqual(secondExport);
+  });
+
+  it("keeps technical validity separate from pilot-ledger completeness", () => {
+    const valid = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    expect(valid.validity).toEqual({ valid: true, reasons: [] });
+    expect(assessPilotLedgerCompleteness(valid)).toEqual({ complete: false, reasons: ["missing_notes"] });
+
+    const reviewed = withTrainingSessionNotes(valid, "压弯过早，下轮延后入弯");
+    expect(reviewed.validity).toEqual(valid.validity);
+    expect(assessPilotLedgerCompleteness(reviewed)).toEqual({ complete: true, reasons: [] });
+
+    const invalidReviewed = withTrainingSessionNotes(
+      finishTrainingSession(createDraft("demo"), STARTED_AT + 1_000, STARTED_MONOTONIC + 1_000),
+      "演示记录复盘",
+    );
+    expect(assessPilotLedgerCompleteness(invalidReviewed)).toEqual({ complete: false, reasons: ["technically_invalid"] });
   });
 
   it("reports mixed, short, duplicate, non-monotonic, anonymous and interrupted records", () => {
@@ -177,11 +240,35 @@ describe("local training session schema v2", () => {
     expect(migrated).toMatchObject({
       schemaVersion: 2,
       migratedFromSchemaVersion: 1,
+      workstationId: null,
+      build: null,
       athleteCode: null,
       markers: [],
       sampleCount: 1,
     });
     expect(migrated.samples[0].channelsUs).toEqual([1600, 1450, 1500, 1600]);
     expect(migrated.validity.reasons).toContain("no_athlete_code");
+  });
+
+  it("keeps existing schema v2 records readable when additive metadata is absent", () => {
+    const current = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const legacyV2 = JSON.parse(serializeTrainingSession(current)) as Record<string, unknown>;
+    delete legacyV2.workstationId;
+    delete legacyV2.build;
+
+    const parsed = parseTrainingSession(legacyV2);
+    expect(parsed).toMatchObject({
+      schemaVersion: 2,
+      workstationId: null,
+      build: null,
+      id: current.id,
+      validity: current.validity,
+    });
+
+    expect(parseTrainingSession({
+      ...legacyV2,
+      workstationId: "old-local-machine-label",
+      build: "old debug build",
+    })).toMatchObject({ workstationId: null, build: null, id: current.id });
   });
 });

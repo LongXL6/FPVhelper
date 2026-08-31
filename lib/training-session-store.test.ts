@@ -11,12 +11,17 @@ import {
   withTrainingSessionNotes,
 } from "./training-session";
 
-function createDraft(id = "stored-draft") {
+const WORKSTATION_ID = "10000000-0000-4000-8000-000000000001";
+const BUILD = "0.2.0+test";
+
+function createDraft(id = "stored-draft", startedAtEpochMs = 1_700_000_000_000) {
   const draft = createTrainingSessionDraft({
     id,
+    workstationId: WORKSTATION_ID,
+    build: BUILD,
     athleteCode: "PILOT-11",
     source: "serial",
-    startedAtEpochMs: 1_700_000_000_000,
+    startedAtEpochMs,
     startedMonotonicMs: 1_000,
   });
   appendTrainingSessionSample(draft, {
@@ -122,6 +127,8 @@ describe("IndexedDB training session store", () => {
     const store = createTrainingSessionStore(new IDBFactory(), "export-status");
     const draft = createTrainingSessionDraft({
       id: "valid-session",
+      workstationId: WORKSTATION_ID,
+      build: BUILD,
       athleteCode: "PILOT-12",
       source: "serial",
       startedAtEpochMs: 1_700_000_000_000,
@@ -144,6 +151,36 @@ describe("IndexedDB training session store", () => {
 
     expect(await store.countUnexportedValidSessions()).toBe(0);
     expect((await store.listSessions())[0]).toMatchObject({ id: "valid-session", exportCount: 1, exportedAt: exported.exportedAt });
+    await store.close();
+  });
+
+  it("lists cross-day history without a limit and keeps older sessions available for repeat export", async () => {
+    const store = createTrainingSessionStore(new IDBFactory(), "cross-day-history");
+    const previousDayEpochMs = Date.parse("2026-08-30T08:00:00.000Z");
+    const currentDayEpochMs = Date.parse("2026-08-31T08:00:00.000Z");
+    const previousDay = finishTrainingSession(
+      createDraft("previous-day", previousDayEpochMs),
+      previousDayEpochMs + 1_000,
+      2_000,
+    );
+    const currentDay = finishTrainingSession(
+      createDraft("current-day", currentDayEpochMs),
+      currentDayEpochMs + 1_000,
+      2_000,
+    );
+    await store.saveSession(previousDay);
+    await store.saveSession(markTrainingSessionExported(currentDay, currentDayEpochMs + 2_000));
+
+    expect((await store.listSessions()).map((session) => session.id)).toEqual(["current-day", "previous-day"]);
+    const firstRepeat = markTrainingSessionExported(previousDay, currentDayEpochMs + 3_000);
+    await store.saveSession(firstRepeat);
+    const secondRepeat = markTrainingSessionExported(firstRepeat, currentDayEpochMs + 4_000);
+    await store.saveSession(secondRepeat);
+
+    expect((await store.listSessions()).find((session) => session.id === "previous-day")).toMatchObject({
+      exportCount: 2,
+      exportedAt: secondRepeat.exportedAt,
+    });
     await store.close();
   });
 

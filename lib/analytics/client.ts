@@ -10,8 +10,12 @@ import {
   type PhaseOneEventName,
   type PhaseOneEventProps,
 } from "./events";
+import {
+  getOrCreateWorkstationId,
+  WORKSTATION_ID_STORAGE_KEY,
+} from "../workstation-id";
 
-const WORKSTATION_KEY = "fpvhelper.workstation.v1";
+const WORKSTATION_KEY = WORKSTATION_ID_STORAGE_KEY;
 const TOKEN_KEY = "fpvhelper.analytics.ingest-token.v1";
 const QUEUE_KEY = "fpvhelper.analytics.queue.v1";
 const OPT_OUT_KEY = "fpvhelper.analytics.opt-out.v1";
@@ -23,7 +27,6 @@ const FLUSH_INTERVAL_MS = 10_000;
 const INITIAL_BACKOFF_MS = 5_000;
 const MAX_BACKOFF_MS = 5 * 60 * 1_000;
 const DROP_RESPONSE_STATUSES = new Set([400, 413, 415, 422]);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const CUSTOMER_ANALYTICS_HOSTNAME = "race.fpvsuperapp.com";
 
 export type AnalyticsLocalStatus =
@@ -217,11 +220,8 @@ export class AnalyticsClient {
     }
     if (safeGet(runtime.storage, OPT_OUT_KEY) === "1") return false;
 
-    const existingWorkstationId = safeGet(runtime.storage, WORKSTATION_KEY);
-    const workstationId = existingWorkstationId && UUID_PATTERN.test(existingWorkstationId)
-      ? existingWorkstationId
-      : runtime.randomUuid();
-    if (!UUID_PATTERN.test(workstationId) || !safeSet(runtime.storage, WORKSTATION_KEY, workstationId)) return false;
+    const workstationId = getOrCreateWorkstationId(runtime.storage, runtime.randomUuid);
+    if (!workstationId) return false;
 
     const configuredToken = this.installedToken ?? this.options.ingestToken ?? safeGet(runtime.storage, TOKEN_KEY) ?? "";
     if (!isAnalyticsIngestToken(configuredToken)) return false;

@@ -1,4 +1,5 @@
 import type { FlightTelemetry, TelemetrySource } from "./telemetry";
+import { isWorkstationId } from "./workstation-id";
 
 export const TRAINING_SESSION_SCHEMA_VERSION = 2;
 export const MINIMUM_VALID_SESSION_DURATION_MS = 60_000;
@@ -14,6 +15,7 @@ export type TrainingSessionInvalidReason =
   | "non_monotonic"
   | "no_athlete_code"
   | "interrupted";
+export type PilotLedgerIncompleteReason = "technically_invalid" | "missing_notes";
 
 export interface TrainingSessionMarker {
   id: string;
@@ -43,6 +45,8 @@ export interface TrainingSessionSample {
 export interface TrainingSessionDraft {
   schemaVersion: typeof TRAINING_SESSION_SCHEMA_VERSION;
   id: string;
+  workstationId: string | null;
+  build: string | null;
   athleteCode: string;
   startedAt: string;
   wallClockStartedAt: string;
@@ -57,10 +61,17 @@ export interface TrainingSessionAssessment {
   reasons: TrainingSessionInvalidReason[];
 }
 
+export interface PilotLedgerAssessment {
+  complete: boolean;
+  reasons: PilotLedgerIncompleteReason[];
+}
+
 export interface TrainingSession {
   schemaVersion: typeof TRAINING_SESSION_SCHEMA_VERSION;
   migratedFromSchemaVersion?: 1;
   id: string;
+  workstationId: string | null;
+  build: string | null;
   athleteCode: string | null;
   notes: string | null;
   exportedAt: string | null;
@@ -129,6 +140,26 @@ function normalizedAthleteCode(value: unknown) {
   return normalized || null;
 }
 
+function parsedWorkstationId(value: unknown) {
+  return isWorkstationId(value) ? value : null;
+}
+
+function parsedPublicBuild(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,79}$/.test(value) ? value : null;
+}
+
+function requireWorkstationId(value: unknown) {
+  const workstationId = parsedWorkstationId(value);
+  if (!workstationId) throw new Error("workstationId 必须是 UUID");
+  return workstationId;
+}
+
+function requirePublicBuild(value: unknown) {
+  const build = parsedPublicBuild(value);
+  if (!build) throw new Error("build 必须是可信的公开构建标识");
+  return build;
+}
+
 export function normalizeAthleteCode(value: string) {
   return normalizedAthleteCode(value) ?? "";
 }
@@ -157,6 +188,8 @@ export function toRecordedTelemetrySource(source: TelemetrySource): RecordedTele
 
 export function createTrainingSessionDraft(options: {
   id: string;
+  workstationId: string;
+  build: string;
   athleteCode: string;
   source: TelemetrySource;
   startedAtEpochMs: number;
@@ -165,6 +198,8 @@ export function createTrainingSessionDraft(options: {
   return {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     id: options.id,
+    workstationId: requireWorkstationId(options.workstationId),
+    build: requirePublicBuild(options.build),
     athleteCode: normalizeAthleteCode(options.athleteCode),
     startedAt: new Date(options.startedAtEpochMs).toISOString(),
     wallClockStartedAt: toLocalWallClockTimestamp(options.startedAtEpochMs),
@@ -240,6 +275,8 @@ function finalizeTrainingSession(
   const sessionWithoutValidity: AssessableTrainingSession = {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     id: draft.id,
+    workstationId: draft.workstationId,
+    build: draft.build,
     athleteCode: normalizeAthleteCode(draft.athleteCode) || null,
     notes: null,
     exportedAt: null,
@@ -323,6 +360,13 @@ export function assessTrainingSession(session: AssessableTrainingSession | Train
   return { valid: reasons.length === 0, reasons };
 }
 
+export function assessPilotLedgerCompleteness(session: TrainingSession): PilotLedgerAssessment {
+  const reasons: PilotLedgerIncompleteReason[] = [];
+  if (!session.validity.valid) reasons.push("technically_invalid");
+  if (!normalizeSessionNotes(session.notes ?? "")) reasons.push("missing_notes");
+  return { complete: reasons.length === 0, reasons };
+}
+
 function channelsFromLegacyRc(rc: TrainingSessionSample["rc"]) {
   return [
     Math.round(1500 + rc.rollStickPercent * 5),
@@ -395,6 +439,8 @@ export function parseTrainingSessionDraft(input: string | unknown): TrainingSess
   return {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     id: requireString(raw.id, "id"),
+    workstationId: parsedWorkstationId(raw.workstationId),
+    build: parsedPublicBuild(raw.build),
     athleteCode: normalizeAthleteCode(requireString(raw.athleteCode, "athleteCode")),
     startedAt,
     wallClockStartedAt,
@@ -452,6 +498,8 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     ...(schemaVersion === 1 || raw.migratedFromSchemaVersion === 1 ? { migratedFromSchemaVersion: 1 as const } : {}),
     id: requireString(raw.id, "id"),
+    workstationId: schemaVersion === 1 ? null : parsedWorkstationId(raw.workstationId),
+    build: schemaVersion === 1 ? null : parsedPublicBuild(raw.build),
     athleteCode,
     notes,
     exportedAt,

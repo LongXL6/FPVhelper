@@ -14,6 +14,7 @@ export interface PublicBuildEnvironment {
 }
 
 export const APP_VERSION = packageJson.version;
+export const PUBLIC_APP_BUILD = process.env.NEXT_PUBLIC_APP_VERSION?.trim() || `${APP_VERSION}+local`;
 
 function normalizedCommitSha(value: string | undefined) {
   const normalized = value?.trim();

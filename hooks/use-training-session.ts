@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionState, FlightTelemetry, TelemetrySource } from "@/lib/telemetry";
+import { PUBLIC_APP_BUILD } from "@/lib/app-version";
 import {
   createTrainingSessionStore,
   EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
@@ -26,9 +27,9 @@ import {
 } from "@/lib/training-session-export";
 import {
   countUniqueTrainingSamples,
-  sessionsStartedOnLocalDay,
   shouldWarnBeforeTrainingExit,
 } from "@/lib/training-session-summary";
+import { getOrCreateBrowserWorkstationId } from "@/lib/workstation-id";
 import { canStartTrainingSession } from "./training-session-start-guard";
 import { requestUnconfirmedTrainingSessionDownload } from "./training-session-export-feedback";
 
@@ -60,7 +61,7 @@ interface TrainingSessionController {
   markerCount: number;
   elapsedMs: number;
   lastSession: TrainingSession | null;
-  todaySessions: TrainingSession[];
+  allSessions: TrainingSession[];
   storageReady: boolean;
   storageError: string | null;
   exportNotice: string | null;
@@ -68,6 +69,7 @@ interface TrainingSessionController {
   storageIntegrity: TrainingSessionStorageIntegrity;
   recentSessionCount: number;
   unexportedValidCount: number;
+  unexportedCount: number;
   hasPendingSave: boolean;
   lastExport: TrainingSessionExportReceipt | null;
   canStart: boolean;
@@ -105,7 +107,6 @@ export function useTrainingSession({
   const [elapsedMs, setElapsedMs] = useState(0);
   const [lastSession, setLastSession] = useState<TrainingSession | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
-  const [todaySessions, setTodaySessions] = useState<TrainingSession[]>([]);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -122,11 +123,11 @@ export function useTrainingSession({
   const sessionsRef = useRef<TrainingSession[]>([]);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
+  const workstationIdRef = useRef<string | null>(null);
 
-  const applySessions = useCallback((nextSessions: TrainingSession[], localEpochMs: number) => {
+  const applySessions = useCallback((nextSessions: TrainingSession[]) => {
     sessionsRef.current = nextSessions;
     setSessions(nextSessions);
-    setTodaySessions(sessionsStartedOnLocalDay(nextSessions, localEpochMs));
     const latestSession = nextSessions[0] ?? null;
     if (!draftRef.current && !pendingSessionRef.current) {
       setLastSession(latestSession);
@@ -144,7 +145,7 @@ export function useTrainingSession({
       store.countUnexportedValidSessions(),
       store.getStorageIntegrity(),
     ]);
-    applySessions(nextSessions, Date.now());
+    applySessions(nextSessions);
     setUnexportedValidCount(nextUnexportedValidCount);
     setStorageIntegrity(nextStorageIntegrity);
     return nextSessions;
@@ -251,8 +252,18 @@ export function useTrainingSession({
     setIsStarting(true);
     setStorageError(null);
     const id = uniqueLocalId("session");
+    const workstationId = workstationIdRef.current ?? getOrCreateBrowserWorkstationId();
+    if (!workstationId) {
+      setStorageError("开始记录失败：无法创建并持久化工作站 ID，请检查浏览器本地存储权限");
+      startingRef.current = false;
+      setIsStarting(false);
+      return;
+    }
+    workstationIdRef.current = workstationId;
     const draft = createTrainingSessionDraft({
       id,
+      workstationId,
+      build: PUBLIC_APP_BUILD,
       athleteCode,
       source,
       startedAtEpochMs: Date.now(),
@@ -441,7 +452,7 @@ export function useTrainingSession({
     markerCount,
     elapsedMs,
     lastSession,
-    todaySessions,
+    allSessions: sessions,
     storageReady,
     storageError,
     exportNotice,
@@ -449,6 +460,7 @@ export function useTrainingSession({
     storageIntegrity,
     recentSessionCount: sessions.length,
     unexportedValidCount,
+    unexportedCount: sessions.filter((session) => session.exportedAt === null).length,
     hasPendingSave,
     lastExport,
     canStart,

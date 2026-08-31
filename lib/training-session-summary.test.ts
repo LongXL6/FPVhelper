@@ -11,9 +11,14 @@ import {
   trainingSessionProgress,
 } from "./training-session-summary";
 
+const WORKSTATION_ID = "10000000-0000-4000-8000-000000000001";
+const BUILD = "0.2.0+test";
+
 function createSession(id: string, startedAtEpochMs: number) {
   const draft = createTrainingSessionDraft({
     id,
+    workstationId: WORKSTATION_ID,
+    build: BUILD,
     athleteCode: "PILOT-21",
     source: "serial",
     startedAtEpochMs,
@@ -55,6 +60,8 @@ describe("training session product summaries", () => {
     const startedAtEpochMs = new Date(2026, 7, 31, 9, 0, 0).getTime();
     const draft = createTrainingSessionDraft({
       id: "marked-session",
+      workstationId: WORKSTATION_ID,
+      build: BUILD,
       athleteCode: "PILOT-21",
       source: "serial",
       startedAtEpochMs,

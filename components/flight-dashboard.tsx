@@ -10,6 +10,7 @@ import {
   TrainingStorageIntegrityNotice,
 } from "@/components/training-storage-integrity-notice";
 import { TrainingExportNotice } from "@/components/training-export-notice";
+import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
@@ -29,6 +30,7 @@ import {
   trainingSessionProgress,
 } from "@/lib/training-session-summary";
 import {
+  assessPilotLedgerCompleteness,
   normalizeAthleteCode,
   type TrainingSessionInvalidReason,
   type TrainingSessionMarkerKind,
@@ -109,7 +111,7 @@ function formatLocalTimecode(timestamp: number) {
 }
 
 function formatSessionStart(wallClockStartedAt: string) {
-  return wallClockStartedAt.slice(11, 19);
+  return `${wallClockStartedAt.slice(0, 10)} ${wallClockStartedAt.slice(11, 19)}`;
 }
 
 function isTypingTarget(target: EventTarget | null) {
@@ -336,8 +338,11 @@ export function FlightDashboard() {
           : "已满足开始条件";
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
-      ? "有效 Session：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
-      : `无效 Session：${trainingSession.lastSession.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}`
+      ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
+      : `技术无效：${trainingSession.lastSession.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}`
+    : null;
+  const lastSessionPilotLedger = trainingSession.lastSession
+    ? assessPilotLedgerCompleteness(trainingSession.lastSession)
     : null;
   const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
   const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
@@ -781,7 +786,14 @@ export function FlightDashboard() {
           <div>
             <p>草稿保存在浏览器 IndexedDB：开始即写、每 5 秒更新、结束即保存；刷新残留草稿会恢复为 interrupted，不会静默丢弃。</p>
             {lastSessionValidity && !trainingSession.isRecording ? (
-              <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
+              <>
+                <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
+                <p className={lastSessionPilotLedger?.complete ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>
+                  {lastSessionPilotLedger?.complete
+                    ? "试点台账完整：技术有效且已有非空复盘备注"
+                    : "试点台账不完整：需同时满足技术有效并保存非空复盘备注"}
+                </p>
+              </>
             ) : null}
           </div>
           {trainingSession.hasPendingSave ? (
@@ -844,30 +856,39 @@ export function FlightDashboard() {
         </section>
       ) : null}
 
+      <TrainingSessionFileValidator />
+
       <section className="today-records-card">
         <div className="session-heading">
-          <div><span>LOCAL INDEXEDDB</span><h2>今日记录</h2></div>
-          <span>今日 {trainingSession.todaySessions.length} 条 · 本机 {trainingSession.unexportedValidCount} 条有效记录待导出</span>
+          <div><span>LOCAL INDEXEDDB</span><h2>全部历史 Session</h2></div>
+          <span>共 {trainingSession.allSessions.length} 条 · 未导出 {trainingSession.unexportedCount} 条（技术有效 {trainingSession.unexportedValidCount} 条）</span>
         </div>
-        {trainingSession.todaySessions.length === 0 ? (
-          <p className="empty-records">今天还没有已完成的本机训练记录。</p>
+        {trainingSession.allSessions.length === 0 ? (
+          <p className="empty-records">本机还没有已完成的训练记录。</p>
         ) : (
           <div className="today-records-list">
-            {trainingSession.todaySessions.map((session) => (
-              <article key={session.id}>
-                <div><span>代号</span><b>{session.athleteCode ?? "—"}</b></div>
-                <div><span>开始（本地）</span><b>{formatSessionStart(session.timing.wallClockStartedAt)}</b></div>
-                <div><span>时长</span><b>{formatSessionDuration(session.durationMs)}</b></div>
-                <div className={session.validity.valid ? "record-valid" : "record-invalid"}>
-                  <span>有效性</span>
-                  <b>{session.validity.valid ? "有效" : session.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}</b>
-                </div>
-                <div><span>导出状态</span><b>{session.exportedAt ? `已导出 ${session.exportCount} 次` : "未导出"}</b></div>
-                <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.exportSession(session.id)}>
-                  {session.exportedAt ? "再次导出" : "导出 JSON"}
-                </button>
-              </article>
-            ))}
+            {trainingSession.allSessions.map((session) => {
+              const pilotLedger = assessPilotLedgerCompleteness(session);
+              return (
+                <article key={session.id}>
+                  <div><span>代号</span><b>{session.athleteCode ?? "—"}</b></div>
+                  <div><span>开始（本地）</span><b>{formatSessionStart(session.timing.wallClockStartedAt)}</b></div>
+                  <div><span>时长</span><b>{formatSessionDuration(session.durationMs)}</b></div>
+                  <div className={session.validity.valid ? "record-valid" : "record-invalid"}>
+                    <span>技术有效</span>
+                    <b>{session.validity.valid ? "有效" : session.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}</b>
+                  </div>
+                  <div className={pilotLedger.complete ? "record-valid" : "record-invalid"}>
+                    <span>试点台账完整</span>
+                    <b>{pilotLedger.complete ? "完整" : "不完整（需技术有效 + 非空备注）"}</b>
+                  </div>
+                  <div><span>导出状态</span><b>{session.exportedAt ? `已导出 ${session.exportCount} 次` : "未导出"}</b></div>
+                  <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.exportSession(session.id)}>
+                    {session.exportedAt ? "再次导出" : "导出 JSON"}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
