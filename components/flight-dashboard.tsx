@@ -51,6 +51,25 @@ import {
   trainingSessionProgress,
 } from "@/lib/training-session-summary";
 import {
+  activePilotChannel,
+  activeVideoSource,
+  activeVideoViewport,
+  addVideoSource,
+  createDefaultVideoWorkspace,
+  loadVideoWorkspace,
+  removeVideoSource,
+  saveVideoWorkspace,
+  selectPilotChannel,
+  selectVideoSource,
+  setVideoSourceDevice,
+  setVideoSourceLayout,
+  updatePilotChannel,
+  VIDEO_WORKSPACE_STORAGE_KEY,
+  videoViewportsForSource,
+  videoViewportTransform,
+  type VideoWorkspaceConfig,
+} from "@/lib/video-workspace";
+import {
   assessTrainingAttemptCandidate,
   normalizeAthleteCode,
   type TrainingSessionInvalidReason,
@@ -118,6 +137,8 @@ const DEFAULT_TRAINING_PREFERENCES_SNAPSHOT = JSON.stringify(DEFAULT_TRAINING_SE
 const RECORD_SHORTCUT_HOLD_MS = 700;
 const WORKSTATION_NOTICE_MS = 4_000;
 const WORKSTATION_SHORTCUTS_EVENT = "fpvhelper:workstation-shortcuts";
+const VIDEO_WORKSPACE_EVENT = "fpvhelper:video-workspace";
+const DEFAULT_VIDEO_WORKSPACE_SNAPSHOT = JSON.stringify(createDefaultVideoWorkspace());
 
 function subscribeToTrainingPreferences(onStoreChange: () => void) {
   const handleStorage = (event: StorageEvent) => {
@@ -156,6 +177,26 @@ function getWorkstationShortcutsSnapshot() {
     return loadWorkstationSingleKeyShortcuts(window.localStorage);
   } catch {
     return false;
+  }
+}
+
+function subscribeToVideoWorkspace(onStoreChange: () => void) {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === VIDEO_WORKSPACE_STORAGE_KEY) onStoreChange();
+  };
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(VIDEO_WORKSPACE_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(VIDEO_WORKSPACE_EVENT, onStoreChange);
+  };
+}
+
+function getVideoWorkspaceSnapshot() {
+  try {
+    return window.localStorage.getItem(VIDEO_WORKSPACE_STORAGE_KEY) ?? DEFAULT_VIDEO_WORKSPACE_SNAPSHOT;
+  } catch {
+    return DEFAULT_VIDEO_WORKSPACE_SNAPSHOT;
   }
 }
 
@@ -311,9 +352,19 @@ export function FlightDashboard() {
   );
   const { autoExport, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
   const [preferenceWriteError, setPreferenceWriteError] = useState<string | null>(null);
+  const videoWorkspaceSnapshot = useSyncExternalStore(
+    subscribeToVideoWorkspace,
+    getVideoWorkspaceSnapshot,
+    () => DEFAULT_VIDEO_WORKSPACE_SNAPSHOT,
+  );
+  const loadedVideoWorkspace = useMemo(() => loadVideoWorkspace({
+    getItem: () => videoWorkspaceSnapshot,
+    setItem: () => undefined,
+  }), [videoWorkspaceSnapshot]);
+  const videoWorkspace = loadedVideoWorkspace.workspace;
+  const [videoWorkspaceWriteError, setVideoWorkspaceWriteError] = useState<string | null>(null);
   const [coachMode, setCoachMode] = useState(false);
   const [selectedMarkerKind, setSelectedMarkerKind] = useState<Exclude<TrainingSessionMarkerKind, "manual">>("clean");
-  const [athleteCode, setAthleteCode] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [notesDraftSessionId, setNotesDraftSessionId] = useState<string | null>(null);
   const [notesSaving, setNotesSaving] = useState(false);
@@ -338,6 +389,11 @@ export function FlightDashboard() {
     connect: connectVideo,
     disconnect: disconnectVideo,
   } = useVideoCapture();
+  const activeSource = activeVideoSource(videoWorkspace);
+  const activeChannel = activePilotChannel(videoWorkspace);
+  const activeViewport = activeVideoViewport(videoWorkspace);
+  const sourceViewports = activeSource ? videoViewportsForSource(videoWorkspace, activeSource) : [];
+  const athleteCode = activeChannel?.athleteCode ?? "";
   const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
   const version = useVersionCheck();
   const trainingSession = useTrainingSession({ telemetry, source, connection, linkState, athleteCode, autoExport });
@@ -345,6 +401,16 @@ export function FlightDashboard() {
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
     ? notesDraft
     : trainingSession.lastSession?.notes ?? "";
+
+  const commitVideoWorkspace = useCallback((nextWorkspace: VideoWorkspaceConfig) => {
+    try {
+      const saveError = saveVideoWorkspace(window.localStorage, nextWorkspace);
+      setVideoWorkspaceWriteError(saveError);
+      if (!saveError) window.dispatchEvent(new Event(VIDEO_WORKSPACE_EVENT));
+    } catch (storageError) {
+      setVideoWorkspaceWriteError(storageError instanceof Error ? storageError.message : "无法保存视频工作区设置");
+    }
+  }, []);
 
   useEffect(() => {
     if (!workstationNotice) return;
@@ -414,8 +480,9 @@ export function FlightDashboard() {
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
-  const preferenceError = preferenceWriteError || loadedPreferences.error;
+  const preferenceError = preferenceWriteError || videoWorkspaceWriteError || loadedVideoWorkspace.error || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
+  const videoTopologyLocked = controlsLocked || videoState === "connecting" || videoState === "live";
   const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
   const tabStartBlockReason = workstationTabStartBlockReason(workstation.tabState);
   const tabAllowsStart = tabStartBlockReason === null;
@@ -428,6 +495,16 @@ export function FlightDashboard() {
         captureSettings.frameRate ? `${captureSettings.frameRate.toFixed(1)} FPS` : null,
       ].filter(Boolean).join(" · ")
     : "";
+  const activeViewportTransform = activeViewport ? videoViewportTransform(activeViewport) : null;
+  const videoCropStyle = activeSource?.layout === "quad" && activeViewportTransform
+    ? {
+        width: `${activeViewportTransform.widthPercent}%`,
+        height: `${activeViewportTransform.heightPercent}%`,
+        left: `${activeViewportTransform.leftPercent}%`,
+        top: `${activeViewportTransform.topPercent}%`,
+        objectFit: "fill" as const,
+      }
+    : undefined;
   const rcSourceLabel = source === "demo" ? "DEMO" : "GROUND_RC";
   const bridgeSourceLabel = source === "demo" ? "DEMO" : "GROUND_BRIDGE";
   const timecode = formatLocalTimecode(telemetry.timestamp);
@@ -824,14 +901,27 @@ export function FlightDashboard() {
           <div className="section-bar">
             <div>
               <span className={`live-dot ${videoState === "live" ? "is-live" : ""}`} />
-              <b>HDMI IN / MAIN FEED</b>
-              <small>{videoFormatLabel ? `${videoLabel} · ${videoFormatLabel}` : videoLabel}</small>
+              <b>HDMI IN / {activeSource?.label ?? "MAIN FEED"}</b>
+              <small>
+                {videoFormatLabel ? `${videoLabel} · ${videoFormatLabel}` : videoLabel}
+                {activeViewport ? ` · ${activeViewport.label}` : ""}
+              </small>
             </div>
             <div className="video-controls">
               <label>
                 <span className="sr-only">视频采集设备</span>
-                <select value={selectedDeviceId} onChange={(event) => setSelectedDeviceId(event.target.value)}>
-                  {videoDevices.length === 0 ? <option value="">自动选择采集卡</option> : null}
+                <select
+                  value={selectedDeviceId}
+                  disabled={videoTopologyLocked}
+                  onChange={(event) => {
+                    const deviceId = event.target.value;
+                    setSelectedDeviceId(deviceId);
+                    if (activeSource) {
+                      commitVideoWorkspace(setVideoSourceDevice(videoWorkspace, activeSource.id, deviceId));
+                    }
+                  }}
+                >
+                  <option value="">自动选择采集卡</option>
                   {videoDevices.map((device, index) => (
                     <option key={device.deviceId} value={device.deviceId}>
                       {device.label || `视频输入 ${index + 1}`}
@@ -909,8 +999,95 @@ export function FlightDashboard() {
             </div>
           </div>
 
+          <div className="video-workspace-bar" aria-label="本机视频工作区">
+            <label>
+              <span>输入档案</span>
+              <select
+                value={videoWorkspace.activeSourceId}
+                disabled={videoTopologyLocked}
+                onChange={(event) => {
+                  const nextWorkspace = selectVideoSource(videoWorkspace, event.target.value);
+                  commitVideoWorkspace(nextWorkspace);
+                  setSelectedDeviceId(activeVideoSource(nextWorkspace)?.deviceId ?? "");
+                }}
+              >
+                {videoWorkspace.sources.map((sourceConfig) => (
+                  <option key={sourceConfig.id} value={sourceConfig.id}>{sourceConfig.label}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="mini-button"
+              type="button"
+              disabled={videoTopologyLocked}
+              onClick={() => {
+                const nextWorkspace = addVideoSource(videoWorkspace);
+                commitVideoWorkspace(nextWorkspace);
+                setSelectedDeviceId("");
+              }}
+            >+ 独立输入</button>
+            <button
+              className="mini-button"
+              type="button"
+              disabled={videoTopologyLocked || videoWorkspace.sources.length <= 1 || !activeSource}
+              onClick={() => {
+                if (!activeSource) return;
+                const nextWorkspace = removeVideoSource(videoWorkspace, activeSource.id);
+                commitVideoWorkspace(nextWorkspace);
+                setSelectedDeviceId(activeVideoSource(nextWorkspace)?.deviceId ?? "");
+              }}
+            >移除输入</button>
+            <span className="video-workspace-divider" aria-hidden="true" />
+            <span className="video-workspace-label">画面布局</span>
+            <button
+              className={`mini-button ${activeSource?.layout === "full" ? "mini-button--active" : ""}`}
+              type="button"
+              aria-pressed={activeSource?.layout === "full"}
+              disabled={controlsLocked || !activeSource}
+              onClick={() => {
+                if (activeSource) commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, "full"));
+              }}
+            >完整画面</button>
+            <button
+              className={`mini-button ${activeSource?.layout === "quad" ? "mini-button--active" : ""}`}
+              type="button"
+              aria-pressed={activeSource?.layout === "quad"}
+              disabled={controlsLocked || !activeSource}
+              onClick={() => {
+                if (activeSource) commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, "quad"));
+              }}
+            >四分屏</button>
+            {activeSource?.layout === "quad" ? (
+              <div className="video-viewport-tabs" aria-label="四分屏选手画面">
+                {sourceViewports.map((viewport) => {
+                  const channel = videoWorkspace.pilotChannels.find(
+                    (candidate) => candidate.id === viewport.pilotChannelId,
+                  );
+                  const selected = viewport.pilotChannelId === videoWorkspace.activePilotChannelId;
+                  return (
+                    <button
+                      key={viewport.id}
+                      className={`mini-button ${selected ? "mini-button--active" : ""}`}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={controlsLocked}
+                      onClick={() => commitVideoWorkspace(selectPilotChannel(videoWorkspace, viewport.pilotChannelId))}
+                    >{channel?.athleteCode.trim() || viewport.label}</button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <small>配置仅保存在本机；当前版本一次连接一个活动输入</small>
+          </div>
+
           <div className={`video-stage ${videoState === "live" ? "has-video" : ""}`}>
-            <video ref={videoRef} muted playsInline />
+            <video
+              ref={videoRef}
+              className={activeSource?.layout === "quad" ? "video-feed--cropped" : undefined}
+              style={videoCropStyle}
+              muted
+              playsInline
+            />
             <div className="video-idle">
               <div className="flight-gate" aria-hidden="true"><span /><span /></div>
               <p>选择 HDMI 采集卡后打开画面</p>
@@ -1073,7 +1250,12 @@ export function FlightDashboard() {
               disabled={controlsLocked}
               placeholder="例如 PILOT-07"
               autoComplete="off"
-              onChange={(event) => setAthleteCode(event.target.value)}
+              onChange={(event) => {
+                if (!activeChannel) return;
+                commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, {
+                  athleteCode: event.target.value,
+                }));
+              }}
             />
           </label>
           <div>

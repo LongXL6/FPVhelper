@@ -44,6 +44,32 @@ test("onboarding closes even when its local preference cannot be saved", async (
   );
 });
 
+test("four-up workspace keeps each pilot channel and crop selection local", async ({ page }) => {
+  await page.goto("/");
+  const onboarding = page.getByRole("dialog", { name: "首次使用检查" });
+  if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
+
+  await page.getByRole("button", { name: "四分屏" }).click();
+  const secondPilot = page.getByRole("button", { name: "选手 2" });
+  await expect(secondPilot).toBeVisible();
+  await secondPilot.click();
+  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
+
+  const croppedVideo = page.locator("video.video-feed--cropped");
+  await expect(croppedVideo).toHaveCSS("width", /.+/);
+  await expect.poll(() => croppedVideo.evaluate((video) => ({
+    width: video.style.width,
+    height: video.style.height,
+    left: video.style.left,
+    top: video.style.top,
+  }))).toEqual({ width: "200%", height: "200%", left: "-100%", top: "0%" });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("textbox", { name: "选手代号" })).toHaveValue("PILOT-02");
+  await expect(page.locator("video.video-feed--cropped")).toBeAttached();
+});
+
 test("fake media and read-only MSP bridge persist a local training session", async ({ page }) => {
   const analyticsRequests: Array<{ method: string; url: string }> = [];
   await page.route("**/api/events", async (route) => {
