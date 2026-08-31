@@ -7,6 +7,8 @@ import {
   isWorkstationInteractiveTarget,
   loadWorkstationSingleKeyShortcuts,
   saveWorkstationSingleKeyShortcuts,
+  workstationRecordHoldAction,
+  workstationShortcutShouldPreventDefault,
   workstationTabStartBlockReason,
 } from "./workstation-runtime";
 
@@ -68,9 +70,12 @@ describe("workstation runtime", () => {
     expect(classifyWorkstationShortcut({ ...base, key: "M", code: "KeyM", singleKeyEnabled: true })).toBe("add_marker");
     expect(classifyWorkstationShortcut({ ...base, key: "e", code: "KeyE", modified: true, singleKeyEnabled: true })).toBeNull();
     expect(classifyWorkstationShortcut({ ...base, key: "f", code: "KeyF", interactive: true, singleKeyEnabled: true })).toBeNull();
+    expect(classifyWorkstationShortcut({ ...base, key: "Escape", code: "Escape", interactive: true })).toBe("cancel_connection");
+    expect(workstationShortcutShouldPreventDefault("cancel_connection")).toBe(false);
+    expect(workstationShortcutShouldPreventDefault("record_hold")).toBe(true);
   });
 
-  it("treats buttons, links, role buttons, form fields and editable content as interactive", () => {
+  it("treats buttons, links, role buttons, summary, form fields and editable content as interactive", () => {
     const seenSelectors: string[] = [];
     const target = {
       closest: (selector: string) => {
@@ -83,10 +88,28 @@ describe("workstation runtime", () => {
     expect(seenSelectors[0]).toContain("button");
     expect(seenSelectors[0]).toContain("a[href]");
     expect(seenSelectors[0]).toContain("[role=\"button\"]");
+    expect(seenSelectors[0]).toContain("summary");
     expect(seenSelectors[0]).toContain("input");
     expect(seenSelectors[0]).toContain("select");
     expect(seenSelectors[0]).toContain("textarea");
     expect(seenSelectors[0]).toContain("contenteditable");
+  });
+
+  it("allows a recording Space hold to stop while blocking start and finish transitions", () => {
+    const ready = {
+      isRecording: false,
+      isStarting: false,
+      isFinishing: false,
+      canStart: true,
+      tabAllowsStart: true,
+    };
+
+    expect(workstationRecordHoldAction({ ...ready, isRecording: true })).toBe("stop");
+    expect(workstationRecordHoldAction({ ...ready, isRecording: true, isFinishing: true })).toBe("blocked");
+    expect(workstationRecordHoldAction({ ...ready, isStarting: true })).toBe("blocked");
+    expect(workstationRecordHoldAction({ ...ready, canStart: false })).toBe("blocked");
+    expect(workstationRecordHoldAction({ ...ready, tabAllowsStart: false })).toBe("blocked");
+    expect(workstationRecordHoldAction(ready)).toBe("start");
   });
 
   it("persists the opt-in for single-character shortcuts and defaults to disabled", () => {

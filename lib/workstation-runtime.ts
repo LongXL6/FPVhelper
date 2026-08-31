@@ -26,6 +26,14 @@ interface ShortcutInput {
   singleKeyEnabled: boolean;
 }
 
+interface RecordHoldActionInput {
+  isRecording: boolean;
+  isStarting: boolean;
+  isFinishing: boolean;
+  canStart: boolean;
+  tabAllowsStart: boolean;
+}
+
 interface RecordHoldControllerOptions {
   delayMs: number;
   schedule: (callback: () => void, delayMs: number) => unknown;
@@ -57,6 +65,7 @@ export const WORKSTATION_INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
   "[role=\"button\"]",
+  "summary",
   "input",
   "select",
   "textarea",
@@ -96,15 +105,27 @@ export function createWorkstationTabLease(
 }
 
 export function classifyWorkstationShortcut(input: ShortcutInput): WorkstationShortcut | null {
-  if (input.repeat || input.modified || input.interactive) return null;
+  if (input.repeat || input.modified) return null;
   const key = input.key.toLowerCase();
   if (key === "escape") return "cancel_connection";
+  if (input.interactive) return null;
   if (input.code === "Space" || input.key === " ") return "record_hold";
   if (!input.singleKeyEnabled) return null;
   if (key === "f") return "toggle_fullscreen";
   if (key === "m") return "add_marker";
   if (key === "e") return "export_latest";
   return null;
+}
+
+export function workstationRecordHoldAction(input: RecordHoldActionInput): "start" | "stop" | "blocked" {
+  if (input.isStarting || input.isFinishing) return "blocked";
+  if (input.isRecording) return "stop";
+  if (input.canStart && input.tabAllowsStart) return "start";
+  return "blocked";
+}
+
+export function workstationShortcutShouldPreventDefault(shortcut: WorkstationShortcut) {
+  return shortcut !== "cancel_connection";
 }
 
 export function isWorkstationInteractiveTarget(target: EventTarget | null) {

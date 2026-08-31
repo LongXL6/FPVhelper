@@ -11,6 +11,7 @@ import {
 } from "@/components/training-storage-integrity-notice";
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
+import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
@@ -43,6 +44,8 @@ import {
   loadWorkstationSingleKeyShortcuts,
   saveWorkstationSingleKeyShortcuts,
   WORKSTATION_SINGLE_KEY_SHORTCUTS_KEY,
+  workstationRecordHoldAction,
+  workstationShortcutShouldPreventDefault,
   workstationTabStartBlockReason,
 } from "@/lib/workstation-runtime";
 
@@ -488,11 +491,17 @@ export function FlightDashboard() {
     if (shortcut === "toggle_fullscreen") {
       void toggleCoachMode();
     } else if (shortcut === "record_hold") {
-      if (controlsLocked) return;
-      if (trainingSession.isRecording) {
+      const action = workstationRecordHoldAction({
+        isRecording: trainingSession.isRecording,
+        isStarting: trainingSession.isStarting,
+        isFinishing: trainingSession.isFinishing,
+        canStart: trainingSession.canStart,
+        tabAllowsStart,
+      });
+      if (action === "stop") {
         setWorkstationNotice("空格长按：正在结束并保存记录");
         void trainingSession.stopRecording();
-      } else if (trainingSession.canStart && tabAllowsStart) {
+      } else if (action === "start") {
         setWorkstationNotice("空格长按：正在开始记录");
         void trainingSession.startRecording();
       } else {
@@ -543,25 +552,21 @@ export function FlightDashboard() {
         singleKeyEnabled: singleKeyShortcutsEnabled,
       });
       if (!shortcut) return;
+      if (workstationShortcutShouldPreventDefault(shortcut)) event.preventDefault();
 
       if (shortcut === "record_hold") {
-        event.preventDefault();
         if (recordHold.press()) setWorkstationNotice("继续按住空格 0.7 秒以开始或结束记录");
         return;
       }
 
       if (shortcut === "toggle_fullscreen") {
-        event.preventDefault();
         executeWorkstationShortcut(shortcut);
       } else if (shortcut === "add_marker") {
-        event.preventDefault();
         executeWorkstationShortcut(shortcut);
       } else if (shortcut === "export_latest") {
-        event.preventDefault();
         executeWorkstationShortcut(shortcut);
       } else if (shortcut === "cancel_connection") {
         if (document.fullscreenElement) return;
-        event.preventDefault();
         executeWorkstationShortcut(shortcut);
       }
     };
@@ -655,20 +660,10 @@ export function FlightDashboard() {
         </div>
       </header>
 
-      <aside className="workstation-shortcuts" aria-label="本机键盘快捷操作设置">
-        <div>
-          <b>本机单键快捷操作</b>
-          <span>F 全屏 / M 标记 / E 导出默认关闭；Space 长按与 Esc 安全操作始终可用。</span>
-        </div>
-        <label>
-          <input
-            type="checkbox"
-            checked={singleKeyShortcutsEnabled}
-            onChange={(event) => updateSingleKeyShortcuts(event.target.checked)}
-          />
-          <span>{singleKeyShortcutsEnabled ? "已开启" : "已关闭"}</span>
-        </label>
-      </aside>
+      <WorkstationShortcutToggle
+        enabled={singleKeyShortcutsEnabled}
+        onChange={updateSingleKeyShortcuts}
+      />
 
       {tabStartBlockReason ? (
         <aside className="workstation-banner workstation-banner--blocked" role="alert">
