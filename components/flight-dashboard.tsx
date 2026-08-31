@@ -17,6 +17,7 @@ import {
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
+import { TrainingWeeklyReport } from "@/components/training-weekly-report";
 import { useBetaflightTelemetry } from "@/hooks/use-betaflight-telemetry";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useTrainingSession } from "@/hooks/use-training-session";
@@ -1152,6 +1153,8 @@ export function FlightDashboard() {
       ) : null}
 
       <TrainingSessionFileValidator />
+
+      <TrainingWeeklyReport localSessions={trainingSession.allSessions} />
 
       <section className="today-records-card">
         <div className="session-heading">

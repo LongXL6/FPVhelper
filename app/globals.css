@@ -645,7 +645,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .marker-button:disabled { border-color: var(--line); background: #11171c; color: var(--quiet); cursor: not-allowed; }
 .marker-panel p { align-self: center; max-width: 220px; margin: 0; color: var(--quiet); font: 600 8px/1.5 var(--mono); }
 
-.session-summary-card, .session-file-validator, .today-records-card { margin-top: 16px; padding: 15px 16px; border: 1px solid var(--line); background: var(--panel); }
+.session-summary-card, .session-file-validator, .training-weekly-report, .today-records-card { margin-top: 16px; padding: 15px 16px; border: 1px solid var(--line); background: var(--panel); }
 .session-summary-card .session-heading > span, .today-records-card .session-heading > span { color: var(--muted); font: 700 9px/1.4 var(--mono); }
 .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 13px; }
 .summary-notes, .dvr-checklist { display: grid; gap: 8px; min-width: 0; }
@@ -667,6 +667,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .session-file-result .record-valid b { color: var(--signal); }
 .session-file-result .record-invalid b, .session-file-error { color: #f6bd48; }
 .session-file-error { grid-column: 1 / -1; }
+
+.training-weekly-report { display: grid; gap: 13px; }
+.training-weekly-report__heading { display: grid; grid-template-columns: minmax(0, 1fr) 170px auto; align-items: end; gap: 12px; }
+.training-weekly-report__heading > div > span { color: var(--muted); font: 700 9px/1 var(--mono); letter-spacing: 0.12em; }
+.training-weekly-report__heading h2 { margin: 4px 0 0; font: 700 17px/1 var(--display); }
+.training-weekly-report__heading p { margin: 7px 0 0; color: var(--quiet); font: 600 9px/1.5 var(--mono); }
+.training-weekly-report__heading > label { display: grid; gap: 7px; color: var(--muted); font: 700 8px/1 var(--mono); }
+.training-weekly-report__heading input[type="date"] { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); background: var(--carbon); color: var(--white); color-scheme: dark; }
+.training-weekly-report__heading .mini-button { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 36px; cursor: pointer; }
+.training-weekly-report__heading .mini-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.training-weekly-report__metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
+.training-weekly-report__metrics span { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line-soft); color: var(--quiet); font: 600 8px/1 var(--mono); }
+.training-weekly-report__metrics b { color: var(--white); font: 800 15px/1 var(--display); }
+.training-weekly-report__output { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px 12px; }
+.training-weekly-report__output > div { display: grid; gap: 5px; }
+.training-weekly-report__output b, .training-weekly-report__output small { color: var(--muted); font: 600 9px/1.4 var(--mono); }
+.training-weekly-report__output p { margin: 0; color: #f6bd48; font: 600 9px/1.4 var(--mono); }
+.training-weekly-report__output textarea { grid-column: 1 / -1; width: 100%; min-height: 260px; resize: vertical; padding: 10px; border: 1px solid var(--line-soft); background: #080e13; color: var(--white); font: 600 10px/1.55 var(--mono); }
 
 .empty-records { margin: 13px 0 0; padding: 16px; border: 1px dashed var(--line); color: var(--quiet); font: 600 9px/1.4 var(--mono); }
 .today-records-list { display: grid; gap: 8px; margin-top: 13px; }
@@ -717,7 +735,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-shell--coach .workspace-grid { grid-template-columns: 1fr; height: calc(100vh - 92px); padding-top: 14px; }
 .dashboard-shell--coach .video-console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .dashboard-shell--coach .video-stage { min-height: 0; height: 100%; }
-.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
+.dashboard-shell--coach .video-controls, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .training-weekly-report, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
 .dashboard-shell--coach .workstation-shortcuts { display: none; }
 .dashboard-shell--coach .section-bar { min-height: 44px; }
 .dashboard-shell--coach .section-bar small { font-size: 12px; }
@@ -757,6 +775,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .marker-panel p { grid-column: 1 / -1; max-width: none; }
   .today-records-list article { grid-template-columns: repeat(3, 1fr); }
   .analytics-card { grid-template-columns: 1fr; align-items: stretch; }
+  .training-weekly-report__heading { grid-template-columns: 1fr 180px; }
+  .training-weekly-report__heading .mini-button { grid-column: 1 / -1; }
+  .training-weekly-report__metrics { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 720px) {
@@ -804,6 +825,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .session-file-validator { grid-template-columns: 1fr; }
   .session-file-validator > label { width: 100%; }
   .session-file-result { grid-template-columns: 1fr 1fr; }
+  .training-weekly-report__heading, .training-weekly-report__output { grid-template-columns: 1fr; }
+  .training-weekly-report__heading .mini-button, .training-weekly-report__output textarea { grid-column: auto; }
+  .training-weekly-report__metrics { grid-template-columns: 1fr 1fr; }
   .today-records-list article { grid-template-columns: 1fr 1fr; }
   .today-records-list article .record-valid, .today-records-list article .record-invalid, .today-records-list article button { grid-column: 1 / -1; }
   .analytics-install-form > div { grid-template-columns: 1fr; }
