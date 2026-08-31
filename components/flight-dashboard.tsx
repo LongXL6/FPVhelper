@@ -5,6 +5,8 @@ import {
   DraggableStickOverlay,
   storeStickOverlayLayout,
 } from "@/components/draggable-stick-overlay";
+import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
@@ -638,6 +640,7 @@ export function FlightDashboard() {
         </div>
 
         <div className="top-actions">
+          <OnboardingChecklist />
           <button
             className={`button button--quiet button--coach ${coachMode ? "button--coach-active" : ""}`}
             type="button"
@@ -830,6 +833,8 @@ export function FlightDashboard() {
               <p>选择 HDMI 采集卡后打开画面</p>
               <small>浏览器读取 UVC 视频设备 · 不录制 · 不上传</small>
             </div>
+
+            <DemoTelemetryWatermark source={source} />
 
             <div className="hud hud-top-left">
               <span>{source === "demo" ? "SIM" : "MSP"}</span>
