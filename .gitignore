@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 coverage/
+output/playwright/
 .DS_Store
 *.log
 *.tsbuildinfo
