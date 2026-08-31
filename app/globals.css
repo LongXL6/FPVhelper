@@ -359,6 +359,81 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   white-space: nowrap;
 }
 
+.pilot-video-binding {
+  min-height: 58px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(90deg, rgba(50, 182, 233, 0.07), transparent 32%), #070b0f;
+}
+.pilot-video-binding__identity {
+  display: grid;
+  min-width: 118px;
+  gap: 3px;
+}
+.pilot-video-binding__identity span {
+  color: var(--signal);
+  font: 700 7px/1 var(--mono);
+  letter-spacing: 0.12em;
+}
+.pilot-video-binding__identity b {
+  overflow: hidden;
+  max-width: 160px;
+  color: var(--white);
+  font: 700 10px/1.1 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pilot-video-binding__identity small {
+  color: var(--quiet);
+  font: 500 7px/1.2 var(--mono);
+}
+.pilot-video-binding__modes { display: flex; gap: 5px; }
+.pilot-video-binding__crop {
+  min-width: 0;
+  padding: 0;
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(2, minmax(112px, 1fr)) auto;
+  grid-template-rows: repeat(2, minmax(22px, auto));
+  align-items: center;
+  gap: 7px;
+  border: 0;
+}
+.pilot-video-binding__crop .mini-button {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  white-space: nowrap;
+}
+.pilot-video-binding__crop label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 12px minmax(44px, 1fr) 28px;
+  align-items: center;
+  gap: 4px;
+}
+.pilot-video-binding__crop label > span, .pilot-video-binding__crop output {
+  color: var(--quiet);
+  font: 700 7px/1 var(--mono);
+}
+.pilot-video-binding__crop output { color: var(--muted); text-align: right; }
+.pilot-video-binding__crop input[type="range"] {
+  width: 100%;
+  min-width: 44px;
+  height: 30px;
+  margin: 0;
+  accent-color: var(--signal);
+  cursor: ew-resize;
+}
+.pilot-video-binding__crop:disabled input[type="range"] { cursor: default; }
+.pilot-video-binding__hint {
+  flex: 1;
+  color: var(--quiet);
+  font: 500 8px/1.35 var(--mono);
+}
+
 .video-stage {
   position: relative;
   min-height: clamp(430px, 58vh, 720px);
@@ -416,8 +491,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   opacity: 0;
   background: #000;
 }
-.video-viewport video.video-feed--cropped { inset: auto; max-width: none; max-height: none; }
+.video-viewport video.video-feed-source {
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.video-viewport canvas.video-feed--cropped {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  background: #000;
+}
 .video-viewport.is-live video { opacity: 1; }
+.video-viewport.is-live video.video-feed-source { opacity: 0; }
+.video-viewport.is-live canvas.video-feed--cropped { opacity: 1; }
 .video-viewport.is-live .video-idle { display: none; }
 .video-stage.has-video::before { display: none; }
 .video-viewport-select {
@@ -990,7 +1082,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-shell--coach .workspace-grid { grid-template-columns: 1fr; height: calc(100vh - 92px); padding-top: 14px; }
 .dashboard-shell--coach .video-console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .dashboard-shell--coach .video-stage { min-height: 0; height: 100%; }
-.dashboard-shell--coach .video-controls, .dashboard-shell--coach .video-workspace-bar, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .training-weekly-report, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .diagnostics-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
+.dashboard-shell--coach .video-controls, .dashboard-shell--coach .video-workspace-bar, .dashboard-shell--coach .pilot-video-binding, .dashboard-shell--coach .telemetry-rail, .dashboard-shell--coach .timeline-card, .dashboard-shell--coach .session-card, .dashboard-shell--coach .session-summary-card, .dashboard-shell--coach .session-file-validator, .dashboard-shell--coach .training-weekly-report, .dashboard-shell--coach .today-records-card, .dashboard-shell--coach .diagnostics-card, .dashboard-shell--coach .analytics-card, .dashboard-shell--coach .dashboard-footer { display: none; }
 .dashboard-shell--coach .workstation-shortcuts { display: none; }
 .dashboard-shell--coach .section-bar { min-height: 44px; }
 .dashboard-shell--coach .section-bar small { font-size: 12px; }
@@ -1065,6 +1157,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .video-workspace-bar > small { width: 100%; margin-left: 0; white-space: normal; }
   .video-workspace-divider { display: none; }
   .video-viewport-tabs { width: 100%; }
+  .pilot-video-binding { align-items: flex-start; flex-wrap: wrap; }
+  .pilot-video-binding__identity { min-width: 104px; }
+  .pilot-video-binding__crop { flex-basis: 100%; grid-template-columns: 1fr 1fr; }
+  .pilot-video-binding__crop .mini-button { grid-column: 1 / -1; grid-row: auto; justify-self: start; }
+  .pilot-video-binding__crop input[type="range"], .pilot-video-binding__modes .mini-button { min-height: 44px; }
+  .pilot-video-binding__hint { flex-basis: 100%; margin-left: 0; }
   .video-stage { min-height: 50vh; }
   .video-footer { grid-template-columns: 1fr auto; }
   .video-footer > span:nth-child(2) { display: none; }

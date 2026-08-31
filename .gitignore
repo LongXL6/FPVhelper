@@ -3,6 +3,7 @@ node_modules/
 out/
 coverage/
 output/playwright/
+.playwright-cli/
 .DS_Store
 *.log
 *.tsbuildinfo

@@ -49,33 +49,129 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   const onboarding = page.getByRole("dialog", { name: "首次使用检查" });
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
 
-  await page.getByRole("button", { name: "四分屏" }).click();
+  await page.getByRole("button", { name: "输入布局：四分屏" }).click();
+  const firstPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 1" });
   const secondPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 2" });
   await expect(secondPilot).toBeVisible();
+  await firstPilot.click();
+  await page.getByRole("region", { name: "选手 1 画面绑定" })
+    .getByRole("button", { name: "选手取景：完整画面" })
+    .click();
   await secondPilot.click();
   await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
+  const secondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
+  await secondBinding.getByRole("slider", { name: "裁切画面宽度" }).fill("40");
+  await secondBinding.getByRole("slider", { name: "裁切画面高度" }).fill("40");
+  await secondBinding.getByRole("slider", { name: "裁切左边界" }).fill("55");
+  await secondBinding.getByRole("slider", { name: "裁切上边界" }).fill("5");
 
-  const croppedVideos = page.locator("video.video-feed--cropped");
-  await expect(croppedVideos).toHaveCount(4);
-  await expect.poll(() => croppedVideos.nth(1).evaluate((video) => ({
-    width: video.style.width,
-    height: video.style.height,
-    left: video.style.left,
-    top: video.style.top,
-  }))).toEqual({ width: "200%", height: "200%", left: "-100%", top: "0%" });
+  const cropCanvases = page.locator("canvas.video-feed--cropped");
+  const allSourceVideos = page.locator(".video-viewport video");
+  await expect(cropCanvases).toHaveCount(3);
+  await expect(page.locator('[data-pilot-channel-id="video-source-1-pilot-1"] canvas')).toHaveCount(0);
+  await expect(page.locator('[data-pilot-channel-id="video-source-1-pilot-2"] canvas')).toHaveCount(1);
+  await expect(allSourceVideos).toHaveCount(4);
 
   await page.getByRole("button", { name: "打开画面" }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
-  await expect.poll(() => croppedVideos.evaluateAll((videos) => {
+  await expect.poll(() => allSourceVideos.evaluateAll((videos) => {
     const streams = videos.map((video) => (video as HTMLVideoElement).srcObject);
     return streams.length === 4
       && streams.every((stream) => stream instanceof MediaStream && stream === streams[0]);
   })).toBe(true);
+  await expect.poll(async () => {
+    const secondViewport = page.locator('[data-pilot-channel-id="video-source-1-pilot-2"]');
+    const sourceSize = await secondViewport.locator("video").evaluate((element) => {
+      const video = element as HTMLVideoElement;
+      return { width: video.videoWidth, height: video.videoHeight };
+    });
+    const canvasSize = await secondViewport.locator("canvas").evaluate((element) => {
+      const canvas = element as HTMLCanvasElement;
+      return { width: canvas.width, height: canvas.height };
+    });
+    return {
+      sourceReady: sourceSize.width > 0 && sourceSize.height > 0,
+      exactCropWidth: canvasSize.width === Math.round(sourceSize.width * 0.4),
+      exactCropHeight: canvasSize.height === Math.round(sourceSize.height * 0.4),
+    };
+  }).toEqual({ sourceReady: true, exactCropWidth: true, exactCropHeight: true });
 
   await page.reload();
   await expect(page.locator(".video-viewport-tabs").getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("textbox", { name: "选手代号" })).toHaveValue("PILOT-02");
-  await expect(page.locator("video.video-feed--cropped")).toHaveCount(4);
+  const restoredSecondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
+  await expect(restoredSecondBinding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("55");
+  await expect(restoredSecondBinding.getByRole("slider", { name: "裁切上边界" })).toHaveValue("5");
+  await expect(restoredSecondBinding.getByRole("slider", { name: "裁切画面宽度" })).toHaveValue("40");
+  await expect(restoredSecondBinding.getByRole("slider", { name: "裁切画面高度" })).toHaveValue("40");
+  await page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 1" }).click();
+  await expect(page.getByRole("region", { name: "选手 1 画面绑定" })
+    .getByRole("button", { name: "选手取景：完整画面" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("pilot video binding switches between full input and a persisted custom crop", async ({ page }) => {
+  await page.goto("/");
+  const onboarding = page.getByRole("dialog", { name: "首次使用检查" });
+  if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
+
+  const binding = page.getByRole("region", { name: "选手 1 画面绑定" });
+  await expect(binding.getByRole("button", { name: "选手取景：完整画面" })).toHaveAttribute("aria-pressed", "true");
+  await binding.getByRole("button", { name: "选手取景：裁切区域" }).click();
+
+  await binding.getByRole("slider", { name: "裁切画面宽度" }).fill("70");
+  await binding.getByRole("slider", { name: "裁切画面高度" }).fill("60");
+  await binding.getByRole("slider", { name: "裁切左边界" }).fill("10");
+  await binding.getByRole("slider", { name: "裁切上边界" }).fill("15");
+
+  await page.getByRole("button", { name: "打开画面" }).click();
+  await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
+
+  const croppedCanvas = page.locator("canvas.video-feed--cropped");
+  const cropSourceVideo = page.locator("video.video-feed-source");
+  await expect(croppedCanvas).toHaveCount(1);
+  await expect(cropSourceVideo).toHaveCount(1);
+  await expect.poll(async () => {
+    const video = await cropSourceVideo.evaluate((element) => {
+      const source = element as HTMLVideoElement;
+      return {
+        width: source.videoWidth,
+        height: source.videoHeight,
+        hasStream: source.srcObject instanceof MediaStream,
+      };
+    });
+    const canvas = await croppedCanvas.evaluate((element) => {
+      const output = element as HTMLCanvasElement;
+      return {
+        width: output.width,
+        height: output.height,
+        objectFit: getComputedStyle(output).objectFit,
+      };
+    });
+    return {
+      sourceReady: video.width > 0 && video.height > 0,
+      exactCropWidth: canvas.width === Math.round(video.width * 0.7),
+      exactCropHeight: canvas.height === Math.round(video.height * 0.6),
+      objectFit: canvas.objectFit,
+      hasStream: video.hasStream,
+    };
+  }).toEqual({
+    sourceReady: true,
+    exactCropWidth: true,
+    exactCropHeight: true,
+    objectFit: "contain",
+    hasStream: true,
+  });
+
+  await page.reload();
+  const restoredBinding = page.getByRole("region", { name: "选手 1 画面绑定" });
+  await expect(restoredBinding.getByRole("button", { name: "选手取景：裁切区域" })).toHaveAttribute("aria-pressed", "true");
+  await expect(restoredBinding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("10");
+  await expect(restoredBinding.getByRole("slider", { name: "裁切上边界" })).toHaveValue("15");
+  await expect(restoredBinding.getByRole("slider", { name: "裁切画面宽度" })).toHaveValue("70");
+  await expect(restoredBinding.getByRole("slider", { name: "裁切画面高度" })).toHaveValue("60");
+
+  await restoredBinding.getByRole("button", { name: "选手取景：完整画面" }).click();
+  await expect(page.locator("canvas.video-feed--cropped")).toHaveCount(0);
 });
 
 test("independent video inputs open together and keep one active telemetry viewport", async ({ page }) => {

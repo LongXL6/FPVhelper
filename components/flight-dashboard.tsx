@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DraggableStickOverlay,
   useStickOverlayPairLayout,
 } from "@/components/draggable-stick-overlay";
 import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
 import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
@@ -68,15 +69,20 @@ import {
   createDefaultVideoWorkspace,
   loadVideoWorkspace,
   removeVideoSource,
+  resetPilotChannelCrop,
   saveVideoWorkspace,
   selectPilotChannel,
   selectVideoSource,
+  setPilotChannelCrop,
+  setPilotChannelViewMode,
   setVideoSourceDevice,
   setVideoSourceLayout,
   updatePilotChannel,
+  LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
   VIDEO_WORKSPACE_STORAGE_KEY,
+  videoCropPixelRect,
   videoViewportsForSource,
-  videoViewportTransform,
+  type VideoCropRect,
   type VideoWorkspaceConfig,
 } from "@/lib/video-workspace";
 import {
@@ -206,26 +212,93 @@ function PilotViewportTelemetry({
 function WorkspaceVideoElement({
   sourceId,
   cropped,
-  style,
+  crop,
   registerVideoElement,
 }: {
   sourceId: string;
   cropped: boolean;
-  style: CSSProperties | undefined;
+  crop: VideoCropRect;
   registerVideoElement: VideoWorkspaceElementRegistrar;
 }) {
-  const videoRef = useCallback((element: HTMLVideoElement | null) => (
-    registerVideoElement(sourceId, element)
-  ), [registerVideoElement, sourceId]);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const { xPercent, yPercent, widthPercent, heightPercent } = crop;
+  const videoRef = useCallback((element: HTMLVideoElement | null) => {
+    videoElementRef.current = element;
+    const unregister = registerVideoElement(sourceId, element);
+    return () => {
+      if (videoElementRef.current === element) videoElementRef.current = null;
+      unregister?.();
+    };
+  }, [registerVideoElement, sourceId]);
+
+  useEffect(() => {
+    if (!cropped) return;
+    const video = videoElementRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d", { alpha: false });
+    if (!video || !canvas || !context) return;
+
+    let stopped = false;
+    let animationFrame: number | null = null;
+    let videoFrame: number | null = null;
+    const scheduleNextFrame = () => {
+      if (stopped) return;
+      if (typeof video.requestVideoFrameCallback === "function") {
+        videoFrame = video.requestVideoFrameCallback(drawFrame);
+      } else {
+        animationFrame = window.requestAnimationFrame(drawFrame);
+      }
+    };
+    const drawFrame = () => {
+      if (stopped) return;
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
+        const sourceRect = videoCropPixelRect(
+          { xPercent, yPercent, widthPercent, heightPercent },
+          video.videoWidth,
+          video.videoHeight,
+        );
+        if (canvas.width !== sourceRect.width) canvas.width = sourceRect.width;
+        if (canvas.height !== sourceRect.height) canvas.height = sourceRect.height;
+        try {
+          context.drawImage(
+            video,
+            sourceRect.x,
+            sourceRect.y,
+            sourceRect.width,
+            sourceRect.height,
+            0,
+            0,
+            sourceRect.width,
+            sourceRect.height,
+          );
+        } catch {
+          // The next decoded video frame retries transient source changes.
+        }
+      }
+      scheduleNextFrame();
+    };
+    scheduleNextFrame();
+
+    return () => {
+      stopped = true;
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      if (videoFrame !== null && typeof video.cancelVideoFrameCallback === "function") {
+        video.cancelVideoFrameCallback(videoFrame);
+      }
+    };
+  }, [cropped, heightPercent, widthPercent, xPercent, yPercent]);
 
   return (
-    <video
-      ref={videoRef}
-      className={cropped ? "video-feed--cropped" : undefined}
-      style={style}
-      muted
-      playsInline
-    />
+    <>
+      <video
+        ref={videoRef}
+        className={cropped ? "video-feed-source" : undefined}
+        muted
+        playsInline
+      />
+      {cropped ? <canvas ref={canvasRef} className="video-feed--cropped" aria-hidden="true" /> : null}
+    </>
   );
 }
 
@@ -337,7 +410,7 @@ function getWorkstationShortcutsSnapshot() {
 
 function subscribeToVideoWorkspace(onStoreChange: () => void) {
   const handleStorage = (event: StorageEvent) => {
-    if (event.key === VIDEO_WORKSPACE_STORAGE_KEY) onStoreChange();
+    if (event.key === VIDEO_WORKSPACE_STORAGE_KEY || event.key === LEGACY_VIDEO_WORKSPACE_STORAGE_KEY) onStoreChange();
   };
   window.addEventListener("storage", handleStorage);
   window.addEventListener(VIDEO_WORKSPACE_EVENT, onStoreChange);
@@ -349,7 +422,9 @@ function subscribeToVideoWorkspace(onStoreChange: () => void) {
 
 function getVideoWorkspaceSnapshot() {
   try {
-    return window.localStorage.getItem(VIDEO_WORKSPACE_STORAGE_KEY) ?? DEFAULT_VIDEO_WORKSPACE_SNAPSHOT;
+    return window.localStorage.getItem(VIDEO_WORKSPACE_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_VIDEO_WORKSPACE_STORAGE_KEY)
+      ?? DEFAULT_VIDEO_WORKSPACE_SNAPSHOT;
   } catch {
     return DEFAULT_VIDEO_WORKSPACE_SNAPSHOT;
   }
@@ -1230,6 +1305,7 @@ export function FlightDashboard() {
             <button
               className={`mini-button ${activeSource?.layout === "full" ? "mini-button--active" : ""}`}
               type="button"
+              aria-label="输入布局：完整画面"
               aria-pressed={activeSource?.layout === "full"}
               disabled={controlsLocked || !activeSource}
               onClick={() => {
@@ -1239,6 +1315,7 @@ export function FlightDashboard() {
             <button
               className={`mini-button ${activeSource?.layout === "quad" ? "mini-button--active" : ""}`}
               type="button"
+              aria-label="输入布局：四分屏"
               aria-pressed={activeSource?.layout === "quad"}
               disabled={controlsLocked || !activeSource}
               onClick={() => {
@@ -1268,22 +1345,33 @@ export function FlightDashboard() {
             <small>配置仅保存在本机 · 已连接 {liveVideoSourceCount}/{videoWorkspace.sources.length} 路</small>
           </div>
 
+          {activeSource && activeChannel ? (
+            <PilotVideoBindingControls
+              source={activeSource}
+              channel={activeChannel}
+              disabled={controlsLocked}
+              onViewModeChange={(viewMode) => {
+                commitVideoWorkspace(setPilotChannelViewMode(videoWorkspace, activeChannel.id, viewMode));
+              }}
+              onCropChange={(crop) => {
+                commitVideoWorkspace(setPilotChannelCrop(videoWorkspace, activeChannel.id, crop));
+              }}
+              onResetCrop={() => {
+                commitVideoWorkspace(resetPilotChannelCrop(videoWorkspace, activeChannel.id));
+              }}
+            />
+          ) : null}
+
           <div className={`video-stage ${anyVideoLive ? "has-video" : ""} ${workspaceTiles.length > 1 ? "video-stage--multi" : ""}`}>
             <div className="video-feed-grid" data-viewport-count={workspaceTiles.length}>
               {workspaceTiles.map(({ sourceConfig, viewport, channel }) => {
                 const runtime = videoSourceRuntime(videoCapture.runtimes, sourceConfig.id);
-                const viewportTransform = videoViewportTransform(viewport);
                 const isActive = viewport.pilotChannelId === videoWorkspace.activePilotChannelId;
                 const tileLabel = channel?.athleteCode.trim() || `${sourceConfig.label} · ${viewport.label}`;
-                const cropStyle = sourceConfig.layout === "quad"
-                  ? {
-                      width: `${viewportTransform.widthPercent}%`,
-                      height: `${viewportTransform.heightPercent}%`,
-                      left: `${viewportTransform.leftPercent}%`,
-                      top: `${viewportTransform.topPercent}%`,
-                      objectFit: "fill" as const,
-                    }
-                  : undefined;
+                const isCropped = viewport.crop.xPercent !== 0
+                  || viewport.crop.yPercent !== 0
+                  || viewport.crop.widthPercent !== 100
+                  || viewport.crop.heightPercent !== 100;
                 return (
                   <div
                     key={viewport.id}
@@ -1293,8 +1381,8 @@ export function FlightDashboard() {
                   >
                     <WorkspaceVideoElement
                       sourceId={sourceConfig.id}
-                      cropped={sourceConfig.layout === "quad"}
-                      style={cropStyle}
+                      cropped={isCropped}
+                      crop={viewport.crop}
                       registerVideoElement={videoCapture.registerVideoElement}
                     />
                     <div className="video-idle">

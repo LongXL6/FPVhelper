@@ -1,7 +1,16 @@
-export const VIDEO_WORKSPACE_SCHEMA_VERSION = 1;
-export const VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v1";
+export const VIDEO_WORKSPACE_SCHEMA_VERSION = 2;
+export const VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v2";
+export const LEGACY_VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v1";
 
 export type VideoSourceLayout = "full" | "quad";
+export type PilotVideoViewMode = "source-default" | "full" | "crop";
+
+export interface VideoCropRect {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+}
 
 export interface VideoSourceConfig {
   id: string;
@@ -17,6 +26,8 @@ export interface PilotChannelConfig {
   athleteCode: string;
   gateProfileId: string | null;
   videoProfileId: string | null;
+  viewMode: PilotVideoViewMode;
+  crop: VideoCropRect;
 }
 
 export interface VideoViewport {
@@ -24,12 +35,7 @@ export interface VideoViewport {
   sourceId: string;
   pilotChannelId: string;
   label: string;
-  crop: {
-    xPercent: number;
-    yPercent: number;
-    widthPercent: number;
-    heightPercent: number;
-  };
+  crop: VideoCropRect;
 }
 
 export interface VideoWorkspaceConfig {
@@ -45,12 +51,21 @@ interface VideoWorkspaceStorage {
   setItem(key: string, value: string): void;
 }
 
-const QUAD_CROPS = [
+const FULL_CROP: VideoCropRect = {
+  xPercent: 0,
+  yPercent: 0,
+  widthPercent: 100,
+  heightPercent: 100,
+};
+
+const QUAD_CROPS: readonly VideoCropRect[] = [
   { xPercent: 0, yPercent: 0, widthPercent: 50, heightPercent: 50 },
   { xPercent: 50, yPercent: 0, widthPercent: 50, heightPercent: 50 },
   { xPercent: 0, yPercent: 50, widthPercent: 50, heightPercent: 50 },
   { xPercent: 50, yPercent: 50, widthPercent: 50, heightPercent: 50 },
-] as const;
+];
+
+const MIN_CROP_PERCENT = 10;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -64,7 +79,12 @@ function pilotChannelId(source: string, slot: number) {
   return `${source}-pilot-${slot + 1}`;
 }
 
-function createPilotChannels(source: string): PilotChannelConfig[] {
+function defaultCropForSlot(layout: VideoSourceLayout, slot: 0 | 1 | 2 | 3) {
+  if (layout === "full" && slot === 0) return { ...FULL_CROP };
+  return { ...QUAD_CROPS[slot] };
+}
+
+function createPilotChannels(source: string, layout: VideoSourceLayout = "full"): PilotChannelConfig[] {
   return ([0, 1, 2, 3] as const).map((slot) => ({
     id: pilotChannelId(source, slot),
     sourceId: source,
@@ -72,12 +92,45 @@ function createPilotChannels(source: string): PilotChannelConfig[] {
     athleteCode: "",
     gateProfileId: null,
     videoProfileId: null,
+    viewMode: "source-default",
+    crop: defaultCropForSlot(layout, slot),
   }));
+}
+
+function finitePercent(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export function normalizeVideoCrop(crop: Partial<VideoCropRect>, fallback: VideoCropRect = FULL_CROP): VideoCropRect {
+  const xCandidate = finitePercent(crop.xPercent, fallback.xPercent);
+  const yCandidate = finitePercent(crop.yPercent, fallback.yPercent);
+  const xPercent = Math.min(100 - MIN_CROP_PERCENT, Math.max(0, xCandidate));
+  const yPercent = Math.min(100 - MIN_CROP_PERCENT, Math.max(0, yCandidate));
+  const widthCandidate = finitePercent(crop.widthPercent, fallback.widthPercent);
+  const heightCandidate = finitePercent(crop.heightPercent, fallback.heightPercent);
+  return {
+    xPercent,
+    yPercent,
+    widthPercent: Math.min(100 - xPercent, Math.max(MIN_CROP_PERCENT, widthCandidate)),
+    heightPercent: Math.min(100 - yPercent, Math.max(MIN_CROP_PERCENT, heightCandidate)),
+  };
+}
+
+export function suggestedPilotCrop(source: VideoSourceConfig, channel: PilotChannelConfig) {
+  return defaultCropForSlot(source.layout, channel.slot);
+}
+
+export function resolvedPilotVideoViewMode(
+  source: VideoSourceConfig,
+  channel: PilotChannelConfig,
+): Exclude<PilotVideoViewMode, "source-default"> {
+  if (channel.viewMode !== "source-default") return channel.viewMode;
+  return source.layout === "quad" ? "crop" : "full";
 }
 
 export function createDefaultVideoWorkspace(): VideoWorkspaceConfig {
   const source = sourceId(1);
-  const pilotChannels = createPilotChannels(source);
+  const pilotChannels = createPilotChannels(source, "full");
   return {
     schemaVersion: VIDEO_WORKSPACE_SCHEMA_VERSION,
     sources: [{ id: source, label: "视频输入 1", deviceId: "", layout: "full" }],
@@ -110,10 +163,10 @@ export function videoViewportsForSource(
     id: `${source.id}-viewport-${channel.slot + 1}`,
     sourceId: source.id,
     pilotChannelId: channel.id,
-    label: source.layout === "quad" ? `选手 ${channel.slot + 1}` : "完整画面",
-    crop: source.layout === "quad"
-      ? { ...QUAD_CROPS[index] }
-      : { xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100 },
+    label: source.layout === "quad" ? `选手 ${channel.slot + 1}` : "选手画面",
+    crop: resolvedPilotVideoViewMode(source, channel) === "crop"
+      ? normalizeVideoCrop(channel.crop, QUAD_CROPS[index] ?? FULL_CROP)
+      : { ...FULL_CROP },
   }));
 }
 
@@ -158,6 +211,13 @@ export function setVideoSourceLayout(
   return {
     ...workspace,
     sources,
+    pilotChannels: layout === "quad"
+      ? workspace.pilotChannels.map((channel) => (
+          channel.sourceId === selectedSourceId && channel.viewMode === "source-default"
+            ? { ...channel, crop: defaultCropForSlot("quad", channel.slot) }
+            : channel
+        ))
+      : workspace.pilotChannels,
     activePilotChannelId: shouldSelectFirst && firstChannel ? firstChannel.id : workspace.activePilotChannelId,
   };
 }
@@ -194,12 +254,50 @@ export function updatePilotChannel(
   };
 }
 
+export function setPilotChannelViewMode(
+  workspace: VideoWorkspaceConfig,
+  selectedChannelId: string,
+  viewMode: Exclude<PilotVideoViewMode, "source-default">,
+) {
+  if (viewMode !== "full" && viewMode !== "crop") return workspace;
+  return {
+    ...workspace,
+    pilotChannels: workspace.pilotChannels.map((channel) => channel.id === selectedChannelId
+      ? { ...channel, viewMode }
+      : channel),
+  };
+}
+
+export function setPilotChannelCrop(
+  workspace: VideoWorkspaceConfig,
+  selectedChannelId: string,
+  crop: Partial<VideoCropRect>,
+) {
+  return {
+    ...workspace,
+    pilotChannels: workspace.pilotChannels.map((channel) => channel.id === selectedChannelId
+      ? { ...channel, viewMode: "crop" as const, crop: normalizeVideoCrop(crop, channel.crop) }
+      : channel),
+  };
+}
+
+export function resetPilotChannelCrop(
+  workspace: VideoWorkspaceConfig,
+  selectedChannelId: string,
+) {
+  const channel = workspace.pilotChannels.find((candidate) => candidate.id === selectedChannelId);
+  if (!channel) return workspace;
+  const source = workspace.sources.find((candidate) => candidate.id === channel.sourceId);
+  if (!source) return workspace;
+  return setPilotChannelCrop(workspace, selectedChannelId, suggestedPilotCrop(source, channel));
+}
+
 export function addVideoSource(workspace: VideoWorkspaceConfig) {
   const usedIds = new Set(workspace.sources.map((source) => source.id));
   let index = 1;
   while (usedIds.has(sourceId(index))) index += 1;
   const id = sourceId(index);
-  const channels = createPilotChannels(id);
+  const channels = createPilotChannels(id, "full");
   return {
     ...workspace,
     sources: [...workspace.sources, { id, label: `视频输入 ${index}`, deviceId: "", layout: "full" as const }],
@@ -237,12 +335,28 @@ export function videoViewportTransform(viewport: VideoViewport) {
   };
 }
 
+export function videoCropPixelRect(crop: VideoCropRect, sourceWidth: number, sourceHeight: number) {
+  const safeWidth = Math.max(1, Math.floor(sourceWidth));
+  const safeHeight = Math.max(1, Math.floor(sourceHeight));
+  const normalized = normalizeVideoCrop(crop);
+  const x = Math.round((normalized.xPercent / 100) * safeWidth);
+  const y = Math.round((normalized.yPercent / 100) * safeHeight);
+  const right = Math.round(((normalized.xPercent + normalized.widthPercent) / 100) * safeWidth);
+  const bottom = Math.round(((normalized.yPercent + normalized.heightPercent) / 100) * safeHeight);
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y),
+  };
+}
+
 function storageErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : "浏览器拒绝访问视频工作区设置";
 }
 
 function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
-  if (!isRecord(value) || value.schemaVersion !== VIDEO_WORKSPACE_SCHEMA_VERSION) return null;
+  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== VIDEO_WORKSPACE_SCHEMA_VERSION)) return null;
   if (!Array.isArray(value.sources) || value.sources.length === 0 || !Array.isArray(value.pilotChannels)) return null;
 
   const sourceIds = new Set<string>();
@@ -268,6 +382,14 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
     if (rawChannel.slot !== 0 && rawChannel.slot !== 1 && rawChannel.slot !== 2 && rawChannel.slot !== 3) continue;
     const id = pilotChannelId(rawChannel.sourceId, rawChannel.slot);
     if (savedChannels.has(id)) continue;
+    const source = sources.find((candidate) => candidate.id === rawChannel.sourceId);
+    if (!source) continue;
+    const fallbackCrop = defaultCropForSlot(source.layout, rawChannel.slot);
+    const rawCrop = isRecord(rawChannel.crop) ? rawChannel.crop : null;
+    const viewMode: PilotVideoViewMode = value.schemaVersion === VIDEO_WORKSPACE_SCHEMA_VERSION
+      && (rawChannel.viewMode === "source-default" || rawChannel.viewMode === "full" || rawChannel.viewMode === "crop")
+      ? rawChannel.viewMode
+      : "source-default";
     savedChannels.set(id, {
       id,
       sourceId: rawChannel.sourceId,
@@ -275,10 +397,17 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
       athleteCode: typeof rawChannel.athleteCode === "string" ? rawChannel.athleteCode.slice(0, 40) : "",
       gateProfileId: typeof rawChannel.gateProfileId === "string" ? rawChannel.gateProfileId.slice(0, 120) : null,
       videoProfileId: typeof rawChannel.videoProfileId === "string" ? rawChannel.videoProfileId.slice(0, 120) : null,
+      viewMode,
+      crop: normalizeVideoCrop(rawCrop ? {
+        xPercent: rawCrop.xPercent as number,
+        yPercent: rawCrop.yPercent as number,
+        widthPercent: rawCrop.widthPercent as number,
+        heightPercent: rawCrop.heightPercent as number,
+      } : fallbackCrop, fallbackCrop),
     });
   }
 
-  const pilotChannels = sources.flatMap((source) => createPilotChannels(source.id).map(
+  const pilotChannels = sources.flatMap((source) => createPilotChannels(source.id, source.layout).map(
     (channel) => savedChannels.get(channel.id) ?? channel,
   ));
   const activeSourceId = typeof value.activeSourceId === "string" && sourceIds.has(value.activeSourceId)
@@ -309,7 +438,8 @@ export function loadVideoWorkspace(storage: VideoWorkspaceStorage): {
   error: string | null;
 } {
   try {
-    const stored = storage.getItem(VIDEO_WORKSPACE_STORAGE_KEY);
+    const stored = storage.getItem(VIDEO_WORKSPACE_STORAGE_KEY)
+      ?? storage.getItem(LEGACY_VIDEO_WORKSPACE_STORAGE_KEY);
     if (stored === null) return { workspace: createDefaultVideoWorkspace(), error: null };
     const workspace = parseWorkspace(JSON.parse(stored));
     return workspace
