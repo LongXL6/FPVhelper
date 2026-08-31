@@ -145,6 +145,7 @@ describe("useVideoWorkspaceCapture", () => {
     expect(controller.runtimes[SOURCE_ONE.id]).toMatchObject({ state: "live", error: null });
     expect(elements.every((element) => element.srcObject === createdStreams[0] as unknown as MediaProvider)).toBe(true);
     expect(elements.every((element) => vi.mocked(element.play).mock.calls.length === 1)).toBe(true);
+    expect(controller.getSourceStream(SOURCE_ONE.id)).toBe(createdStreams[0]);
   });
 
   it("opens independent sources concurrently and keeps their streams separate", async () => {
@@ -160,6 +161,8 @@ describe("useVideoWorkspaceCapture", () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(controller.runtimes[SOURCE_ONE.id].state).toBe("live");
     expect(controller.runtimes[SOURCE_TWO.id].state).toBe("live");
+    expect(controller.getSourceStream(SOURCE_ONE.id)).toBe(createdStreams[0]);
+    expect(controller.getSourceStream(SOURCE_TWO.id)).toBe(createdStreams[1]);
     expect(firstElement.srcObject).toBe(createdStreams[0]);
     expect(secondElement.srcObject).toBe(createdStreams[1]);
     expect(firstElement.srcObject).not.toBe(secondElement.srcObject);
@@ -182,5 +185,7 @@ describe("useVideoWorkspaceCapture", () => {
     expect(secondElement.srcObject).toBe(createdStreams[1]);
     expect(controller.runtimes[SOURCE_ONE.id].state).toBe("idle");
     expect(controller.runtimes[SOURCE_TWO.id].state).toBe("live");
+    expect(controller.getSourceStream(SOURCE_ONE.id)).toBeNull();
+    expect(controller.getSourceStream(SOURCE_TWO.id)).toBe(createdStreams[1]);
   });
 });

@@ -113,6 +113,8 @@ export function useVideoWorkspaceCapture(sources: readonly VideoSourceConfig[]) 
     };
   }, []);
 
+  const getSourceStream = useCallback((sourceId: string) => streamsRef.current.get(sourceId) ?? null, []);
+
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return null;
     try {
@@ -266,6 +268,7 @@ export function useVideoWorkspaceCapture(sources: readonly VideoSourceConfig[]) 
     devices,
     runtimes,
     registerVideoElement,
+    getSourceStream,
     connectSource,
     disconnectSource,
     connectAll,

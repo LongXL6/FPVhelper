@@ -34,10 +34,12 @@ import {
   createTrainingSessionDirectoryStore,
   getBrowserTrainingSessionDirectoryPicker,
   getTrainingSessionDirectoryPermission,
+  createTrainingSessionDirectoryWritable,
   runTrainingSessionDirectoryAction,
   saveTrainingSessionToDirectory,
   type TrainingSessionDirectoryHandle,
   type TrainingSessionDirectoryStore,
+  type TrainingSessionDirectoryWritable,
 } from "@/lib/training-session-export-directory";
 import {
   countUniqueTrainingSamples,
@@ -103,8 +105,10 @@ interface TrainingSessionController {
   exportDirectoryState: TrainingSessionDirectoryState;
   exportDirectoryName: string | null;
   canStart: boolean;
-  startRecording: () => Promise<void>;
+  startRecording: () => Promise<string | null>;
   stopRecording: () => Promise<void>;
+  isSessionRecording: (sessionId: string) => boolean;
+  createExportFileWritable: (filename: string) => Promise<TrainingSessionDirectoryWritable>;
   retryPendingSave: () => Promise<void>;
   addMarker: (kind: Exclude<TrainingSessionMarkerKind, "manual">) => Promise<void>;
   updateLastSessionNotes: (notes: string) => Promise<void>;
@@ -468,7 +472,7 @@ export function useTrainingSession({
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
-    if (!canStart || !store || startingRef.current) return;
+    if (!canStart || !store || startingRef.current) return null;
     startingRef.current = true;
     setIsStarting(true);
     setStorageError(null);
@@ -501,13 +505,40 @@ export function useTrainingSession({
       setElapsedMs(0);
       setHasPendingSave(false);
       setIsRecording(true);
+      return id;
     } catch (saveError) {
       setStorageError(`开始记录失败：${storageErrorMessage(saveError)}`);
+      return null;
     } finally {
       startingRef.current = false;
       setIsStarting(false);
     }
   }, [athleteCode, canStart, inputKey, source]);
+
+  const createExportFileWritable = useCallback(async (filename: string) => {
+    const handle = directoryHandleRef.current;
+    if (!handle) throw new Error("尚未选择本地保存文件夹");
+    const permission = await getTrainingSessionDirectoryPermission(handle);
+    if (permission !== "granted") {
+      setExportDirectoryState("permission_required");
+      throw new Error("本地保存文件夹需要重新授权");
+    }
+    try {
+      const writable = await createTrainingSessionDirectoryWritable(handle, filename);
+      setExportDirectoryState("ready");
+      return writable;
+    } catch (fileError) {
+      const permissionAfterFailure = await getTrainingSessionDirectoryPermission(handle);
+      setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
+      throw fileError;
+    }
+  }, []);
+
+  const isSessionRecording = useCallback((targetSessionId: string) => (
+    draftRef.current?.id === targetSessionId
+    && pendingSessionRef.current === null
+    && !finishingRef.current
+  ), []);
 
   const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
@@ -739,6 +770,8 @@ export function useTrainingSession({
     canStart,
     startRecording,
     stopRecording,
+    isSessionRecording,
+    createExportFileWritable,
     retryPendingSave,
     addMarker,
     updateLastSessionNotes,

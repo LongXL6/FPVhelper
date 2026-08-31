@@ -93,6 +93,12 @@ export const test = base.extend<{ fakeHardware: void }>({
         `fpvh_ingest_${"a".repeat(43)}`,
       );
       window.localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
+      window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+        autoExport: false,
+        recordPilotVideo: false,
+        showStickOverlays: true,
+        stickOverlayMode: "trail",
+      }));
 
       const mspResponse = (command: number, payload: Uint8Array) => {
         let checksum = payload.byteLength ^ command;

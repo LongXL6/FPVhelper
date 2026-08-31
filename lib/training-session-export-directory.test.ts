@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TrainingSession } from "./training-session";
 import {
   createTrainingSessionDirectoryStore,
+  createTrainingSessionDirectoryWritable,
   getTrainingSessionDirectoryPermission,
   requestTrainingSessionDirectoryPermission,
   runTrainingSessionDirectoryAction,
@@ -140,6 +141,16 @@ describe("training session export directory", () => {
     expect(bytes).toBeGreaterThan(0);
     expect(calls).toEqual(["write:application/json", "close"]);
     expect(getFileHandle).toHaveBeenCalledWith(expect.stringContaining("PILOT-02"), { create: true });
+  });
+
+  it("opens a reusable writable for a generated local video filename", async () => {
+    const writable = { write: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+    const getFileHandle = vi.fn(async () => ({ createWritable: async () => writable }));
+    const handle = { kind: "directory", name: "FPV Sessions", getFileHandle } as TrainingSessionDirectoryHandle;
+
+    await expect(createTrainingSessionDirectoryWritable(handle, "fpv-video-test.webm")).resolves.toBe(writable);
+    expect(getFileHandle).toHaveBeenCalledWith("fpv-video-test.webm", { create: true });
+    await expect(createTrainingSessionDirectoryWritable(handle, "../escape.webm")).rejects.toThrow("本地文件名无效");
   });
 
   it("does not confirm a directory export when closing fails", async () => {

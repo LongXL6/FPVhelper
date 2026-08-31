@@ -201,6 +201,198 @@ test("independent video inputs open together and keep one active telemetry viewp
   await expect(page.locator('.video-viewport[data-source-id="video-source-2"]')).toHaveClass(/is-live/);
 });
 
+test("active pilot full and cropped video record to the authorized local folder", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+      autoExport: false,
+      recordPilotVideo: true,
+      showStickOverlays: true,
+      stickOverlayMode: "trail",
+    }));
+    const root = await navigator.storage.getDirectory();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open("fpvhelper-training-export", 1);
+      request.addEventListener("upgradeneeded", () => {
+        if (!request.result.objectStoreNames.contains("settings")) request.result.createObjectStore("settings");
+      });
+      request.addEventListener("success", () => {
+        const transaction = request.result.transaction("settings", "readwrite");
+        transaction.objectStore("settings").put(root, "training-session-directory");
+        transaction.addEventListener("complete", () => {
+          request.result.close();
+          resolve();
+        });
+        transaction.addEventListener("error", () => reject(transaction.error));
+      });
+      request.addEventListener("error", () => reject(request.error));
+    });
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+      autoExport: false,
+      recordPilotVideo: true,
+      showStickOverlays: true,
+      stickOverlayMode: "trail",
+    }));
+    if (!("showDirectoryPicker" in window)) {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => navigator.storage.getDirectory(),
+      });
+    }
+  });
+  await page.reload();
+
+  await expect(page.getByRole("checkbox", { name: "同时录制当前选手视频" })).toBeChecked();
+  await expect(page.getByText(/本地保存目录：/)).toBeVisible();
+  await page.getByRole("button", { name: "打开画面" }).click();
+  await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
+  await page.getByRole("button", { name: "连接桥接飞控" }).click();
+  await expect(page.locator(".status-chip")).toContainText("数据桥在线");
+  await page.getByRole("textbox", { name: "选手代号" }).fill("VIDEO-01");
+
+  const recordButton = page.getByRole("button", { name: "● 开始记录" });
+  await expect(recordButton).toBeEnabled();
+  await recordButton.click();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await page.waitForTimeout(1_200);
+  await page.getByRole("button", { name: "■ 结束记录" }).click();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
+
+  const binding = page.getByRole("region", { name: "VIDEO-01 画面绑定" });
+  await binding.getByRole("button", { name: "选手取景：裁切区域" }).click();
+  await binding.getByRole("slider", { name: "裁切画面宽度" }).fill("50");
+  await binding.getByRole("slider", { name: "裁切画面高度" }).fill("50");
+  await expect.poll(() => page.locator("canvas.video-feed--cropped").evaluate((canvas) => ({
+    width: (canvas as HTMLCanvasElement).width,
+    height: (canvas as HTMLCanvasElement).height,
+  }))).toMatchObject({ width: 960, height: 540 });
+  await recordButton.click();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await page.waitForTimeout(1_200);
+  await page.getByRole("button", { name: "■ 结束记录" }).click();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
+
+  const recordings = await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const files: Array<{ name: string; size: number }> = [];
+    for await (const [name, handle] of root.entries()) {
+      if (handle.kind !== "file" || !name.endsWith(".webm")) continue;
+      const file = await (handle as FileSystemFileHandle).getFile();
+      files.push({ name, size: file.size });
+    }
+    return files;
+  });
+  expect(recordings).toHaveLength(2);
+  expect(recordings.some((recording) => /-VIDEO-01-.*-full\.webm$/.test(recording.name))).toBe(true);
+  expect(recordings.some((recording) => /-VIDEO-01-.*-crop\.webm$/.test(recording.name))).toBe(true);
+  expect(recordings.every((recording) => recording.size > 0)).toBe(true);
+
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const probe = await root.getFileHandle("close-probe.tmp", { create: true });
+    const probeStream = await probe.createWritable();
+    const prototype = Object.getPrototypeOf(probeStream) as { close: () => Promise<void> };
+    const close = prototype.close;
+    await close.call(probeStream);
+    await root.removeEntry("close-probe.tmp");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    (window as Window & { __releaseDelayedVideoClose?: () => void }).__releaseDelayedVideoClose = release;
+    prototype.close = async function () {
+      await gate;
+      return close.call(this);
+    };
+  });
+  await recordButton.click();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await page.locator("video.video-feed-source").evaluate((video) => {
+    const track = ((video as HTMLVideoElement).srcObject as MediaStream).getVideoTracks()[0];
+    track?.stop();
+    track?.dispatchEvent(new Event("ended"));
+  });
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("FINALIZING");
+  await expect(page.getByRole("heading", { name: "正在记录 VIDEO-01" })).toBeVisible();
+  const stopButton = page.getByRole("button", { name: "■ 结束记录" });
+  await expect(stopButton).toBeEnabled();
+  await stopButton.click();
+  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+  await page.evaluate(() => {
+    (window as Window & { __releaseDelayedVideoClose?: () => void }).__releaseDelayedVideoClose?.();
+  });
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("VIDEO ERROR");
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("视频源已中断");
+});
+
+test("a delayed video file open cannot start after its Training Session has ended", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+      autoExport: false,
+      recordPilotVideo: true,
+      showStickOverlays: true,
+      stickOverlayMode: "trail",
+    }));
+    if (!("showDirectoryPicker" in window)) {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => navigator.storage.getDirectory(),
+      });
+    }
+  });
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open("fpvhelper-training-export", 1);
+      request.addEventListener("upgradeneeded", () => {
+        if (!request.result.objectStoreNames.contains("settings")) request.result.createObjectStore("settings");
+      });
+      request.addEventListener("success", () => {
+        const transaction = request.result.transaction("settings", "readwrite");
+        transaction.objectStore("settings").put(root, "training-session-directory");
+        transaction.addEventListener("complete", () => {
+          request.result.close();
+          resolve();
+        });
+        transaction.addEventListener("error", () => reject(transaction.error));
+      });
+      request.addEventListener("error", () => reject(request.error));
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "打开画面" }).click();
+  await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
+  await page.getByRole("button", { name: "连接桥接飞控" }).click();
+  await expect(page.locator(".status-chip")).toContainText("数据桥在线");
+  await page.getByRole("textbox", { name: "选手代号" }).fill("RACE-01");
+
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const prototype = Object.getPrototypeOf(root) as {
+      getFileHandle: FileSystemDirectoryHandle["getFileHandle"];
+    };
+    const getFileHandle = prototype.getFileHandle;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile = release;
+    prototype.getFileHandle = async function (...args) {
+      await gate;
+      return getFileHandle.apply(this, args);
+    };
+  });
+
+  await page.getByRole("button", { name: "● 开始记录" }).click();
+  await expect(page.getByRole("heading", { name: "正在记录 RACE-01" })).toBeVisible();
+  await page.getByRole("button", { name: "■ 结束记录" }).click();
+  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+  await page.evaluate(() => {
+    (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile?.();
+  });
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("未启动孤立录像");
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("VIDEO ERROR");
+});
+
 test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ page }) => {
   await page.route("**/api/events", (route) => route.abort("blockedbyclient"));
   await page.goto("/");

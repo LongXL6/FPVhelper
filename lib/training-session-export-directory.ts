@@ -6,7 +6,7 @@ const DIRECTORY_DATABASE_VERSION = 1;
 const DIRECTORY_STORE_NAME = "settings";
 const DIRECTORY_HANDLE_KEY = "training-session-directory";
 
-interface TrainingSessionDirectoryWritable {
+export interface TrainingSessionDirectoryWritable {
   write(data: Blob): Promise<void>;
   close(): Promise<void>;
 }
@@ -210,9 +210,19 @@ export async function saveTrainingSessionToDirectory(
   handle: TrainingSessionDirectoryHandle,
 ) {
   const blob = createTrainingSessionBlob(session);
-  const fileHandle = await handle.getFileHandle(trainingSessionFilename(session), { create: true });
-  const writable = await fileHandle.createWritable();
+  const writable = await createTrainingSessionDirectoryWritable(handle, trainingSessionFilename(session));
   await writable.write(blob);
   await writable.close();
   return blob.size;
+}
+
+export async function createTrainingSessionDirectoryWritable(
+  handle: TrainingSessionDirectoryHandle,
+  filename: string,
+) {
+  if (!filename || filename !== filename.trim() || /[\\/]/.test(filename)) {
+    throw new Error("本地文件名无效");
+  }
+  const fileHandle = await handle.getFileHandle(filename, { create: true });
+  return fileHandle.createWritable();
 }

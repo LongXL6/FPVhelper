@@ -22,6 +22,7 @@ import { TrainingSessionFileValidator } from "@/components/training-session-file
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
 import { TrainingWeeklyReport } from "@/components/training-weekly-report";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
+import { useLocalVideoRecording } from "@/hooks/use-local-video-recording";
 import {
   createPilotTelemetryWorkspaceStore,
   PilotTelemetryWorkspaceHost,
@@ -38,6 +39,10 @@ import { useVersionCheck } from "@/hooks/use-version-check";
 import { useWorkstationRuntime } from "@/hooks/use-workstation-runtime";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
 import type { SerialErrorCode, VideoCaptureErrorCode } from "@/lib/hardware-errors";
+import {
+  localVideoRecordingFilename,
+  preferredLocalVideoMimeType,
+} from "@/lib/local-video-recording";
 import {
   appendDiagnosticTransition,
   buildLocalDiagnosticBundle,
@@ -211,14 +216,18 @@ function PilotViewportTelemetry({
 
 function WorkspaceVideoElement({
   sourceId,
+  pilotChannelId,
   cropped,
   crop,
   registerVideoElement,
+  registerOutputCanvas,
 }: {
   sourceId: string;
+  pilotChannelId: string;
   cropped: boolean;
   crop: VideoCropRect;
   registerVideoElement: VideoWorkspaceElementRegistrar;
+  registerOutputCanvas: (pilotChannelId: string, element: HTMLCanvasElement | null) => (() => void) | undefined;
 }) {
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -231,6 +240,14 @@ function WorkspaceVideoElement({
       unregister?.();
     };
   }, [registerVideoElement, sourceId]);
+  const outputCanvasRef = useCallback((element: HTMLCanvasElement | null) => {
+    canvasRef.current = element;
+    const unregister = registerOutputCanvas(pilotChannelId, element);
+    return () => {
+      if (canvasRef.current === element) canvasRef.current = null;
+      unregister?.();
+    };
+  }, [pilotChannelId, registerOutputCanvas]);
 
   useEffect(() => {
     if (!cropped) return;
@@ -297,7 +314,7 @@ function WorkspaceVideoElement({
         muted
         playsInline
       />
-      {cropped ? <canvas ref={canvasRef} className="video-feed--cropped" aria-hidden="true" /> : null}
+      {cropped ? <canvas ref={outputCanvasRef} className="video-feed--cropped" aria-hidden="true" /> : null}
     </>
   );
 }
@@ -442,11 +459,20 @@ function formatSessionDuration(durationMs: number) {
   return `${String(minutes).padStart(2, "0")}:${seconds}`;
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1_024 * 1_024) return `${Math.max(1, Math.round(bytes / 1_024))} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
 function formatLocalTimecode(timestamp: number) {
   if (!timestamp) return "--:--:--.---";
   const date = new Date(timestamp);
   const pad = (value: number, length = 2) => value.toString().padStart(length, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function captureInteractionEpochMs() {
+  return Date.now();
 }
 
 function formatSessionStart(wallClockStartedAt: string) {
@@ -580,7 +606,7 @@ export function FlightDashboard() {
     getWorkstationShortcutsSnapshot,
     () => false,
   );
-  const { autoExport, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
+  const { autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
   const [preferenceWriteError, setPreferenceWriteError] = useState<string | null>(null);
   const videoWorkspaceSnapshot = useSyncExternalStore(
     subscribeToVideoWorkspace,
@@ -606,12 +632,14 @@ export function FlightDashboard() {
   const [overlayLayoutNotice, setOverlayLayoutNotice] = useState<string | null>(null);
   const [telemetryWorkspaceStore] = useState(createPilotTelemetryWorkspaceStore);
   const exportShortcutInFlightRef = useRef(false);
+  const pilotOutputCanvasesRef = useRef(new Map<string, HTMLCanvasElement>());
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
   const activeSource = activeVideoSource(videoWorkspace);
   const activeChannel = activePilotChannel(videoWorkspace);
   const activeViewport = activeVideoViewport(videoWorkspace);
   const sourceViewports = activeSource ? videoViewportsForSource(videoWorkspace, activeSource) : [];
   const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
+  const localVideoRecording = useLocalVideoRecording();
   const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
   const videoDevices = videoCapture.devices;
   const selectedDeviceId = activeSource?.deviceId ?? "";
@@ -647,7 +675,7 @@ export function FlightDashboard() {
     autoExport,
     inputKey: activeChannel?.id ?? "unassigned",
   });
-  const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording });
+  const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording || localVideoRecording.isActive });
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
     ? notesDraft
     : trainingSession.lastSession?.notes ?? "";
@@ -660,6 +688,16 @@ export function FlightDashboard() {
     } catch (storageError) {
       setVideoWorkspaceWriteError(storageError instanceof Error ? storageError.message : "无法保存视频工作区设置");
     }
+  }, []);
+
+  const registerPilotOutputCanvas = useCallback((pilotChannelId: string, element: HTMLCanvasElement | null) => {
+    if (!element) return;
+    pilotOutputCanvasesRef.current.set(pilotChannelId, element);
+    return () => {
+      if (pilotOutputCanvasesRef.current.get(pilotChannelId) === element) {
+        pilotOutputCanvasesRef.current.delete(pilotChannelId);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -731,9 +769,11 @@ export function FlightDashboard() {
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
   const preferenceError = preferenceWriteError || videoWorkspaceWriteError || loadedVideoWorkspace.error || loadedPreferences.error;
-  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
+  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || localVideoRecording.isActive;
   const activeVideoControlsLocked = controlsLocked || videoState === "connecting" || videoState === "live";
-  const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
+  const sessionIsFinalizing = trainingSession.isFinishing
+    || trainingSession.hasPendingSave
+    || (!trainingSession.isRecording && localVideoRecording.state === "stopping");
   const tabStartBlockReason = workstationTabStartBlockReason(workstation.tabState);
   const tabAllowsStart = tabStartBlockReason === null;
   const bridgeIsLive = source === "serial" && connection === "live";
@@ -758,6 +798,31 @@ export function FlightDashboard() {
     : trainingSession.lastSession?.dataSources.map((dataSource) => dataSource === "ground_rc" ? "GROUND_RC" : "DEMO").join(" + ") ?? "—";
   const visibleSessionId = trainingSession.sessionId?.slice(0, 8).toUpperCase() ?? "READY";
   const quarantinedRecordCount = quarantinedTrainingRecordCount(trainingSession.storageIntegrity);
+  const activeViewportIsCropped = Boolean(activeViewport && (
+    activeViewport.crop.xPercent !== 0
+    || activeViewport.crop.yPercent !== 0
+    || activeViewport.crop.widthPercent !== 100
+    || activeViewport.crop.heightPercent !== 100
+  ));
+  const localVideoMimeType = typeof MediaRecorder === "undefined"
+    ? null
+    : preferredLocalVideoMimeType((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+  const localVideoStartBlockReason = !recordPilotVideo
+    ? null
+    : typeof MediaRecorder === "undefined" || !localVideoMimeType
+      ? "当前浏览器不支持本地 WebM 录像；可关闭视频录像后只记录遥测"
+      : trainingSession.exportDirectoryState !== "ready"
+        ? "先选择并授权本地保存文件夹，或关闭视频录像"
+        : !activeSource || !activeViewport
+          ? "先为选手绑定一个视频画面"
+          : videoState !== "live"
+            ? "先打开当前选手绑定的 HDMI 画面"
+            : activeViewportIsCropped && (
+              typeof HTMLCanvasElement === "undefined"
+              || typeof HTMLCanvasElement.prototype.captureStream !== "function"
+            )
+              ? "当前浏览器不能录制裁切画面；请改用完整画面或关闭视频录像"
+              : null;
   const startRequirement = tabStartBlockReason
     ? tabStartBlockReason
     : !trainingSession.storageReady
@@ -772,20 +837,132 @@ export function FlightDashboard() {
               ? "遥控链路已丢失，不能开始记录"
               : linkState === "unknown"
                 ? "等待 MSP_STATUS_EX 确认遥控链路"
-                : "已满足开始条件";
+                : localVideoStartBlockReason ?? "已满足开始条件";
+  const canStartDashboardRecording = trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
   const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
-    ? `自动保存目录：${trainingSession.exportDirectoryName}`
+    ? `本地保存目录：${trainingSession.exportDirectoryName}`
     : trainingSession.exportDirectoryState === "permission_required"
       ? `需要重新授权：${trainingSession.exportDirectoryName ?? "已保存的目录"}`
       : trainingSession.exportDirectoryState === "unsupported"
-        ? "当前浏览器不支持目录自动保存，将退回普通下载"
+        ? "当前浏览器不支持目录直写；JSON 将退回普通下载，视频录像需关闭"
         : trainingSession.exportDirectoryState === "loading"
-          ? "正在检查自动保存目录"
+          ? "正在检查本地保存目录"
           : trainingSession.exportDirectoryState === "error"
             ? trainingSession.exportDirectoryName
               ? "目录访问失败，可重新授权或更换文件夹"
               : "目录设置读取失败，可重新选择"
-            : "尚未选择自动保存目录，将退回普通下载";
+            : "尚未选择本地保存目录；JSON 可普通下载，视频录像需先选择目录";
+  const localVideoStatusCopy = !recordPilotVideo
+    ? "已关闭；本轮只记录遥测 JSON"
+    : localVideoRecording.state === "recording"
+      ? `正在写入 ${localVideoRecording.filename ?? "本地 WebM"}`
+      : localVideoRecording.state === "starting"
+        ? "正在启动浏览器本地编码器"
+        : localVideoRecording.state === "stopping"
+          ? "正在写完最后一段并关闭 WebM 文件"
+          : localVideoRecording.state === "saved" && localVideoRecording.receipt
+            ? `已确认写入并关闭 ${localVideoRecording.receipt.filename} · ${formatFileSize(localVideoRecording.receipt.bytes)}`
+            : localVideoRecording.state === "error"
+              ? `视频未保存完整：${localVideoRecording.error ?? "本地编码或写盘失败"}；遥测 Session 不受影响`
+              : `将保存当前选手的${activeViewportIsCropped ? "裁切" : "完整"}视频；不上传，不含网页 HUD`;
+
+  const activeRecordingSourceId = activeSource?.id ?? null;
+  const activeRecordingPilotChannelId = activeViewport?.pilotChannelId ?? null;
+  const captureFrameRate = captureSettings?.frameRate ?? null;
+  const startTrainingSession = trainingSession.startRecording;
+  const stopTrainingSession = trainingSession.stopRecording;
+  const isTrainingSessionRecording = trainingSession.isSessionRecording;
+  const createExportFileWritable = trainingSession.createExportFileWritable;
+  const getVideoSourceStream = videoCapture.getSourceStream;
+  const startLocalVideo = localVideoRecording.start;
+  const stopLocalVideo = localVideoRecording.stop;
+  const failLocalVideo = localVideoRecording.fail;
+  const reportLocalVideoStartError = localVideoRecording.reportStartError;
+
+  async function startDashboardRecording() {
+    if (!canStartDashboardRecording) return;
+    const startedAtEpochMs = captureInteractionEpochMs();
+    const startedSessionId = await startTrainingSession();
+    if (!startedSessionId || !recordPilotVideo) return;
+
+    let writable: Awaited<ReturnType<typeof createExportFileWritable>> | null = null;
+    let recordingStream: MediaStream | null = null;
+    let stopStreamTracksOnFinish = false;
+    let delegatedToRecorder = false;
+    try {
+      if (!activeRecordingSourceId || !activeRecordingPilotChannelId || !localVideoMimeType) {
+        throw new Error("当前选手视频输出尚未准备好");
+      }
+
+      const filename = localVideoRecordingFilename({
+        athleteCode,
+        sessionId: startedSessionId,
+        startedAtEpochMs,
+        cropped: activeViewportIsCropped,
+      });
+      writable = await createExportFileWritable(filename);
+      if (!isTrainingSessionRecording(startedSessionId)) {
+        throw new Error("Session 已在视频编码器启动前结束；未启动孤立录像");
+      }
+
+      if (activeViewportIsCropped) {
+        const canvas = pilotOutputCanvasesRef.current.get(activeRecordingPilotChannelId);
+        if (!canvas || canvas.width <= 0 || canvas.height <= 0 || typeof canvas.captureStream !== "function") {
+          throw new Error("裁切画面还没有可录制的视频帧，请等待画面出现后重试");
+        }
+        const frameRate = Math.max(1, Math.min(60, captureFrameRate ?? 30));
+        recordingStream = canvas.captureStream(frameRate);
+        stopStreamTracksOnFinish = true;
+      } else {
+        const sourceStream = getVideoSourceStream(activeRecordingSourceId);
+        if (!sourceStream || sourceStream.getVideoTracks().length === 0) {
+          throw new Error("当前 HDMI 画面没有可录制的视频轨道");
+        }
+        recordingStream = sourceStream;
+      }
+
+      delegatedToRecorder = true;
+      await startLocalVideo({
+        stream: recordingStream,
+        writable,
+        filename,
+        mimeType: localVideoMimeType,
+        stopStreamTracksOnFinish,
+        startedAtEpochMs,
+      });
+    } catch (recordingError) {
+      if (!delegatedToRecorder) {
+        if (stopStreamTracksOnFinish) recordingStream?.getTracks().forEach((track) => track.stop());
+        await writable?.close().catch(() => undefined);
+      }
+      reportLocalVideoStartError(recordingError);
+    }
+  }
+
+  async function stopDashboardRecording() {
+    await Promise.allSettled([
+      stopTrainingSession(),
+      stopLocalVideo(),
+    ]);
+  }
+
+  const stopVideoAfterSession = useEffectEvent(() => {
+    void localVideoRecording.stop();
+  });
+  const failVideoAfterSourceLoss = useEffectEvent(() => {
+    void failLocalVideo(new Error("当前 HDMI 视频源已中断；断线前片段已关闭，但不算完整录像"));
+  });
+
+  useEffect(() => {
+    if (trainingSession.isRecording || trainingSession.isStarting) return;
+    if (localVideoRecording.state === "recording") stopVideoAfterSession();
+  }, [localVideoRecording.state, trainingSession.isRecording, trainingSession.isStarting]);
+
+  useEffect(() => {
+    if (localVideoRecording.state === "recording" && videoState !== "live") {
+      failVideoAfterSourceLoss();
+    }
+  }, [localVideoRecording.state, videoState]);
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
       ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
@@ -910,15 +1087,15 @@ export function FlightDashboard() {
         isRecording: trainingSession.isRecording,
         isStarting: trainingSession.isStarting,
         isFinishing: trainingSession.isFinishing,
-        canStart: trainingSession.canStart,
-        tabAllowsStart,
+        canStart: canStartDashboardRecording,
+        tabAllowsStart: true,
       });
       if (action === "stop") {
         setWorkstationNotice("空格长按：正在结束并保存记录");
-        void trainingSession.stopRecording();
+        void stopDashboardRecording();
       } else if (action === "start") {
         setWorkstationNotice("空格长按：正在开始记录");
-        void trainingSession.startRecording();
+        void startDashboardRecording();
       } else {
         setWorkstationNotice("当前尚未满足开始记录条件");
       }
@@ -1051,11 +1228,11 @@ export function FlightDashboard() {
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
             aria-pressed={trainingSession.isRecording}
-            disabled={trainingSession.isRecording ? trainingSession.isFinishing : !trainingSession.canStart || !tabAllowsStart}
+            disabled={trainingSession.isRecording ? sessionIsFinalizing : !canStartDashboardRecording || localVideoRecording.isActive}
             title={trainingSession.isRecording ? "结束并保存当前 Session" : startRequirement}
-            onClick={() => void (trainingSession.isRecording ? trainingSession.stopRecording() : trainingSession.startRecording())}
+            onClick={() => void (trainingSession.isRecording ? stopDashboardRecording() : startDashboardRecording())}
           >
-            {trainingSession.isFinishing ? "保存记录…" : trainingSession.isStarting ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
+            {sessionIsFinalizing ? "保存记录…" : trainingSession.isStarting || localVideoRecording.state === "starting" ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
           </button>
           {source === "serial" ? (
             <button
@@ -1218,7 +1395,7 @@ export function FlightDashboard() {
                 className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
                 type="button"
                 aria-pressed={showStickOverlays}
-                onClick={() => updateTrainingPreferences({ autoExport, showStickOverlays: !showStickOverlays, stickOverlayMode })}
+                onClick={() => updateTrainingPreferences({ autoExport, recordPilotVideo, showStickOverlays: !showStickOverlays, stickOverlayMode })}
               >{showStickOverlays ? "叠层开启" : "叠层关闭"}</button>
               {showStickOverlays || coachMode ? (
                 <>
@@ -1227,7 +1404,7 @@ export function FlightDashboard() {
                     type="button"
                     aria-pressed={stickOverlayMode === "trail"}
                     onClick={() => {
-                      if (updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "trail" })) {
+                      if (updateTrainingPreferences({ autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode: "trail" })) {
                         analytics.trackOverlayModeChange(stickOverlayMode, "trail");
                       }
                     }}
@@ -1237,7 +1414,7 @@ export function FlightDashboard() {
                     type="button"
                     aria-pressed={stickOverlayMode === "simple"}
                     onClick={() => {
-                      if (updateTrainingPreferences({ autoExport, showStickOverlays, stickOverlayMode: "simple" })) {
+                      if (updateTrainingPreferences({ autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode: "simple" })) {
                         analytics.trackOverlayModeChange(stickOverlayMode, "simple");
                       }
                     }}
@@ -1381,14 +1558,16 @@ export function FlightDashboard() {
                   >
                     <WorkspaceVideoElement
                       sourceId={sourceConfig.id}
+                      pilotChannelId={viewport.pilotChannelId}
                       cropped={isCropped}
                       crop={viewport.crop}
                       registerVideoElement={videoCapture.registerVideoElement}
+                      registerOutputCanvas={registerPilotOutputCanvas}
                     />
                     <div className="video-idle">
                       <div className="flight-gate" aria-hidden="true"><span /><span /></div>
                       <p>{runtime.state === "connecting" ? "正在打开视频" : sourceConfig.label}</p>
-                      <small>{runtime.error ?? "浏览器本地 UVC · 不录制 · 不上传"}</small>
+                      <small>{runtime.error ?? "浏览器本地 UVC · 仅本机处理 · 不上传"}</small>
                     </div>
                     <button
                       className={`video-viewport-select ${isActive ? "is-active" : ""}`}
@@ -1432,7 +1611,9 @@ export function FlightDashboard() {
                         </div>
                         <div className={`coach-status coach-status--${connection}`}>
                           <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
-                          <b>{trainingSession.isRecording ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}` : "REC 待命"}</b>
+                          <b>{trainingSession.isRecording
+                            ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}${localVideoRecording.state === "recording" ? " · VIDEO" : " · RC"}`
+                            : "REC 待命"}</b>
                           <strong>THR {Math.round(telemetry.throttleStickPercent)}%</strong>
                         </div>
                         {showStickOverlays || coachMode ? (
@@ -1493,7 +1674,7 @@ export function FlightDashboard() {
 
           <div className="video-footer">
             <span><SignalMark active={anyVideoLive} />{anyVideoLive ? `${liveVideoSourceCount}/${videoWorkspace.sources.length} 路 UVC 在线` : "未接入采集卡"}</span>
-            <span>画面与遥测在浏览器本地合成</span>
+            <span>画面与遥测在浏览器本地处理 · 原始 HDMI 不上传</span>
             <span className="timecode">TC {timecode}</span>
           </div>
         </section>
@@ -1596,21 +1777,39 @@ export function FlightDashboard() {
               ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条可读记录${quarantinedRecordCount > 0 ? ` · 隔离 ${quarantinedRecordCount} 条` : ""}`
               : "正在检查草稿与历史记录"}</small>
           </div>
-          <label className="session-toggle">
-            <input
-              type="checkbox"
-              checked={autoExport}
-              onChange={(event) => updateTrainingPreferences({
-                autoExport: event.target.checked,
-                showStickOverlays,
-                stickOverlayMode,
-              })}
-            />
-            <span>结束成功后自动保存 JSON</span>
-          </label>
+          <div className="session-toggle-group">
+            <label className="session-toggle">
+              <input
+                type="checkbox"
+                checked={recordPilotVideo}
+                disabled={controlsLocked}
+                onChange={(event) => updateTrainingPreferences({
+                  autoExport,
+                  recordPilotVideo: event.target.checked,
+                  showStickOverlays,
+                  stickOverlayMode,
+                })}
+              />
+              <span>同时录制当前选手视频</span>
+            </label>
+            <label className="session-toggle">
+              <input
+                type="checkbox"
+                checked={autoExport}
+                disabled={controlsLocked}
+                onChange={(event) => updateTrainingPreferences({
+                  autoExport: event.target.checked,
+                  recordPilotVideo,
+                  showStickOverlays,
+                  stickOverlayMode,
+                })}
+              />
+              <span>结束成功后自动保存 JSON</span>
+            </label>
+          </div>
           <div className="session-export-directory">
             <span>
-              <b>自动保存文件夹</b>
+              <b>Session / 视频本地保存文件夹</b>
               <small>{exportDirectoryCopy}</small>
               {trainingSession.exportDirectoryName
                 ? <small>再次自动导出同一 Session 会覆盖该文件夹内的同名 JSON。</small>
@@ -1643,6 +1842,27 @@ export function FlightDashboard() {
                 >清除</button>
               ) : null}
             </span>
+          </div>
+          <div
+            className={`session-video-status session-video-status--${localVideoRecording.state}`}
+            role="status"
+            data-testid="local-video-recording-status"
+          >
+            <span>
+              <b>LOCAL PILOT VIDEO</b>
+              <small>{localVideoStatusCopy}</small>
+            </span>
+            <strong>{localVideoRecording.state === "recording"
+              ? `● REC ${formatSessionDuration(localVideoRecording.elapsedMs)}`
+              : localVideoRecording.state === "stopping"
+                ? "FINALIZING"
+                : localVideoRecording.state === "saved"
+                  ? "SAVED"
+                  : localVideoRecording.state === "error"
+                    ? "VIDEO ERROR"
+                    : recordPilotVideo
+                      ? "ARMED"
+                      : "OFF"}</strong>
           </div>
         </div>
 

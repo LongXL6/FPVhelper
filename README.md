@@ -4,14 +4,14 @@ FPVHelper 是面向 FPV 俱乐部的训练量化工作台：在本机观察 HDMI
 
 ## 当前能力
 
-- 通过浏览器 `getUserMedia` 打开 UVC HDMI 采集卡，并只在本机显示画面。
+- 通过浏览器 `getUserMedia` 打开 UVC HDMI 采集卡，并只在本机显示画面；可选择将当前选手绑定的完整或裁切画面分块写入已授权本地目录。
 - 左右摇杆可叠加在视频画面上，布局只保存在当前浏览器。
 - 通过 Web Serial 连接独立的地面桥接飞控，以只读 MSP v1 请求轮询 Betaflight：
   - `MSP_RC`：目标 100 Hz 轮询 Roll / Pitch / Yaw / Throttle 与已解码的 RC 通道；实际有效频率取决于飞控、USB、浏览器与工作站负载。
   - `MSP_ANALOG`：地面桥接飞控电压与 legacy RSSI；该值不是机上 ELRS LQ。
 - 真实串口链路在线且填写选手代号后，才能开始训练 Session；草稿和已完成记录保存在本机 IndexedDB，并可导出 schema v2 JSON。
 - 未连接硬件时可使用明确标记的演示数据；演示数据不计入试点生产记录。
-- 不写入 Betaflight 配置，不录制或上传视频，不上传原始 RC 打杆样本。
+- 不写入 Betaflight 配置，不上传视频，也不上传原始 RC 打杆样本；本地 WebM 录像默认关闭，必须由操作员明确开启并授权目录。
 
 ## 产品与入口口径
 
@@ -36,7 +36,7 @@ Pilot Radio → 该选手预绑定的 Ground ELRS RX → 该选手独立 Bridge 
 
 | 数据 | 是否离开本机 | 目的地与用途 | 状态 / 关闭方式 |
 | --- | --- | --- | --- |
-| 视频帧、DVR 原片 | 否 | 仅本机实时显示；DVR 由俱乐部控制 | 永不由 FPVHelper 上传 |
+| 视频帧、本地 WebM、DVR 原片 | 否 | 实时画面与可选 WebM 仅写入操作员授权的本地目录；俱乐部仍控制正式 DVR | FPVHelper 永不上传；关闭“同时录制当前选手视频”即可只看不录 |
 | 原始 RC 通道与高频样本 | 否 | 本机 IndexedDB；由操作员手动导出本地 JSON | 永不自动上传 |
 | 本机诊断 JSON / 原始串口夹具 | 否 | 操作员主动下载到本机，用于状态排查与 MSP parser 回归 | 不自动采集或上传；原始 `.bin` 最长 60 秒、内存上限 8 MiB |
 | 选手代号、教练备注 | 否 | 仅本地 Session JSON 与线下台账 | 不进入产品统计 |
@@ -87,7 +87,7 @@ npm run dev
 - `遥控油门` 是接收机传入桥接飞控的 RC 指令，不是电机输出。
 - 桥接飞控不接 ESC/电机，因此不读取或展示 `MSP_MOTOR`。
 - `MSP_ANALOG` 的 legacy RSSI 与桥接飞控电压只属于地面桥，不能标成机上 ELRS LQ 或飞行器电池电压。
-- Session 使用 `performance.now()` 单调时钟记录 RC 样本；视频不进入 JSON，也没有帧级时间戳校准。
+- Session 使用 `performance.now()` 单调时钟记录 RC 样本；WebM 文件名关联同一 Session 短 ID，但视频不进入 JSON，也没有帧级时间戳校准。
 - 人工 Marker 只用于定位 DVR 复盘时刻；视觉计圈是独立实验，见 [`docs/vision-lap-experiment.md`](docs/vision-lap-experiment.md)。
 
 硬件取值边界见 [`docs/hardware-architecture.md`](docs/hardware-architecture.md)，试点流程见 [`docs/pilot-runbook.md`](docs/pilot-runbook.md)。
