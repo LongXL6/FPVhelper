@@ -1,14 +1,18 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { evaluateVisionLapRun } from "../lib/vision-lap-evaluation.ts";
 
 const inputPath = process.argv[2];
+const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 if (!inputPath) {
   console.error("用法：npm run vision:evaluate -- /绝对路径/vision-test-run.json");
   process.exitCode = 1;
 } else {
   try {
-    const raw = await readFile(resolve(inputPath), "utf8");
+    const resolvedPath = resolve(inputPath);
+    const file = await stat(resolvedPath);
+    if (!file.isFile() || file.size > MAX_INPUT_BYTES) throw new Error("评估输入必须是小于或等于 20 MiB 的本地文件");
+    const raw = await readFile(resolvedPath, "utf8");
     const report = evaluateVisionLapRun(JSON.parse(raw));
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } catch (error) {
