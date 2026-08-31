@@ -18,15 +18,16 @@
 
 # 统计与云端约束
 
-- 统计链路只允许：浏览器 → 同域 Vercel Route Handler → 独立 FPVHelper 境外 Supabase。
-- 独立 Supabase 项目、Vercel 环境和生产域都属于待云端验证项；不得借用 FPVSuperApp 项目或声称已创建。
-- 书面确认、独立项目和实现验收完成前，生产统计保持关闭。
+- 统计链路只允许：浏览器 → 同域 Vercel Route Handler → FPVSuperApp 拥有的受限摄入入口 → 共享 Supabase 的 FPVHelper 专属命名空间。
+- FPVSuperApp 仓库拥有生产 migration；本仓库现有 analytics migration 只作本地验证和迁移设计参考，不得直接执行到共享云项目。
+- FPVHelper Vercel 不得持有共享项目的 `sb_secret_...` 或旧 `service_role`；受限摄入路径、书面确认和工程验收完成前，生产统计保持关闭。
+- 当前可见的 LONGWEBSITE 项目不得用于 FPVHelper；必须从 FPVSuperApp 真实配置重新确认 project ref。
 - 只允许假名化工作站 ID、白名单事件、枚举环境类别、分类错误码与数值摘要；禁止原始错误文本、姓名、选手代号、设备名、串口名、原始 UA、视频、原始 RC 和 Binding phrase。
 - 禁止引入第三方 analytics SDK、autocapture 或 session replay。
 
 # 发布纪律
 
-- 功能分支经 PR 和 CI 后合并 main；CI 固定执行 `npm ci && npm run check && npm run build`。
+- 功能分支经 PR、独立审查和本地完整门禁后才可合并 main。CI 保留为补充证据；账户/计费造成的 `steps: []` pre-runner 失败不阻塞试点，但真正执行后的代码/测试失败仍是阻断项。
 - Preview 验收通过后才能 Promote；生产核验通过后才创建与 `package.json` 一致的 `vX.Y.Z` tag。
 - `/version.json` 和版本检查 hook 已接入 Dashboard 的升级提示与页脚版本；仍需在真实 Preview/生产域核验后才能宣称发布识别生效。
 - 发布证据按本地、CI、PR、合并、Preview、Promote、生产页面、真机与业务验收分层报告。

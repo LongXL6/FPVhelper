@@ -1,14 +1,17 @@
 # 假名化统计工作站登记手册
 
-本手册描述可审计的工作站 token 生成、登记、安装、验证、轮换与撤销流程。仓库中的实现和命令不证明独立 Supabase、Vercel 环境、生产域、书面确认或线上统计已经配置完成。
+本手册描述可审计的工作站 token 生成、登记、安装、验证、轮换与撤销流程。仓库中的实现和命令不证明 FPVSuperApp 共享 Supabase、Vercel 环境、生产域、书面确认或线上统计已经配置完成。
+
+> 2026-08-31 决定：生产数据复用 FPVSuperApp 的 Supabase 云项目，migration 由 FPVSuperApp 仓库拥有。当前仓库的登记 SQL、migration 和直连适配器仅用于本地逻辑验证；在共享项目的专属命名空间与受限摄入入口完成前，不得对云项目执行本手册的 SQL。
 
 ## 0. 开启前门禁
 
 以下各项必须从对应真相面逐项核验：
 
-- [ ] 独立的 FPVHelper analytics Supabase 项目已创建，且不是 FPVSuperApp 或其他业务项目。
-- [ ] analytics migration 已在该独立项目执行，`analytics_ingest_tokens`、`app_events`、授权函数、RLS 与保留任务均已复核。
-- [ ] Vercel 只配置独立项目的 server-only URL/secret，客户规范域与同域 `/api/events` 已验证。
+- [ ] 已从 FPVSuperApp 仓库和 Dashboard 核验共享 Supabase 的真实 project ref，且不是当前可见的 LONGWEBSITE 项目。
+- [ ] production migration 已由 FPVSuperApp 仓库创建并执行；FPVHelper 专属命名空间、显式 grants、RLS、保留任务与共享项目回归测试均已复核。
+- [ ] FPVSuperApp 已提供受限摄入入口或最小权限数据库角色；FPVHelper Vercel 未配置共享项目 `sb_secret_...` 或旧 `service_role` key。
+- [ ] 客户规范域与同域 `/api/events` 已验证，写入只到 FPVHelper 专属对象。
 - [ ] 数据范围、境外处理和关闭方式已取得书面确认。
 - [ ] 生产配置、Route Handler 和数据库写入已通过工程验收。
 
@@ -40,10 +43,12 @@ npm run analytics:token -- issue --workstation-id <页面复制的完整UUID> --
 
 明文遗失后不能恢复。若 hash 已登记但明文未成功安装，按“轮换”生成新 token，禁止从终端记录或日志中找回。
 
-## 3. 在独立 Supabase 登记
+## 3. 在 FPVSuperApp 共享项目登记
 
-1. 从提供方控制台重新确认当前是独立 FPVHelper analytics 项目。
-2. 只复制命令输出的 `REGISTRATION SQL` 区段到该项目 SQL Editor；不要粘贴明文 token 或 operator JSON。
+本节只有在 FPVSuperApp-owned production migration 和受限摄入实现完成后才可执行。当前 CLI 输出的登记 SQL 不是共享项目生产接口，不得直接使用。
+
+1. 从 FPVSuperApp 仓库配置和提供方控制台交叉确认真实 project ref，并确认不是 LONGWEBSITE 项目。
+2. 通过 FPVSuperApp 批准的受限运营入口登记；不要把共享项目 secret/service-role key 配置到 FPVHelper，也不要粘贴明文 token 或 operator JSON。
 3. 执行后必须返回恰好 1 行，且 workstation ID 与页面一致。0 行、多行、唯一约束错误或项目不符都视为未登记完成。
 4. 将不含明文的 operator JSON 保存到受控运营记录；analytics 数据库内不得建立 workstation-to-club 映射。
 
@@ -60,7 +65,7 @@ npm run analytics:token -- issue --workstation-id <页面复制的完整UUID> --
 
 - 浏览器：状态为“已开启”；Network 中同域 `POST /api/events` 返回 `204`，请求只发往客户规范域。
 - Route Handler：确认请求通过 token/workstation 绑定与配额授权；不得记录 request body 或 token。
-- 独立 Supabase：按 workstation ID 查到 active token hash 与新 `app_events`，且事件只含白名单枚举/数值摘要。
+- FPVSuperApp 共享 Supabase：在 FPVHelper 专属命名空间按 workstation ID 查到 active token hash 与新 `app_events`，且事件只含白名单枚举/数值摘要；同时抽查没有访问其他业务对象的权限。
 - 隐私抽查：无视频、原始 RC、姓名、选手代号、备注、设备/串口名、原始 UA、message、stack、digest 或原始错误文本。
 
 `204` 不证明后续报表、试点验收或硬件工作流完成；数据库事件也不证明书面同意、生产发布或真机验收。
@@ -85,7 +90,7 @@ npm run analytics:token -- rotate --workstation-id <完整UUID> --club-code <俱
 npm run analytics:token -- revoke --workstation-id <完整UUID> --club-code <俱乐部代号>
 ```
 
-4. 在正确的独立 Supabase 项目执行输出 SQL，必须返回恰好 1 行。
+4. 通过 FPVSuperApp 批准的受限撤销入口执行，必须返回恰好 1 行；不得直接使用当前 CLI SQL 操作共享云项目。
 5. 用旧 token 的受控负向测试应得到拒绝；不得把旧明文放入命令参数、日志或工单。
 
 紧急情况下可先执行服务器撤销，再尽快完成本地关闭。服务器撤销与本地清理是两个独立证据层，必须分别记录。

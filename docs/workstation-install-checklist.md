@@ -51,11 +51,12 @@
 ## F. 统计与网络
 
 - [ ] 假名化统计的书面确认已取得，或确认统计保持关闭。
-- [ ] 独立 FPVHelper Supabase 与 Vercel 接收路径已由云端负责人核验；不得借用 FPVSuperApp 项目。
-- [ ] 未完成独立项目、server-only 配置、生产域和工程验收前，`NEXT_PUBLIC_ANALYTICS_ENABLED` 保持非 `true`，未生成/登记/安装 token。
-- [ ] 按 [`analytics-provisioning-runbook.md`](analytics-provisioning-runbook.md) 复制页面完整 workstation ID，以管理员 CLI 生成 hash/SQL，并在独立项目登记恰好 1 行。
+- [ ] 已从 FPVSuperApp 仓库和 Dashboard 核验共享 Supabase 的真实 project ref；当前 LONGWEBSITE 项目不得使用。
+- [ ] FPVSuperApp-owned production migration、FPVHelper 专属命名空间和受限摄入路径均已核验；FPVHelper Vercel 未配置共享项目 secret/service-role key。
+- [ ] 未完成共享项目 migration、受限摄入、生产域和工程验收前，`NEXT_PUBLIC_ANALYTICS_ENABLED` 保持非 `true`，未生成/登记/安装 token。
+- [ ] 按 [`analytics-provisioning-runbook.md`](analytics-provisioning-runbook.md) 复制页面完整 workstation ID，并使用更新后的受限登记路径登记恰好 1 行；当前旧版 SQL 不得直接执行到共享云项目。
 - [ ] token 明文未进入命令参数、文件、截图、聊天、Git 或数据库；club/workstation 映射未进入 analytics 数据库。
-- [ ] 安装后已分别验证页面状态、同域 `/api/events`、独立数据库事件与禁止字段抽查。
+- [ ] 安装后已分别验证页面状态、同域 `/api/events`、共享项目专属命名空间事件与禁止字段抽查。
 - [ ] 已确认关闭统计只清 token/待发送队列并停止发送，不删除本地 Session 台账使用的随机 workstation ID。
 - [ ] 使用俱乐部实际网络和手机热点分别验证页面；结果只写实测数据。
 - [ ] 视频、原始 RC、选手代号和原始错误文本没有出站。

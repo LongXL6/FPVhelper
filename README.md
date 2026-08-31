@@ -40,13 +40,13 @@ Pilot Radio → 该选手预绑定的 Ground ELRS RX → 该选手独立 Bridge 
 | 原始 RC 通道与 20 Hz 样本 | 否 | 本机 IndexedDB；由操作员手动导出本地 JSON | 永不自动上传 |
 | 本机诊断 JSON / 原始串口夹具 | 否 | 操作员主动下载到本机，用于状态排查与 MSP parser 回归 | 不自动采集或上传；原始 `.bin` 最长 60 秒、内存上限 8 MiB |
 | 选手代号、教练备注 | 否 | 仅本地 Session JSON 与线下台账 | 不进入产品统计 |
-| 假名化产品使用统计 | 条件式 | 同域 Vercel Route Handler → 独立 FPVHelper 境外 Supabase，用于连接、错误和 Session 覆盖率诊断 | 尚需独立云项目、实现验收与书面确认；确认前关闭；上线后须支持 `?analytics=off` |
+| 假名化产品使用统计 | 条件式 | 同域 Vercel Route Handler → FPVSuperApp 受限摄入入口 → 共享 Supabase 的 FPVHelper 专属命名空间，用于连接、错误和 Session 覆盖率诊断 | 尚需共享项目迁移、最小权限摄入、实现验收与书面确认；确认前关闭；上线后须支持 `?analytics=off` |
 
 假名化统计只允许随机工作站 ID、白名单事件、枚举环境类别、分类错误码、Session 时长与样本数等摘要；禁止姓名、选手代号、原始 UA、设备名、串口名、原始错误文本、视频、原始 RC 与 Binding phrase。不得引入第三方 analytics SDK。
 
 ### 统计工作站登记
 
-独立 FPVHelper analytics Supabase、Vercel server-only 配置、客户规范域、书面确认与工程验收任一未完成时，生产统计保持关闭，不生成、不登记、不安装 token。配置完成后，页面在 `waiting_token` 状态显示可复制的完整随机 workstation UUID；复制不会启用或发送统计，该 ID 也作为本地 Session JSON 的工作站台账身份，关闭统计不会删除它。
+FPVSuperApp 共享项目 migration、受限摄入路径、客户规范域、书面确认与工程验收任一未完成时，生产统计保持关闭，不生成、不登记、不安装 token。不得把共享项目 secret/service-role key 配置到 FPVHelper Vercel。配置完成后，页面在 `waiting_token` 状态显示可复制的完整随机 workstation UUID；复制不会启用或发送统计，该 ID 也作为本地 Session JSON 的工作站台账身份，关闭统计不会删除它。
 
 管理员只使用仓库内 CLI 生成登记材料：
 
@@ -100,6 +100,7 @@ npm run dev
 - 训练与对表：[`docs/templates/training-ledger.md`](docs/templates/training-ledger.md)、[`docs/dvr-alignment.md`](docs/dvr-alignment.md)
 - 数据与同意：[`docs/quote-data-appendix-draft.md`](docs/quote-data-appendix-draft.md)、[`docs/templates/guardian-consent-template.md`](docs/templates/guardian-consent-template.md)
 - 统计登记：[`docs/analytics-provisioning-runbook.md`](docs/analytics-provisioning-runbook.md)
+- 云端归属决策：[`docs/designs/fpvsuperapp-shared-supabase-decision.md`](docs/designs/fpvsuperapp-shared-supabase-decision.md)
 - 实验与协作：[`docs/vision-lap-experiment.md`](docs/vision-lap-experiment.md)、[`docs/development/agent-worktree-workflow.md`](docs/development/agent-worktree-workflow.md)
 - 实施规格与商业设计底稿：[`strategy-review-2026-08-31.md`](docs/designs/strategy-review-2026-08-31.md)、[`analytics-tracking-plan.md`](docs/designs/analytics-tracking-plan.md)、[`fpv-club-pricing-license.md`](docs/designs/fpv-club-pricing-license.md)
 

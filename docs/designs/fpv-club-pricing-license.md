@@ -11,7 +11,7 @@ Mode: Startup
 - 产品统一为“FPVHelper 训练工作台 / 俱乐部训练量化”。本文中的金额、席位和套餐是既有设计假设，必须进入双方最终书面报价后才生效；不得据此宣称已报价、已收款或已成交。
 - 每位选手使用一整套独立、预绑定、贴代号的 `Bridge FC + ELRS RX`，换人更换整套 USB Bridge。共用 FC 或现场换插 RX 不属于已定方案。
 - 客户入口为 `race.fpvsuperapp.com`；`helper.longxl.com` 仅内部完整验证，不计生产使用或试点验收数据。当前不做 301/308。
-- 云端必须新建独立 FPVHelper Supabase，不得使用 FPVSuperApp 共用项目。假名化统计只允许经 Vercel 到该境外项目，并在数据附件获书面确认、工程验收完成前关闭。
+- 云端复用 FPVSuperApp Supabase，生产 migration 由 FPVSuperApp 仓库拥有，FPVHelper 使用专属命名空间和受限摄入路径。FPVHelper Vercel 不得持有共享项目 secret/service-role key；数据附件获书面确认、工程验收完成前统计保持关闭。
 - 视频与原始 RC 永不上传；选手代号和备注保留在本地 JSON/线下台账。本文不提供法律意见，未成年人、跨境、保留和删除规则需由有权负责人书面确认。
 - 人工 Marker 只定位 DVR 复盘时刻；视觉 YOLO 计圈是独立实验，达到 `>=300` 真值、Recall `>=98%`、误报+重复 `<=1%`、时间偏差 P95 `<=100 ms` 才能申请升级训练辅助宣传，仍非赛事认证。
 
@@ -115,7 +115,7 @@ FPV 俱乐部老板无法持续量化选手的训练过程。现有复盘主要�
 
 - 试点期视频由俱乐部现有 DVR 负责录制和保存；FPVHelper 只在本机实时显示 UVC HDMI 画面，不录制视频，也不承诺视频与遥测的帧级同步或时间线回放。
 - 原始 RC 样本只保存在本机 IndexedDB/导出 JSON，永不上传；云端不得接收原始 RC。
-- 假名化使用统计如启用，只能经同域 Vercel Route Handler 写入新建的独立 FPVHelper 境外 Supabase；书面确认和工程验收前保持关闭。
+- 假名化使用统计如启用，只能经同域 Vercel Route Handler 和 FPVSuperApp 受限摄入入口写入共享 Supabase 的 FPVHelper 专属命名空间；书面确认和工程验收前保持关闭。
 - 云端数据能力上线后，只保存俱乐部、成员、选手索引、训练摘要、指标、Marker 文本和报告，不上传原始视频。
 - 远程页面上线后，只显示摘要与报告；可选短片上传属于后续独立同意的功能，不在首批许可承诺内。
 - 俱乐部可以导出训练摘要并申请删除云端数据；成员移除后立即失去访问权。

@@ -3,16 +3,16 @@
 Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-review-2026-08-31.md`](strategy-review-2026-08-31.md) 第 3 章
 适用范围：试点期（1 家俱乐部、≤2 台工作站）的最小可行埋点；Phase 2 事件在试点第 2 周后按需启用。
 
-**一句话决定**：自建最小管道（`lib/analytics` 本地队列 → Vercel 上同域 `POST /api/events` 处理入口 → 独立 FPVHelper Supabase 托管的 `app_events` 表 → SQL 视图），不引入第三方分析 SDK，也不双写第三方接收方。
+**一句话决定**：自建最小管道（`lib/analytics` 本地队列 → Vercel 上同域 `POST /api/events` 处理入口 → FPVSuperApp 受限摄入入口 → 共享 Supabase 的 FPVHelper 专属命名空间 → SQL 视图），不引入第三方分析 SDK，也不双写第三方接收方。
 
-**上线硬前提**（先于任何 `track()` 调用）：① 错误码枚举（`lib/analytics/error-codes.ts`）；② `source` / `connection` 分离；③构建号；④ `assessTrainingSession()`；⑤客户只在 `race.fpvsuperapp.com` 产生生产事件，`helper.longxl.com` 仅内部非生产；⑥数据附件写入“假名化产品使用统计”并获书面确认；⑦新建独立 FPVHelper Supabase 并完成工程验收。任何一项未完成，生产统计保持关闭。
+**上线硬前提**（先于任何 `track()` 调用）：① 错误码枚举（`lib/analytics/error-codes.ts`）；② `source` / `connection` 分离；③构建号；④ `assessTrainingSession()`；⑤客户只在 `race.fpvsuperapp.com` 产生生产事件，`helper.longxl.com` 仅内部非生产；⑥数据附件写入“假名化产品使用统计”并获书面确认；⑦从 FPVSuperApp 真实配置核验共享 project ref，并完成 FPVSuperApp-owned production migration、专属命名空间、受限摄入和工程验收。任何一项未完成，生产统计保持关闭。
 
 ## 实施勘误与单一真相源
 
 - Phase 1 是 **19 个事件名**；“17”只可表示把 `telemetry_stalled/resumed` 与 `page_hidden/visible` 各视为一个事件族后的 17 族。
 - `workstation_id` 可被线下台账重新关联，是假名化 ID，不是匿名 ID。
 - 事件永不含原始 `error.message`、stack、视频、原始 RC、设备名、串口名、原始 UA 或选手代号；历史代码骨架中的 raw error 字段已在本版删除。
-- 唯一可执行、可部署的数据库来源是 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)；本文不保留 SQL 副本，避免规格与实际 migration 漂移。
+- 当前仓库的 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql) 仅是本地逻辑与 pgTAP 参考，不能直接部署到共享云项目；production migration 必须在 FPVSuperApp 仓库通过 Supabase CLI 创建并成为单一部署来源。
 - 当前不做 301/308：`race.fpvsuperapp.com` 是客户生产入口，`helper.longxl.com` 是内部完整验证且强制非生产。未来停用内部入口时才另行审批 308。
 - 人工 Marker 只定位 DVR 复盘时刻；视觉计圈属于独立实验，见 [`../vision-lap-experiment.md`](../vision-lap-experiment.md)。
 - 工作站与俱乐部的映射只留在线下台账，不进入本数据库，也不得通过可 join 表重建；实际 migration 不包含旧 `app_workstations` 草案。
@@ -37,11 +37,11 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 3.2 工具选型结论与理由
 
-**结论：自建最小管道，不引入第三方分析 SDK。** `lib/analytics.ts`（localStorage 队列 + `fetch keepalive` / `sendBeacon`）→ Vercel 上的同域 `app/api/events/route.ts` 处理入口（Next Route Handler，Node 运行时）→ 新建的 FPVHelper 独立 Supabase 项目托管 `app_events`。分析写入只读取 `FPVHELPER_ANALYTICS_SUPABASE_URL` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY` 两个服务端配置，不回退到公开、通用或旧 `service_role` 变量。分析使用数据库内的受限 SQL 视图，试点期不做看板产品。
+**结论：自建最小管道，不引入第三方分析 SDK。** `lib/analytics.ts`（localStorage 队列 + `fetch keepalive` / `sendBeacon`）→ Vercel 上的同域 `app/api/events/route.ts` 处理入口（Next Route Handler，Node 运行时）→ FPVSuperApp-owned 受限摄入入口 → 共享 Supabase 的 FPVHelper 专属命名空间。FPVHelper Vercel 不得持有共享项目 `sb_secret_...` 或旧 `service_role`；分析使用专属对象内的受限 SQL 视图，试点期不做看板产品。
 
 理由：
 - **规模**：试点是 1 家俱乐部、2 台工作站、4 周约 16–30 条 Session、几十次页面打开，任何转化率都没有统计意义；埋点的价值在于"每一次失败都能归因"，而不是漏斗曲线。
-- **数据边界**：页面文案（`flight-dashboard.tsx:277`）与报价单附件（L112）必须分别写清 Vercel 处理入口和独立 FPVHelper Supabase 境外托管存储；二者都属于数据链路。禁止第三方分析 SDK，以免未经书面确认增加新的处理方或接收方。
+- **数据边界**：页面文案（`flight-dashboard.tsx:277`）与报价单附件（L112）必须分别写清 Vercel 处理入口和 FPVSuperApp 共享 Supabase 境外托管存储；二者都属于数据链路。禁止第三方分析 SDK，以免未经书面确认增加新的处理方或接收方。
 - **可迁移但不双写**：事件信封保持通用 `event_name` + `props` 结构；未来更换接收方必须重新审批数据附件，当前禁止 PostHog 双写和第三方 SDK。
 - **与训练数据同源**：`recording_id` 贯穿 `app_events` 与未来的 `training_sessions`，验收指标可以一条 SQL 算出来（data-eng 视角）。
 
@@ -65,7 +65,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | Vercel Web Analytics | 不属于本次已批准的事件管道；如未来启用，需先核验字段、处理链路与合同边界。 |
 | Umami / Plausible | 会增加新的处理方或自托管运维面，且本阶段未完成能力验证；不作为当前事实依据。 |
 | Sentry | 试点期用 `js_error` 事件走同一管道即可；许可后再评估。 |
-| 在共用的 FPVSuperApp Supabase 项目里建表 | 违反你的全局规则（本仓库无 migrations）；RLS 漏洞与删除承诺无法按产品切开。 |
+| FPVHelper 直接持共享项目 secret/service-role key 建表和写入 | 高权限 key 可绕过 RLS 并访问整个项目；改由 FPVSuperApp 仓库拥有 migration，并通过专属命名空间与受限摄入隔离。 |
 
 ## 3.3 事件表
 
@@ -146,7 +146,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 3.6 每周看板
 
-试点期不做看板产品：在 Supabase SQL 编辑器保存以下视图，每周一看一次并把 D1 的数字直接抄进周报。
+试点期不做看板产品：以下视图由 FPVSuperApp production migration 创建并审查；每周一只通过获批的只读查询或查看入口读取，并把 D1 的数字抄进周报。不得在共享项目 SQL Editor 临时创建或改写视图。
 
 | 看板 | 每周一要回答的问题 | 数据来源 | 形式 |
 | --- | --- | --- | --- |
@@ -164,7 +164,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 2. **不采姓名**：任何时候不采集姓名、手机、邮箱、原始 UA、`device.label`、串口名、`error.message` 原文、Binding phrase（`docs/hardware-architecture.md:56`）、20 Hz 打杆样本、视频帧、串口原始字节。`error_message` 只保留分类枚举；设备只保留 `device_kind` 与 USB VID/PID。
 3. **选手代号**：Phase 1 事件设计上不含姓名或选手代号；这不替代对假名化工作站数据、平台日志及未成年人场景的法律判断。Phase 2 若引入 `athlete_code_hash`，前端只接收“已取得监护人同意的代号列表”（L113），未同意代号不得出现在任何事件或云端摘要里。
 4. **未成年人与出境**：敏感信息、PIA、跨境机制与平台日志保留应由有权法律/合规负责人结合主体和地区书面判断；本文不提供法律意见。选手档案上云前必须另行审查。Route Handler 不主动落 IP/UA，平台日志边界仍需核验并写入附件。
-5. **报价单附件必须写的一行**（L112 要求“采集字段、用途、处理方/托管方、访问人、保留期、删除方式”）：“假名化产品使用统计：操作事件、设备环境类别、分类错误码、Session 时长与样本数统计；不含画面、原始 RC、选手代号或原始错误文本；经 Vercel 同域入口处理后写入境外托管的独立 FPVHelper Supabase；平台日志边界、访问人、保留期与删除方式以最终书面附件为准；工作站可关闭统计。”书面确认、独立项目和工程验收完成前保持关闭；`?analytics=off` 是否作为最终关闭机制须由工程实现与验收确认。
+5. **报价单附件必须写的一行**（L112 要求“采集字段、用途、处理方/托管方、访问人、保留期、删除方式”）：“假名化产品使用统计：操作事件、设备环境类别、分类错误码、Session 时长与样本数统计；不含画面、原始 RC、选手代号或原始错误文本；经 Vercel 同域入口和 FPVSuperApp 受限摄入处理后写入境外托管的 FPVSuperApp Supabase 专属命名空间；平台日志边界、访问人、保留期与删除方式以最终书面附件为准；工作站可关闭统计。”书面确认、共享项目工程验收完成前保持关闭；`?analytics=off` 是否作为最终关闭机制须由工程实现与验收确认。
 6. **界面与文档同步**：文案改为"视频与原始 RC 不上传；假名化使用统计在书面确认后可启用并可关闭"；README 增加「离开本机的数据」表，`hardware-architecture.md` 引用该表，同一口径复制进附件。
 7. **保留与删除**：`app_events` 90 天（覆盖 4 周试点 + 复盘）；试点结束 30 天内俱乐部未转年许可则删除该 `workstation_id` 全部事件（一条 SQL）；聚合后的周报数字不含标识可长期保留；本地离线队列上限 500 条、7 天过期。
 8. **工程约束**：不引入第三方分析 SDK 写进 `CLAUDE.md`；`VERCEL_ENV !== "production"` 不上报；Route Handler 在接受任何事件行前校验受控 ingest token，并执行严格事件名/属性白名单、批量 ≤50、请求体与单条属性大小限制、时间窗校验、幂等去重和限速；Preview 访问保护是否可用、如何配置需按实际 Vercel 项目与方案现场核验。
@@ -172,7 +172,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 3.8 实施步骤
 
-**前置（D1，创始人）**：新建 FPVHelper 独立 Supabase 项目；Vercel 只配置 `FPVHELPER_ANALYTICS_SUPABASE_URL` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY`，密钥永远不加 `NEXT_PUBLIC_` 前缀且值不进对话/文件/commit；不得复用其他项目的 `NEXT_PUBLIC_SUPABASE_URL`、通用 `SUPABASE_URL / SUPABASE_SECRET_KEY` 或旧 `SUPABASE_SERVICE_ROLE_KEY`；另配置受控 ingest token 与统计开关；核验 System Environment Variables 和 `VERCEL_GIT_COMMIT_SHA`；客户域固定为 `race.fpvsuperapp.com`。
+**前置（D1，创始人）**：从 FPVSuperApp 仓库和 Dashboard 核验共享项目真实 project ref，当前 LONGWEBSITE 项目明确排除；在 FPVSuperApp 仓库创建 production migration、专属命名空间与受限摄入接口。FPVHelper Vercel 只配置受限摄入凭证和统计开关，不得配置共享项目 `sb_secret_...`、旧 `service_role`、数据库 URL 或其他业务项目变量；核验 System Environment Variables 和 `VERCEL_GIT_COMMIT_SHA`；客户域固定为 `race.fpvsuperapp.com`。
 
 **文件级改动清单**
 
@@ -183,12 +183,12 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `lib/analytics/error-codes.ts` + `.test.ts` | 新建 | `classifySerialError() / classifyMediaError()`：`DOMException.name + message` → 枚举 + 中文下一步文案；vitest 覆盖 NotFoundError / NetworkError / InvalidStateError / NotAllowedError / NotReadableError / OverconstrainedError |
 | `lib/training-session.ts` + `.test.ts` | 修改 | `assessTrainingSession(session): { valid, reasons[] }` 纯函数（L168 逐子句）；schema v2 字段；`parseTrainingSession()` 兼容 v1；`serializeTrainingSession` 去掉 pretty print；补 3–5 个用例 |
 | `hooks/use-analytics-lifecycle.ts` | 新建 | `app_opened`（含微信/浏览器检测）、`page_hidden/visible`、`page_unloaded`、`js_error`；`beforeunload` 在录制中或有未导出记录时 `preventDefault` |
-| `app/api/events/route.ts` | 新建 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；独立项目 secret key 写入；每 token + 工作站在数据库内原子限流，超限返回 429 + `Retry-After`，成功返回 204 |
-| `lib/supabase/analytics-admin.ts` | 新建 | `import "server-only"` 的独立分析项目 secret-key 客户端，只被 Route Handler 引用 |
-| `supabase/migrations/20260830192551_app_events_analytics.sql` | 已实现 | 唯一可执行、可部署的数据库 migration；部署与审查都直接读取该文件 |
+| `app/api/events/route.ts` | 修改 | `POST`，Node 运行时；接受 `application/json` 与 `sendBeacon` 的 `text/plain`；校验白名单与批量上限；剥 IP/UA；调用 FPVSuperApp 受限摄入入口；每 token + 工作站原子限流，超限返回 429 + `Retry-After`，成功返回 204 |
+| `lib/supabase/analytics-admin.ts` | 待替换 | 当前独立项目 secret-key 适配器只保留本地参考；生产改为只调用 FPVSuperApp 受限摄入，不接触共享项目高权限 key |
+| `supabase/migrations/20260830192551_app_events_analytics.sql` | 本地参考 | 本地逻辑与 pgTAP 回归基线；不得直接部署共享云项目。production migration 在 FPVSuperApp 仓库创建并审查 |
 | `app/error.tsx` | 新建 | Next 16 错误边界（`{ error, retry }`），上报 `js_error` |
 | `next.config.ts` | 修改 | `env.NEXT_PUBLIC_APP_VERSION`、`NEXT_PUBLIC_ANALYTICS_ENABLED`（仅 `VERCEL_ENV === "production"`） |
-| `.env.example` | 修改 | 独立分析项目只写 `FPVHELPER_ANALYTICS_SUPABASE_URL=` 与 `FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY=`（值留空，仅 Vercel 服务端）；不回退通用/旧项目变量；统计开关与 ingest token 均不写真实值 |
+| `.env.example` | 修改 | 旧 `FPVHELPER_ANALYTICS_SUPABASE_*` 标明仅供本地参考；生产只保留受限摄入配置占位，不写共享项目 URL、secret/service-role key 或真实值 |
 | `package.json` | 修改 | `npm i server-only`；`version` 随发布递增 |
 | `hooks/use-betaflight-telemetry.ts` | 修改 | `error` 改 `{ code, message }`；`source` 只在首帧后切 serial；`NotFoundError` 视为取消；1.5 秒看门狗 + `stale` 状态 + 首帧超时；`navigator.serial` `disconnect` 监听；RC/ANALOG/checksum/error 帧计数 ref；在 `:156 / :185 / :215 / :224 / :229 / :118` 处 `track()` |
 | `hooks/use-video-capture.ts` | 修改 | `error` 改 `{ code, message }`；`:65 / :67` 处 `track()`（含 `getSettings()`）；`:59` 后 `track.onended` |
@@ -197,9 +197,9 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 | `lib/web-serial.d.ts` | 修改 | `getInfo(): { usbVendorId?, usbProductId? }`；`Serial.addEventListener("disconnect" / "connect")`；`navigator.serial.getPorts()` |
 | `components/flight-dashboard.tsx` | 修改 | 5 个关键按钮改具名 handler + `data-track-id`；错误横幅按 `code` 显示中文并 `error_shown`；接入 `useAnalyticsLifecycle`；页脚显示 `build`；改 `:277 / :332 / :403` 文案；状态 chip 全断点保留 |
 | `README.md` | 修改 | 「离开本机的数据」表；「使用统计」小节（采什么、不采什么、如何关闭） |
-| `CLAUDE.md` | 修改 | 项目用途 / 技术栈 / 两个域名哪个正式 / Supabase 项目归属与 migrations 位置 / 凭证只在 Vercel 与 `.env.local` / 禁止事项（不引入第三方分析 SDK；不在本仓库改共用 Supabase） |
+| `CLAUDE.md` | 修改 | 项目用途 / 技术栈 / 两个域名哪个正式 / FPVSuperApp 仓库拥有 production migrations / 共享项目高权限凭证禁止进入 FPVHelper / 不引入第三方分析 SDK |
 
-**Supabase migration 来源**：不要从本文复制或执行 SQL。新建的独立 FPVHelper Supabase 只部署并审查 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)；历史最小草案已删除。
+**Supabase migration 来源**：不要从本文复制或执行 SQL。当前 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql) 只用于本地逻辑验证；共享项目的唯一生产部署来源必须是 FPVSuperApp 仓库中新建并审查的 migration。
 
 **工作量**（人日）
 
@@ -231,13 +231,13 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 
 ## 附录 A · 技术骨架（analytics-infra agent 独立核实；与 3.2 结论一致）
 
-analytics-infra 在没有看到合成文档的情况下独立得出同一技术方向：**自建管道 → 同域 Vercel Route Handler 处理入口 → 独立 FPVHelper Supabase 托管，RLS 开且零策略，不接第三方 SDK**。历史工时估算不构成排期承诺。本附录收录它补充的参数与代码骨架；外部云服务行为、区域与方案必须在实施时重新核验。命名已统一为本文档口径：表 `app_events`；ID 三层 `workstation_id / visit_id / recording_id`（刻意避开 "session" 一词，以免与训练 Session 混淆）；事件名以 3.3 事件表为准。
+analytics-infra 的历史独立分析原本建议新建项目；2026-08-31 已由产品决定改为：**自建客户端管道 → 同域 Vercel Route Handler → FPVSuperApp 受限摄入 → 共享 Supabase 专属命名空间，不接第三方 SDK**。历史工时估算不构成排期承诺。本附录收录仍有效的参数与代码骨架；凡涉及独立项目 secret client 的旧骨架均不得用于共享生产环境。
 
 ### A.1 为什么必须走同域 Route Handler，而不是浏览器直连 Supabase
 
 1. **减少客户端直接依赖**：浏览器 → 同域 Vercel 函数 → 境外 Supabase 可避免浏览器直接携带数据库连接配置，但不代表链路“不过墙”或已经可用。中国大陆到客户域、Vercel 函数再到 Supabase 的实际可达性、延迟与稳定性必须在现场网络验证；社区讨论不能替代服务商承诺或真机证据。
 2. **`navigator.sendBeacon` 不能设置 `apikey` / `Authorization` 头**：直连 Supabase REST 时，页面关闭前的最后一批要么丢，要么把 key 塞进 URL 进日志。同域端点接受 `text/plain`，无 CORS 预检，`sendBeacon` 直接可用。
-3. **凭据边界**：直连要把 publishable key + RLS insert 策略暴露给任何人，垃圾数据只能靠 CHECK 兜底；Route Handler 让浏览器 bundle 里不含任何 Supabase 凭据，服务端统一校验（白名单 / UUID / 时间窗 / 大小 / 批数），补 `country`（仅两位国家码，不存 IP）与 `clock_offset_ms`，并用 `upsert(onConflict: event_id, ignoreDuplicates)` 幂等去重。
+3. **凭据边界**：直连要把 publishable key + RLS insert 策略暴露给任何人；Route Handler 让浏览器 bundle 里不含 Supabase 凭据，并统一校验白名单 / UUID / 时间窗 / 大小 / 批数。Route Handler 只调用 FPVSuperApp 受限摄入入口，不持有共享项目 secret/service-role key；幂等去重在受限服务和数据库内完成。
 4. 第三方分析/错误上报产品的区域、可达性、合同和字段边界均未在本项目核验；无论供应商是谁，未经新的数据附件和工程审批都不得接入。
 5. **Vercel 函数区域**：项目当前区域、可选区域与方案限制均需从实际项目和服务商文档核验；确认 Supabase 项目区域后再选择函数区域，并用现场请求记录评估链路延迟，本文不预设区域或延迟数字。
 
@@ -274,7 +274,7 @@ analytics-infra 在没有看到合成文档的情况下独立得出同一技术�
 | --- | --- | --- |
 | Supabase 项目可能因方案或状态不可用 | `/api/events` 返回 5xx，离线队列持续增长 | 先从实际项目与服务商文档核验暂停/恢复规则；客户端退避重试，运营台账记录不可用时段；不得为 keep-alive 或升级方案作未审批承诺 |
 | Vercel 函数区域与 Supabase 区域不一致 | 每批多一次跨洋往返 | `vercel.json` `regions` 对齐 Supabase 区域 |
-| `lib/supabase/server.ts` 不能作为写入端 | 它用 publishable key + cookie，写入会被零策略 RLS 拒绝 | 新建 `lib/supabase/analytics-admin.ts`（`server-only`，只读取 `FPVHELPER_ANALYTICS_SUPABASE_URL / FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY`，`persistSession: false`；不兼容回退其他项目变量） |
+| `lib/supabase/server.ts` 和 `analytics-admin.ts` 都不能作为共享项目生产写入端 | 前者是用户会话客户端；后者要求共享项目高权限 secret | 由 FPVSuperApp 仓库提供受限摄入接口或最小权限数据库角色；FPVHelper 只持有该单用途凭证 |
 
 ### A.7 代码骨架
 
@@ -460,7 +460,6 @@ export function onRouterTransitionStart(url: string, navigationType: "push" | "r
 ```ts
 // app/api/events/route.ts
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/analytics-admin"; // server-only；FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY，无 cookie
 import { ANALYTICS_EVENT_NAMES } from "@/lib/analytics/events";
 
 export const runtime = "nodejs";
@@ -513,40 +512,25 @@ export async function POST(request: Request) {
   }
   if (rows.length === 0) return NextResponse.json({ error: "no_valid_events" }, { status: 422 });
 
-  // 幂等：event_id 冲突直接忽略。beacon 补发、双开标签页产生的重复都在这里被吸收。
-  const { error } = await createAdminClient()
-    .from("app_events")
-    .upsert(rows, { onConflict: "event_id", ignoreDuplicates: true });
-  if (error) {
-    console.error("analytics insert failed", error.code); // 不记录 raw error message；客户端凭状态码决定是否出队
-    return NextResponse.json({ error: "db_unavailable" }, { status: 503 });
-  }
-  return NextResponse.json({ accepted: rows.length, rejected: body.events.length - rows.length });
+  // 生产边界：通过 FPVSuperApp-owned 受限摄入客户端转发 rows。
+  // endpoint、单用途凭证名、重试和幂等协议必须在 FPVSuperApp 实施 PR 中定义并审查；
+  // 本文刻意不提供共享项目直连或 secret/service-role 写入代码。
+  return NextResponse.json({ error: "restricted_ingest_not_implemented" }, { status: 503 });
 }
-
-// lib/supabase/analytics-admin.ts
-// import "server-only";
-// import { createClient } from "@supabase/supabase-js";
-// export function createAdminClient() {
-//   const url = process.env.FPVHELPER_ANALYTICS_SUPABASE_URL;
-//   const key = process.env.FPVHELPER_ANALYTICS_SUPABASE_SECRET_KEY;
-//   if (!url || !key) throw new Error("analytics server configuration missing");
-//   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-// }
 ```
 
 ### A.8 migration 部署来源（不含 SQL 副本）
 
-唯一可执行、可部署、可审查的数据库来源是 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql)。本附录不再复制表结构、RLS、权限、清理函数或看板视图 SQL；任何数据库变更必须直接修改并验证该 migration（或新增由 Supabase CLI 创建的后续 migration），不得从本文恢复旧 A.8 草案。
+当前仓库的 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql) 是本地可审查的逻辑参考，不是共享云项目部署来源。本附录不复制 SQL；production migration 必须在 FPVSuperApp 仓库由 Supabase CLI 创建并连同共享项目回归测试一起审查。
 
-该 migration 当前覆盖事件写入白名单与校验、服务端 ingest token/配额、90 天保留清理、私有分析台账及周报视图。这里的摘要只用于导航，不构成部署指令；最终行为始终以 migration 文件及其自动化数据库测试为准。
+参考 migration 当前覆盖事件写入白名单与校验、服务端 ingest token/配额、90 天保留清理、私有分析台账及周报视图。这里的摘要只用于迁移设计导航，不构成共享项目部署指令；最终生产行为以 FPVSuperApp 仓库 migration 及其自动化数据库测试为准。
 
 ### A.9 analytics-infra 提出、需要创始人回答的问题（与母文档第 7 章去重后的补充）
 
-- 已决定：不得使用 FPVSuperApp 共用项目；必须新建独立 FPVHelper Supabase。仍需创建后核验项目区域、migration 所有权和 Vercel 函数区域。
+- 已决定：复用 FPVSuperApp Supabase；仍需从真实配置核验 project ref、区域、migration 所有权、专属命名空间、受限摄入和 Vercel 函数区域。LONGWEBSITE 项目不在范围内。
 - Vercel 当前实际方案是什么？试点收费前须由有权负责人核验当时的商用条款、函数区域、访问保护与限流规则，并记录选择；本文不指定套餐或价格。
 - 已决定：`race.fpvsuperapp.com` 是客户规范域，`helper.longxl.com` 仅内部非生产；当前不做 301/308。仍需核验两域的真实云端状态。
-- 已决定：假名化统计经 Vercel 到境外独立 FPVHelper Supabase，书面确认和工程验收前关闭。具体合规程序、访问人和保留期仍待有权负责人确认。
+- 已决定：假名化统计经 Vercel 和 FPVSuperApp 受限摄入到境外共享 Supabase 的专属命名空间，书面确认和工程验收前关闭。具体合规程序、访问人和保留期仍待有权负责人确认。
 - 是否要在界面上给俱乐部一个'使用统计已开启'的可见提示或关闭开关？还是只在报价单附件里告知？
 - recording_stop 事件是否顺便带上训练 Session 摘要（时长、样本数、采样率、valid 判定、导出与否，不含样本），让'有效 Session 覆盖率'这个试点核心 KPI 自动统计？这会是训练摘要上云的第一步。
 - 周报由你一个人看 SQL Editor 就够，还是主教练也要能自己看（决定是否做 /admin 页）？
