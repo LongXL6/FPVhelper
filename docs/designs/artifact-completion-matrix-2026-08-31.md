@@ -27,7 +27,7 @@
 | 证据层 | 当前状态 | 可证明 | 不可证明 |
 | --- | --- | --- | --- |
 | 本地代码 | `1cba5b5` 已完成 42 个 Vitest 文件 / 229 项、非增量 typecheck、lint、生产 build；Chromium 2 条流程各重复 3 次共 6/6；本地 Supabase pgTAP 2 文件 / 56 项通过 | 当前集成实现可编译，单元、假硬件浏览器主链、数据库策略与限流测试通过 | 真实 UVC、真实 ELRS、生产域、云数据库、真实 YOLO 模型 |
-| GitHub PR | PR #1 已建立；当前本地集成分支比已推送远端多 30 个提交 | 旧变更可审查 | 当前集成 SHA 的远端审查、CI 成功、已合并 |
+| GitHub PR | PR #1 已建立；当前本地集成分支仍含尚未推送的新提交 | 旧变更可审查 | 当前集成 SHA 的远端审查、CI 成功、已合并 |
 | GitHub Actions | runner 在执行任何 step 前因账户 Billing 被阻止 | workflow 已声明 | CI 测试结果；这不是测试失败 |
 | Vercel Preview | `813c26e` 的旧 Preview 为 Ready；不对应当前 `1cba5b5` | 旧预览构建可访问 | 当前集成版本部署、商用生产许可、生产 Promote、客户网络可用性 |
 | Supabase 云端 | 独立 FPVHelper 项目尚未建立；当前可见项目属于 LONGWEBSITE | 本地 migration/pgTAP 可运行 | 云端 migration、RLS、定时清理、事件链 |
