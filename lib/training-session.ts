@@ -551,6 +551,9 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
     : requireFiniteNumber(raw.exportCount, "exportCount");
   if (!Number.isInteger(exportCount) || exportCount < 0) throw new Error("exportCount 必须是非负整数");
   const interruptionReason = schemaVersion === 1 ? null : optionalInterruptionReason(raw.interruptionReason);
+  if ((exportedAt === null) !== (exportCount === 0)) {
+    throw new Error("exportedAt 与 exportCount 不一致");
+  }
   const sessionWithoutValidity: AssessableTrainingSession = {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     ...(schemaVersion === 1 || raw.migratedFromSchemaVersion === 1 ? { migratedFromSchemaVersion: 1 as const } : {}),

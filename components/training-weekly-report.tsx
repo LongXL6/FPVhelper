@@ -1,18 +1,15 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
-import {
-  MAX_TRAINING_SESSION_FILE_BYTES,
-  trainingSessionFileSizeError,
-} from "@/components/training-session-file-validator";
-import { parseTrainingSession, type TrainingSession } from "@/lib/training-session";
+import { useMemo, useState, useSyncExternalStore, type ChangeEvent } from "react";
+import { parseTrainingSession, type TrainingSession } from "../lib/training-session";
 import {
   buildTrainingWeeklyReport,
   formatTrainingWeeklyReportMarkdown,
-} from "@/lib/training-weekly-report";
-
-const MAX_REPORT_FILES = 200;
-const MAX_REPORT_TOTAL_BYTES = 128 * 1_024 * 1_024;
+  MAX_REPORT_FILE_BYTES,
+  MAX_REPORT_FILES,
+  MAX_REPORT_TOTAL_BYTES,
+  type TrainingWeeklyReportSessionInput,
+} from "../lib/training-weekly-report";
 
 function currentLocalWeekStart() {
   const date = new Date();
@@ -24,25 +21,65 @@ function currentLocalWeekStart() {
     .join("-");
 }
 
+function subscribeToLocalCalendar() {
+  return () => undefined;
+}
+
+function serverWeekStartSnapshot() {
+  return "";
+}
+
+function localDateStartEpochMs(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, monthIndex, day);
+  return date.getFullYear() === year && date.getMonth() === monthIndex && date.getDate() === day
+    ? date.getTime()
+    : null;
+}
+
+function yieldToMainThread() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+}
+
 function reportErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : "无法生成本地周报";
 }
 
 export function TrainingWeeklyReport({ localSessions }: { localSessions: TrainingSession[] }) {
-  const [weekStart, setWeekStart] = useState(currentLocalWeekStart);
-  const [importedSessions, setImportedSessions] = useState<TrainingSession[]>([]);
+  const localWeekStart = useSyncExternalStore(
+    subscribeToLocalCalendar,
+    currentLocalWeekStart,
+    serverWeekStartSnapshot,
+  );
+  const [selectedWeekStart, setSelectedWeekStart] = useState<string | null>(null);
+  const [intendedRecordingsInput, setIntendedRecordingsInput] = useState("");
+  const [importedSessions, setImportedSessions] = useState<TrainingWeeklyReportSessionInput[]>([]);
   const [importSummary, setImportSummary] = useState("尚未导入其他工作站文件");
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const requestedWindowStartedAtEpochMs = new Date(`${weekStart}T00:00:00`).getTime();
-  const windowStartedAtEpochMs = Number.isFinite(requestedWindowStartedAtEpochMs)
-    ? requestedWindowStartedAtEpochMs
-    : new Date(`${currentLocalWeekStart()}T00:00:00`).getTime();
+
+  const weekStart = selectedWeekStart ?? localWeekStart;
+  const windowStartedAtEpochMs = localDateStartEpochMs(weekStart);
+  const intendedRecordings = /^\d+$/.test(intendedRecordingsInput)
+    ? Number(intendedRecordingsInput)
+    : undefined;
+  const reportSessions = useMemo<TrainingWeeklyReportSessionInput[]>(() => [
+    ...localSessions.map((session) => ({ session, source: "browser-local" as const })),
+    ...importedSessions,
+  ], [importedSessions, localSessions]);
   const report = useMemo(
-    () => buildTrainingWeeklyReport([...localSessions, ...importedSessions], windowStartedAtEpochMs),
-    [importedSessions, localSessions, windowStartedAtEpochMs],
+    () => windowStartedAtEpochMs === null ? null : buildTrainingWeeklyReport({
+      sessions: reportSessions,
+      windowStartedAtEpochMs,
+      intendedRecordings,
+    }),
+    [intendedRecordings, reportSessions, windowStartedAtEpochMs],
   );
-  const markdown = useMemo(() => formatTrainingWeeklyReportMarkdown(report), [report]);
+  const markdown = useMemo(() => report ? formatTrainingWeeklyReportMarkdown(report) : "", [report]);
 
   const importFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -53,21 +90,20 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
       if (files.length === 0) return;
       if (files.length > MAX_REPORT_FILES) throw new Error(`一次最多读取 ${MAX_REPORT_FILES} 个 Session JSON`);
       const totalBytes = files.reduce((total, file) => total + file.size, 0);
-      if (totalBytes > MAX_REPORT_TOTAL_BYTES) throw new Error("所选文件合计超过 128 MB，请按周分批处理");
+      if (totalBytes > MAX_REPORT_TOTAL_BYTES) throw new Error("所选文件合计超过 20 MB，请按周分批处理");
 
-      const parsed: TrainingSession[] = [];
+      const parsed: TrainingWeeklyReportSessionInput[] = [];
       const failures: string[] = [];
       for (const file of files) {
-        const sizeError = trainingSessionFileSizeError(file.size);
-        if (sizeError || file.size > MAX_TRAINING_SESSION_FILE_BYTES) {
-          failures.push(`${file.name}：${sizeError ?? "文件过大"}`);
-          continue;
-        }
         try {
-          parsed.push(parseTrainingSession(await file.text()));
+          if (file.size > MAX_REPORT_FILE_BYTES) {
+            throw new Error("文件超过 5 MB，请确认选择的是单条 FPVHelper Session JSON");
+          }
+          parsed.push({ session: parseTrainingSession(await file.text()), source: "imported-file" });
         } catch (parseError) {
           failures.push(`${file.name}：${reportErrorMessage(parseError)}`);
         }
+        await yieldToMainThread();
       }
       setImportedSessions(parsed);
       setImportSummary(`已读取 ${parsed.length} 条；失败 ${failures.length} 条`);
@@ -83,6 +119,7 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
 
   const copyReport = async () => {
     try {
+      if (!report) throw new Error("周报尚未就绪");
       await navigator.clipboard.writeText(markdown);
       setCopyStatus("周报已复制");
     } catch {
@@ -100,7 +137,19 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
         </div>
         <label>
           <span>周一开始日期</span>
-          <input type="date" value={weekStart} onChange={(event) => setWeekStart(event.target.value)} />
+          <input type="date" value={weekStart} onChange={(event) => setSelectedWeekStart(event.target.value)} />
+        </label>
+        <label>
+          <span>计划录像次数（外部台账）</span>
+          <input
+            type="number"
+            min="0"
+            max="1000000"
+            step="1"
+            value={intendedRecordingsInput}
+            placeholder="待台账"
+            onChange={(event) => setIntendedRecordingsInput(event.target.value)}
+          />
         </label>
         <label className="mini-button mini-button--active">
           选择多个 Session JSON
@@ -108,23 +157,27 @@ export function TrainingWeeklyReport({ localSessions }: { localSessions: Trainin
         </label>
       </div>
 
-      <div className="training-weekly-report__metrics" role="status" aria-live="polite">
-        <span>工作站<b>{report.workstationCount}</b></span>
-        <span>真实尝试<b>{report.attemptCount}</b></span>
-        <span>技术有效<b>{report.validCount}</b></span>
-        <span>有效覆盖率<b>{report.validCoveragePercent === null ? "—" : `${report.validCoveragePercent.toFixed(1)}%`}</b></span>
-        <span>已确认导出<b>{report.exportedCount}</b></span>
-        <span>Marker<b>{report.markerCount}</b></span>
-      </div>
+      {report ? (
+        <div className="training-weekly-report__metrics" role="status" aria-live="polite">
+          <span>工作站<b>{report.workstationCount}</b></span>
+          <span>已完成 Session<b>{report.completedSessionCount}</b></span>
+          <span>技术有效<b>{report.validCount}</b></span>
+          <span>有效覆盖率<b>{report.intendedRecordings === null ? "— 待台账" : report.validCoveragePercent === null ? "—" : `${report.validCoveragePercent.toFixed(1)}%`}</b></span>
+          <span>已确认文件<b>{report.confirmedFileCount}</b></span>
+          <span>文件覆盖率<b>{report.intendedRecordings === null ? "— 待台账" : report.exportCoveragePercent === null ? "—" : `${report.exportCoveragePercent.toFixed(1)}%`}</b></span>
+          <span>Marker<b>{report.markerCount}</b></span>
+        </div>
+      ) : <p className="training-weekly-report__pending" role="status">正在读取浏览器本地周起始日期…</p>}
 
       <div className="training-weekly-report__output">
         <div>
           <b>{importSummary}</b>
-          <small>完全重复文件会去重；同 ID 内容冲突会排除并要求人工核对。20 Hz 左右的打杆数据不会被包装成运动员进步分数。</small>
-          {report.conflictingSessionIds.length > 0 ? <p role="alert">有 {report.conflictingSessionIds.length} 条冲突 Session 已排除。</p> : null}
+          <small>完全重复记录会去重；同 ID 内容冲突会排除并要求人工核对。导入文件经重解析后算文件证据；本浏览器记录只采信一致的导出时间与次数。</small>
+          <small>20 Hz 左右的打杆数据不会被包装成运动员进步分数；未填写外部训练意图台账时，商业覆盖率保持“— 待台账”。</small>
+          {report && report.conflictingSessionIds.length > 0 ? <p role="alert">有 {report.conflictingSessionIds.length} 条冲突 Session 已排除。</p> : null}
           {error ? <p role="alert">{error}</p> : null}
         </div>
-        <button className="mini-button mini-button--active" type="button" onClick={() => void copyReport()}>复制 Markdown 周报</button>
+        <button className="mini-button mini-button--active" type="button" disabled={!report} onClick={() => void copyReport()}>复制 Markdown 周报</button>
         {copyStatus ? <small role="status">{copyStatus}</small> : null}
         <textarea readOnly value={markdown} aria-label="试点验收周报 Markdown" />
       </div>

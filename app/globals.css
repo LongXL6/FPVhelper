@@ -669,22 +669,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .session-file-error { grid-column: 1 / -1; }
 
 .training-weekly-report { display: grid; gap: 13px; }
-.training-weekly-report__heading { display: grid; grid-template-columns: minmax(0, 1fr) 170px auto; align-items: end; gap: 12px; }
-.training-weekly-report__heading > div > span { color: var(--muted); font: 700 9px/1 var(--mono); letter-spacing: 0.12em; }
+.training-weekly-report__heading { display: grid; grid-template-columns: minmax(0, 1fr) 170px 190px auto; align-items: end; gap: 12px; }
+.training-weekly-report__heading > div > span { color: var(--muted); font: 700 10px/1 var(--mono); letter-spacing: 0.12em; }
 .training-weekly-report__heading h2 { margin: 4px 0 0; font: 700 17px/1 var(--display); }
-.training-weekly-report__heading p { margin: 7px 0 0; color: var(--quiet); font: 600 9px/1.5 var(--mono); }
-.training-weekly-report__heading > label { display: grid; gap: 7px; color: var(--muted); font: 700 8px/1 var(--mono); }
-.training-weekly-report__heading input[type="date"] { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); background: var(--carbon); color: var(--white); color-scheme: dark; }
+.training-weekly-report__heading p { margin: 7px 0 0; color: var(--muted); font: 600 12px/1.5 var(--mono); }
+.training-weekly-report__heading > label { display: grid; gap: 7px; color: var(--muted); font: 700 11px/1.2 var(--mono); }
+.training-weekly-report__heading input[type="date"], .training-weekly-report__heading input[type="number"] { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); background: var(--carbon); color: var(--white); color-scheme: dark; }
 .training-weekly-report__heading .mini-button { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 36px; cursor: pointer; }
+.training-weekly-report__heading .mini-button:focus-within { outline: 2px solid var(--signal); outline-offset: 3px; }
 .training-weekly-report__heading .mini-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
-.training-weekly-report__metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
-.training-weekly-report__metrics span { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line-soft); color: var(--quiet); font: 600 8px/1 var(--mono); }
+.training-weekly-report__metrics { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; }
+.training-weekly-report__metrics span { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line-soft); color: var(--muted); font: 600 11px/1.2 var(--mono); }
 .training-weekly-report__metrics b { color: var(--white); font: 800 15px/1 var(--display); }
+.training-weekly-report__pending { margin: 0; color: var(--muted); font: 600 12px/1.5 var(--mono); }
 .training-weekly-report__output { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px 12px; }
 .training-weekly-report__output > div { display: grid; gap: 5px; }
-.training-weekly-report__output b, .training-weekly-report__output small { color: var(--muted); font: 600 9px/1.4 var(--mono); }
-.training-weekly-report__output p { margin: 0; color: #f6bd48; font: 600 9px/1.4 var(--mono); }
-.training-weekly-report__output textarea { grid-column: 1 / -1; width: 100%; min-height: 260px; resize: vertical; padding: 10px; border: 1px solid var(--line-soft); background: #080e13; color: var(--white); font: 600 10px/1.55 var(--mono); }
+.training-weekly-report__output b, .training-weekly-report__output small { color: var(--muted); font: 600 12px/1.45 var(--mono); }
+.training-weekly-report__output p { margin: 0; color: #f6bd48; font: 600 12px/1.45 var(--mono); }
+.training-weekly-report__output textarea { grid-column: 1 / -1; width: 100%; min-height: 260px; resize: vertical; padding: 10px; border: 1px solid var(--line-soft); background: #080e13; color: var(--white); font: 600 12px/1.55 var(--mono); }
 
 .empty-records { margin: 13px 0 0; padding: 16px; border: 1px dashed var(--line); color: var(--quiet); font: 600 9px/1.4 var(--mono); }
 .today-records-list { display: grid; gap: 8px; margin-top: 13px; }

@@ -170,6 +170,18 @@ describe("local training session schema v2", () => {
     expect(parseTrainingSession(serializeTrainingSession(secondExport))).toEqual(secondExport);
   });
 
+  it("rejects inconsistent exportedAt and exportCount self-reporting", () => {
+    const current = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const raw = JSON.parse(serializeTrainingSession(current)) as Record<string, unknown>;
+
+    expect(() => parseTrainingSession({ ...raw, exportedAt: null, exportCount: 1 })).toThrow("exportedAt 与 exportCount 不一致");
+    expect(() => parseTrainingSession({
+      ...raw,
+      exportedAt: new Date(STARTED_AT + 61_000).toISOString(),
+      exportCount: 0,
+    })).toThrow("exportedAt 与 exportCount 不一致");
+  });
+
   it("keeps technical validity separate from the 80 percent attempt candidate", () => {
     const valid = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
     expect(valid.validity).toEqual({ valid: true, reasons: [] });
