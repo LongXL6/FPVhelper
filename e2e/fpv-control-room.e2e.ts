@@ -39,7 +39,9 @@ test("onboarding closes even when its local preference cannot be saved", async (
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "已了解" }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole("status")).toContainText("本次可以关闭清单，但下次仍会显示");
+  await expect(page.locator(".onboarding-storage-warning--outside")).toContainText(
+    "本次可以关闭清单，但下次仍会显示",
+  );
 });
 
 test("fake media and read-only MSP bridge persist a local training session", async ({ page }) => {
