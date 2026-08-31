@@ -1,6 +1,7 @@
 export type TelemetrySource = "demo" | "serial";
 
 export type ConnectionState = "demo" | "connecting" | "live" | "stale" | "error";
+export type LinkState = "unknown" | "ok" | "lost";
 
 export interface FlightTelemetry {
   timestamp: number;
@@ -12,8 +13,6 @@ export interface FlightTelemetry {
   throttleStickPercent: number;
   rcThrottleUs: number;
   rcChannelsUs: number[];
-  motors: number[];
-  motorAveragePercent: number | null;
   groundMspRssiPercent: number | null;
   groundBridgeVoltage: number | null;
 }
@@ -36,11 +35,16 @@ export interface MspParserStats {
 export type MspParserQuality = "unknown" | "good" | "degraded" | "poor";
 
 export const MSP = {
-  STATUS: 101,
-  MOTOR: 104,
   RC: 105,
   ANALOG: 110,
+  STATUS_EX: 150,
 } as const;
+
+const ARMING_DISABLED_FAILSAFE = 1 << 1;
+const ARMING_DISABLED_RX_FAILSAFE = 1 << 2;
+const RX_LINK_LOST_ARMING_FLAGS = ARMING_DISABLED_FAILSAFE | ARMING_DISABLED_RX_FAILSAFE;
+const STATUS_EX_FIXED_PAYLOAD_BYTES = 15;
+const STATUS_EX_MAX_FLIGHT_MODE_EXTRA_BYTES = 15;
 
 export const RC_FIRST_FRAME_TIMEOUT_MS = 5_000;
 export const RC_STALE_TIMEOUT_MS = 1_500;
@@ -64,8 +68,6 @@ export const EMPTY_TELEMETRY: FlightTelemetry = {
   throttleStickPercent: 0,
   rcThrottleUs: 1000,
   rcChannelsUs: [],
-  motors: [],
-  motorAveragePercent: null,
   groundMspRssiPercent: null,
   groundBridgeVoltage: null,
 };
@@ -92,7 +94,7 @@ export function connectionStateAfterRcSilence(
   return current;
 }
 
-export type ReadOnlyMspCommand = typeof MSP.RC | typeof MSP.ANALOG;
+export type ReadOnlyMspCommand = typeof MSP.RC | typeof MSP.ANALOG | typeof MSP.STATUS_EX;
 
 export function buildMspV1Request(command: ReadOnlyMspCommand) {
   return Uint8Array.of(36, 77, 60, 0, command, command);
@@ -246,14 +248,6 @@ export function decodeRc(payload: Uint8Array) {
   };
 }
 
-export function decodeMotors(payload: Uint8Array) {
-  const motors = readUint16Values(payload).filter((value) => value > 0);
-  if (motors.length === 0) return { motors: [], motorAveragePercent: null };
-
-  const average = motors.reduce((sum, value) => sum + normalizeThrottle(value), 0) / motors.length;
-  return { motors, motorAveragePercent: average };
-}
-
 export function decodeAnalog(payload: Uint8Array) {
   if (payload.byteLength < 5) return null;
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -264,6 +258,24 @@ export function decodeAnalog(payload: Uint8Array) {
     groundBridgeVoltage,
     groundMspRssiPercent: clamp((rawRssi / 1023) * 100, 0, 100),
   };
+}
+
+export function decodeStatusExLinkState(payload: Uint8Array): LinkState {
+  if (payload.byteLength <= STATUS_EX_FIXED_PAYLOAD_BYTES) return "unknown";
+
+  const flightModeExtraByteCount = payload[STATUS_EX_FIXED_PAYLOAD_BYTES];
+  if (flightModeExtraByteCount > STATUS_EX_MAX_FLIGHT_MODE_EXTRA_BYTES) return "unknown";
+
+  const armingDisableCountOffset = STATUS_EX_FIXED_PAYLOAD_BYTES + 1 + flightModeExtraByteCount;
+  const armingDisableFlagsOffset = armingDisableCountOffset + 1;
+  if (armingDisableFlagsOffset + 4 > payload.byteLength) return "unknown";
+
+  const armingDisableCount = payload[armingDisableCountOffset];
+  if (armingDisableCount < 3) return "unknown";
+
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const armingDisableFlags = view.getUint32(armingDisableFlagsOffset, true);
+  return (armingDisableFlags & RX_LINK_LOST_ARMING_FLAGS) !== 0 ? "lost" : "ok";
 }
 
 export function createDemoTelemetry(now: number, sequence: number): FlightTelemetry {
@@ -279,7 +291,6 @@ export function createDemoTelemetry(now: number, sequence: number): FlightTeleme
     Math.round(1500 + yawStickPercent * 5),
     rcThrottleUs,
   ];
-  const motorAveragePercent = clamp(throttleStickPercent + Math.sin(seconds * 3.2) * 5, 0, 100);
 
   return {
     timestamp: Date.now(),
@@ -291,13 +302,6 @@ export function createDemoTelemetry(now: number, sequence: number): FlightTeleme
     throttleStickPercent,
     rcThrottleUs,
     rcChannelsUs,
-    motors: [
-      1000 + clamp(motorAveragePercent + 5, 0, 100) * 10,
-      1000 + clamp(motorAveragePercent - 3, 0, 100) * 10,
-      1000 + clamp(motorAveragePercent + 1, 0, 100) * 10,
-      1000 + clamp(motorAveragePercent - 4, 0, 100) * 10,
-    ],
-    motorAveragePercent,
     groundMspRssiPercent: 91 + Math.sin(seconds * 0.35) * 5,
     groundBridgeVoltage: 5 - ((seconds % 180) / 180) * 0.08,
   };

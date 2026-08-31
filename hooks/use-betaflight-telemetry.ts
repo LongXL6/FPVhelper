@@ -16,11 +16,12 @@ import {
   ConnectionState,
   createDemoTelemetry,
   decodeAnalog,
-  decodeMotors,
   decodeRc,
+  decodeStatusExLinkState,
   EMPTY_MSP_PARSER_STATS,
   EMPTY_TELEMETRY,
   FlightTelemetry,
+  LinkState,
   MSP,
   mspParserQuality,
   MspParserQuality,
@@ -49,6 +50,7 @@ interface TelemetryController {
   errorCode: SerialErrorCode | null;
   parserStats: MspParserStats;
   parserQuality: MspParserQuality;
+  linkState: LinkState;
   serialSupported: boolean;
   connectSerial: () => Promise<void>;
   useDemo: () => Promise<void>;
@@ -63,6 +65,7 @@ export function useBetaflightTelemetry(): TelemetryController {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<SerialErrorCode | null>(null);
   const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
+  const [linkState, setLinkState] = useState<LinkState>("unknown");
   const portRef = useRef<SerialPort | null>(null);
   const lastAuthorizedPortRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -130,6 +133,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     stopTimers();
     receivedRcFrameRef.current = false;
     lastRcFrameAtRef.current = null;
+    setLinkState("unknown");
     const reader = readerRef.current;
     const writer = writerRef.current;
     const port = portRef.current;
@@ -184,6 +188,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     setConnection("demo");
     setError(null);
     setErrorCode(null);
+    setLinkState("unknown");
     demoActiveRef.current = true;
     emitDemoFrame();
     demoTimerRef.current = setInterval(emitDemoFrame, 50);
@@ -272,16 +277,14 @@ export function useBetaflightTelemetry(): TelemetryController {
       recordStickMotion(rc, sequenceRef.current);
       setConnection("live");
       armStaleWatchdog(connectionAttempt);
-    } else if (command === MSP.MOTOR) {
-      if (!receivedRcFrameRef.current) return;
-      const motors = decodeMotors(payload);
-      setTelemetry((current) => ({ ...current, ...motors, timestamp, monotonicTimestampMs }));
     } else if (command === MSP.ANALOG) {
       if (!receivedRcFrameRef.current) return;
       const analog = decodeAnalog(payload);
       if (analog) {
         setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
       }
+    } else if (command === MSP.STATUS_EX) {
+      setLinkState(decodeStatusExLinkState(payload));
     }
   }, [armStaleWatchdog, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
@@ -401,6 +404,7 @@ export function useBetaflightTelemetry(): TelemetryController {
         writing = true;
         pollCount += 1;
         const requests = [buildMspV1Request(MSP.RC)];
+        if (pollCount % 2 === 0) requests.push(buildMspV1Request(MSP.STATUS_EX));
         if (pollCount % 10 === 0) requests.push(buildMspV1Request(MSP.ANALOG));
         void (async () => {
           for (const request of requests) await writer.write(request);
@@ -446,6 +450,7 @@ export function useBetaflightTelemetry(): TelemetryController {
     errorCode,
     parserStats,
     parserQuality: mspParserQuality(parserStats),
+    linkState,
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),
     connectSerial,
     useDemo,

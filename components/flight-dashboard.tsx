@@ -51,8 +51,15 @@ const invalidReasonCopy: Record<TrainingSessionInvalidReason, string> = {
   too_few_unique_samples: "不足 300 个不重复样本",
   non_monotonic: "时间戳不严格单调",
   no_athlete_code: "缺少选手代号",
+  rx_link_lost: "遥控链路丢失",
   interrupted: "刷新或连接中断",
 };
+
+const linkStateCopy = {
+  unknown: "等待 MSP_STATUS_EX 链路状态",
+  ok: "遥控链路正常",
+  lost: "遥控链路丢失",
+} as const;
 
 const parserQualityCopy = {
   unknown: "等待数据",
@@ -267,9 +274,9 @@ export function FlightDashboard() {
     connect: connectVideo,
     disconnect: disconnectVideo,
   } = useVideoCapture();
-  const { telemetry, throttleHistory, stickMotion, connection, source, error } = telemetryControl;
+  const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
   const version = useVersionCheck();
-  const trainingSession = useTrainingSession({ telemetry, source, connection, athleteCode, autoExport });
+  const trainingSession = useTrainingSession({ telemetry, source, connection, linkState, athleteCode, autoExport });
   const addTrainingMarker = trainingSession.addMarker;
   const sessionIsRecording = trainingSession.isRecording;
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
@@ -307,6 +314,7 @@ export function FlightDashboard() {
   const preferenceError = preferenceWriteError || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
   const bridgeIsLive = source === "serial" && connection === "live";
+  const groundRxReady = bridgeIsLive && linkState === "ok";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
   const videoFormatLabel = videoState === "live" && captureSettings
     ? [
@@ -335,7 +343,11 @@ export function FlightDashboard() {
         ? "先填写选手代号"
         : !bridgeIsLive
           ? "连接桥接飞控并等待 MSP_RC 数据在线"
-          : "已满足开始条件";
+          : linkState === "lost"
+            ? "遥控链路已丢失，不能开始记录"
+            : linkState === "unknown"
+              ? "等待 MSP_STATUS_EX 确认遥控链路"
+              : "已满足开始条件";
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
       ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
@@ -413,7 +425,15 @@ export function FlightDashboard() {
         <div className="session-strip">
           <span className={`status-chip status-chip--${connection}`}><i />{statusCopy[connection]}</span>
           <span className="session-meta">SESSION <b>{trainingSession.isRecording ? `REC / ${visibleSessionId}` : "LOCAL / READY"}</b></span>
-          <span className="session-meta">RATE <b>{source === "demo" ? "20 HZ" : bridgeIsLive ? "MSP LIVE" : "MSP WAIT"}</b></span>
+          <span className="session-meta">RATE <b>{source === "demo"
+            ? "20 HZ"
+            : !bridgeIsLive
+              ? "MSP WAIT"
+              : linkState === "ok"
+                ? "RX OK"
+                : linkState === "lost"
+                  ? "RX LOST"
+                  : "RX UNKNOWN"}</b></span>
         </div>
 
         <div className="top-actions">
@@ -661,15 +681,22 @@ export function FlightDashboard() {
               <Gauge label="地面桥 RSSI 字段" value={telemetry.groundMspRssiPercent} detail={`${bridgeSourceLabel} · MSP legacy RSSI · 明确不是机上 LQ`} />
             </div>
             <section className="bridge-card">
-              <div className="card-heading"><span>GROUND BRIDGE</span><b>{bridgeIsLive ? "MSP LIVE" : "WAIT"}</b></div>
+              <div className="card-heading"><span>GROUND BRIDGE</span><b>{!bridgeIsLive
+                ? "MSP WAIT"
+                : linkState === "ok"
+                  ? "RX OK"
+                  : linkState === "lost"
+                    ? "RX LOST"
+                    : "RX UNKNOWN"}</b></div>
               <div className="bridge-path">
-                <div className={bridgeIsLive ? "is-active" : ""}><i />ELRS RX</div>
+                <div className={groundRxReady ? "is-active" : ""}><i />ELRS RX</div>
                 <span>→</span>
                 <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
                 <span>→</span>
                 <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
               </div>
-              <p>只读 MSP_RC + MSP_ANALOG；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
+              <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
+              <p>遥控链路：{linkStateCopy[linkState]}。Bridge FC 在线不等于遥控器在线。</p>
               <p>
                 解析质量：{parserQualityCopy[telemetryControl.parserQuality]} · 有效帧 {telemetryControl.parserStats.checksumValidFrames.toLocaleString()}
                 {" · "}校验错误 {telemetryControl.parserStats.checksumErrors.toLocaleString()}

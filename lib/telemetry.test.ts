@@ -4,8 +4,8 @@ import {
   connectionStateAfterRcSilence,
   createDemoTelemetry,
   decodeAnalog,
-  decodeMotors,
   decodeRc,
+  decodeStatusExLinkState,
   EMPTY_TELEMETRY,
   MSP,
   mspParserQuality,
@@ -25,6 +25,7 @@ function uint16Payload(values: number[]) {
 describe("MSP v1 telemetry", () => {
   it("builds a read-only request", () => {
     expect(Array.from(buildMspV1Request(MSP.RC))).toEqual([36, 77, 60, 0, 105, 105]);
+    expect(Array.from(buildMspV1Request(MSP.STATUS_EX))).toEqual([36, 77, 60, 0, 150, 150]);
   });
 
   it("parses frames split across USB chunks", () => {
@@ -128,9 +129,48 @@ describe("MSP v1 telemetry", () => {
     expect(createDemoTelemetry(1000, 1).rcChannelsUs).toHaveLength(4);
   });
 
-  it("decodes motor output and ground bridge analog values", () => {
-    expect(decodeMotors(Uint8Array.from(uint16Payload([1200, 1300, 1400, 1500]))).motorAveragePercent).toBe(35);
+  it("decodes ground bridge analog values", () => {
     const analog = decodeAnalog(Uint8Array.from([159, 0, 0, 0xff, 0x03]));
     expect(analog).toEqual({ groundBridgeVoltage: 15.9, groundMspRssiPercent: 100 });
+  });
+
+  it("decodes Betaflight STATUS_EX arming flags at the official dynamic offset", () => {
+    // Betaflight 3.5.7 API 1.40 through master 8303ba5 API 1.49 serialize 15 fixed bytes,
+    // a flight-mode extension byte count, optional extension bytes, a flag count, then U32 LE flags.
+    const okFixture = Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0x21, 0, 0, 0, 0, 0, 0, 50, 0, 3, 0,
+      0,
+      30, 0, 0, 0, 0,
+    ]);
+    const rxFailsafeFixture = Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0x21, 0, 0, 0, 0, 0, 0, 50, 0, 3, 0,
+      0,
+      30, 0x04, 0, 0, 0,
+    ]);
+    const failsafeWithExtendedModesFixture = Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0x21, 0, 0, 0, 0, 0, 0, 50, 0, 3, 0,
+      2, 0xaa, 0x55,
+      30, 0x02, 0, 0, 0,
+    ]);
+
+    expect(decodeStatusExLinkState(okFixture)).toBe("ok");
+    expect(decodeStatusExLinkState(rxFailsafeFixture)).toBe("lost");
+    expect(decodeStatusExLinkState(failsafeWithExtendedModesFixture)).toBe("lost");
+  });
+
+  it("keeps legacy, short, and malformed STATUS_EX payloads unknown", () => {
+    // Betaflight 3.5.7's OSD-slave path returns only the 15-byte prefix and has no arming flags.
+    expect(decodeStatusExLinkState(Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 0, 1, 0,
+    ]))).toBe("unknown");
+    expect(decodeStatusExLinkState(Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 0, 3, 0,
+      3, 0xaa,
+    ]))).toBe("unknown");
+    expect(decodeStatusExLinkState(Uint8Array.from([
+      0xe8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 0, 3, 0,
+      0,
+      2, 0, 0, 0, 0,
+    ]))).toBe("unknown");
   });
 });

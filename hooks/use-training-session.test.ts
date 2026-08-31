@@ -18,6 +18,7 @@ const READY_TO_START = {
   isFinishing: false,
   source: "serial" as const,
   connection: "live" as const,
+  linkState: "ok" as const,
   athleteCode: "PILOT-07",
 };
 
@@ -38,6 +39,7 @@ describe("useTrainingSession start guard", () => {
       isFinishing: false,
       source: "serial",
       connection: "live",
+      linkState: "ok",
       athleteCode: "PILOT-07",
     })).toBe(true);
   });
@@ -58,6 +60,7 @@ describe("useTrainingSession start guard", () => {
       isFinishing: false,
       source: "serial",
       connection: "live",
+      linkState: "ok",
       athleteCode: "PILOT-07",
     })).toBe(false);
   });
@@ -77,6 +80,13 @@ describe("useTrainingSession start guard", () => {
       expect(canStartTrainingSession(READY_TO_START)).toBe(true);
     }
     expect(requestDownload).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires an explicit healthy ground RX link after the first RC frame", () => {
+    expect(canStartTrainingSession({ ...READY_TO_START, linkState: "unknown" })).toBe(false);
+    expect(canStartTrainingSession({ ...READY_TO_START, linkState: "lost" })).toBe(false);
+    expect(canStartTrainingSession({ ...READY_TO_START, linkState: "ok" })).toBe(true);
+    expect(canStartTrainingSession({ ...READY_TO_START, connection: "connecting", linkState: "ok" })).toBe(false);
   });
 
   it("keeps a stored session startable when the anchor download request itself fails", () => {

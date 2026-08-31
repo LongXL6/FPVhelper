@@ -1,6 +1,6 @@
 import type { TrainingSessionStorageIntegrity } from "../lib/training-session-store";
 import { normalizeAthleteCode } from "../lib/training-session";
-import type { ConnectionState, TelemetrySource } from "../lib/telemetry";
+import type { ConnectionState, LinkState, TelemetrySource } from "../lib/telemetry";
 
 interface TrainingSessionStartState {
   storageReady: boolean;
@@ -12,6 +12,7 @@ interface TrainingSessionStartState {
   isFinishing: boolean;
   source: TelemetrySource;
   connection: ConnectionState;
+  linkState: LinkState;
   athleteCode: string;
 }
 
@@ -24,6 +25,7 @@ export function canStartTrainingSession({
   isFinishing,
   source,
   connection,
+  linkState,
   athleteCode,
 }: TrainingSessionStartState) {
   return storageReady &&
@@ -34,5 +36,6 @@ export function canStartTrainingSession({
     !isFinishing &&
     source === "serial" &&
     connection === "live" &&
+    linkState === "ok" &&
     normalizeAthleteCode(athleteCode).length > 0;
 }

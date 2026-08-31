@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ConnectionState, FlightTelemetry, TelemetrySource } from "@/lib/telemetry";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
+import type { ConnectionState, FlightTelemetry, LinkState, TelemetrySource } from "@/lib/telemetry";
 import {
   createTrainingSessionStore,
   EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
@@ -19,6 +19,7 @@ import {
   withTrainingSessionNotes,
   type TrainingSession,
   type TrainingSessionDraft,
+  type TrainingSessionInterruptionReason,
   type TrainingSessionMarkerKind,
 } from "@/lib/training-session";
 import {
@@ -39,6 +40,7 @@ interface UseTrainingSessionOptions {
   telemetry: FlightTelemetry;
   source: TelemetrySource;
   connection: ConnectionState;
+  linkState: LinkState;
   athleteCode: string;
   autoExport: boolean;
 }
@@ -94,6 +96,7 @@ export function useTrainingSession({
   telemetry,
   source,
   connection,
+  linkState,
   athleteCode,
   autoExport,
 }: UseTrainingSessionOptions): TrainingSessionController {
@@ -242,8 +245,9 @@ export function useTrainingSession({
     isFinishing,
     source,
     connection,
+    linkState,
     athleteCode,
-  }), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, source, storageError, storageIntegrity, storageReady]);
+  }), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, linkState, source, storageError, storageIntegrity, storageReady]);
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
@@ -319,11 +323,17 @@ export function useTrainingSession({
     setIsFinishing(false);
   }, [autoExport, refreshSessions]);
 
-  const finishRecording = useCallback(async (interrupted: boolean) => {
+  const finishRecording = useCallback(async (
+    interrupted: boolean,
+    interruptionReason: TrainingSessionInterruptionReason | null = null,
+  ) => {
     const draft = draftRef.current;
     if (!draft || finishingRef.current) return;
     setIsRecording(false);
-    const session = finishTrainingSession(draft, Date.now(), performance.now(), { interrupted });
+    const session = finishTrainingSession(draft, Date.now(), performance.now(), {
+      interrupted,
+      ...(interruptionReason ? { interruptionReason } : {}),
+    });
     pendingSessionRef.current = session;
     setLastSession(session);
     setElapsedMs(session.durationMs);
@@ -367,8 +377,14 @@ export function useTrainingSession({
 
   useEffect(() => {
     if (!isRecording) return;
-    if (source !== "serial" || connection !== "live") void finishRecording(true);
+    if (source !== "serial" || connection !== "live") {
+      void finishRecording(true, "telemetry_unavailable");
+    }
   }, [connection, finishRecording, isRecording, source]);
+
+  useEffect(() => {
+    if (isRecording && linkState === "lost") void finishRecording(true, "rx_link_lost");
+  }, [finishRecording, isRecording, linkState]);
 
   useEffect(() => {
     if (!isRecording) return;

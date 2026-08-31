@@ -7,6 +7,7 @@ export const MINIMUM_VALID_SESSION_SAMPLES = 300;
 
 export type RecordedTelemetrySource = "demo" | "ground_rc";
 export type TrainingSessionMarkerKind = "manual" | "crash" | "gate_hit" | "clean" | "throttle";
+export type TrainingSessionInterruptionReason = "rx_link_lost" | "telemetry_unavailable" | "page_closed";
 export type TrainingSessionInvalidReason =
   | "source_not_ground_rc"
   | "mixed_sources"
@@ -14,6 +15,7 @@ export type TrainingSessionInvalidReason =
   | "too_few_unique_samples"
   | "non_monotonic"
   | "no_athlete_code"
+  | "rx_link_lost"
   | "interrupted";
 export type TrainingAttemptCandidateReason = "technically_invalid" | "missing_notes";
 
@@ -84,6 +86,7 @@ export interface TrainingSession {
   sampleCount: number;
   estimatedRcSampleRateHz: number | null;
   interrupted: boolean;
+  interruptionReason: TrainingSessionInterruptionReason | null;
   validity: TrainingSessionAssessment;
   timing: {
     clock: "performance.now";
@@ -100,6 +103,7 @@ export interface TrainingSession {
 
 interface FinalizeTrainingSessionOptions {
   interrupted?: boolean;
+  interruptionReason?: TrainingSessionInterruptionReason;
 }
 
 type AssessableTrainingSession = Omit<TrainingSession, "validity">;
@@ -131,6 +135,12 @@ function requireNullableFiniteNumber(value: unknown, field: string) {
 function requireRecordedSource(value: unknown, field: string): RecordedTelemetrySource {
   if (value !== "demo" && value !== "ground_rc") throw new Error(`${field} 不是支持的数据源`);
   return value;
+}
+
+function optionalInterruptionReason(value: unknown): TrainingSessionInterruptionReason | null {
+  if (value === null || value === undefined) return null;
+  if (value === "rx_link_lost" || value === "telemetry_unavailable" || value === "page_closed") return value;
+  throw new Error("interruptionReason 不是支持的中断原因");
 }
 
 function normalizedAthleteCode(value: unknown) {
@@ -288,7 +298,8 @@ function finalizeTrainingSession(
     dataSources: [...new Set(samples.map((sample) => sample.source))],
     sampleCount: samples.length,
     estimatedRcSampleRateHz: estimateSampleRate(samples),
-    interrupted: options.interrupted ?? false,
+    interrupted: options.interrupted ?? options.interruptionReason !== undefined,
+    interruptionReason: options.interruptionReason ?? null,
     timing: {
       clock: "performance.now",
       wallClockStartedAt: draft.wallClockStartedAt,
@@ -320,7 +331,10 @@ export function finishTrainingSession(
 export function recoverInterruptedTrainingSession(draft: TrainingSessionDraft) {
   const durationMs = Math.max(0, draft.samples.at(-1)?.elapsedMs ?? 0);
   const startedAtEpochMs = Date.parse(draft.startedAt);
-  return finalizeTrainingSession(draft, startedAtEpochMs + durationMs, durationMs, { interrupted: true });
+  return finalizeTrainingSession(draft, startedAtEpochMs + durationMs, durationMs, {
+    interrupted: true,
+    interruptionReason: "page_closed",
+  });
 }
 
 export function withTrainingSessionNotes(session: TrainingSession, notes: string): TrainingSession {
@@ -355,7 +369,8 @@ export function assessTrainingSession(session: AssessableTrainingSession | Train
   if (uniqueSequences.size < MINIMUM_VALID_SESSION_SAMPLES) reasons.push("too_few_unique_samples");
   if (!timestampsAreStrictlyMonotonic) reasons.push("non_monotonic");
   if (!normalizeAthleteCode(session.athleteCode ?? "")) reasons.push("no_athlete_code");
-  if (session.interrupted) reasons.push("interrupted");
+  if (session.interruptionReason === "rx_link_lost") reasons.push("rx_link_lost");
+  else if (session.interrupted) reasons.push("interrupted");
 
   return { valid: reasons.length === 0, reasons };
 }
@@ -494,6 +509,7 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
     ? 0
     : requireFiniteNumber(raw.exportCount, "exportCount");
   if (!Number.isInteger(exportCount) || exportCount < 0) throw new Error("exportCount 必须是非负整数");
+  const interruptionReason = schemaVersion === 1 ? null : optionalInterruptionReason(raw.interruptionReason);
   const sessionWithoutValidity: AssessableTrainingSession = {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     ...(schemaVersion === 1 || raw.migratedFromSchemaVersion === 1 ? { migratedFromSchemaVersion: 1 as const } : {}),
@@ -511,7 +527,8 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
     dataSources: [...new Set(samples.map((sample) => sample.source))],
     sampleCount: samples.length,
     estimatedRcSampleRateHz: estimateSampleRate(samples),
-    interrupted: schemaVersion === 1 ? false : raw.interrupted === true,
+    interrupted: schemaVersion === 1 ? false : raw.interrupted === true || interruptionReason !== null,
+    interruptionReason,
     timing: {
       clock: "performance.now",
       wallClockStartedAt,

@@ -664,7 +664,7 @@ export function useAnalyticsLifecycle(options: UseAnalyticsLifecycleOptions): An
         hz: session.estimatedRcSampleRateHz ?? 0,
         data_sources: dataSources,
         valid: session.validity.valid,
-        invalid_reasons: session.validity.reasons,
+        invalid_reasons: session.validity.reasons.map((reason) => reason === "rx_link_lost" ? "interrupted" : reason),
         max_gap_ms: maxTrainingSampleGap(session),
         hidden_ms: safeDuration(hiddenMs),
         stall_count: recordingStallCountRef.current,

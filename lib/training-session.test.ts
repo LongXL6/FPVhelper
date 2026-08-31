@@ -88,6 +88,7 @@ describe("local training session schema v2", () => {
       dataSources: ["ground_rc"],
       sampleCount: 300,
       interrupted: false,
+      interruptionReason: null,
       validity: { valid: true, reasons: [] },
       video: { recorded: false, synchronized: false },
       timing: { clock: "performance.now", videoOffsetCalibrated: false },
@@ -210,6 +211,7 @@ describe("local training session schema v2", () => {
     const recovered = recoverInterruptedTrainingSession(draft);
 
     expect(recovered.interrupted).toBe(true);
+    expect(recovered.interruptionReason).toBe("page_closed");
     expect(recovered.durationMs).toBe(200);
     expect(recovered.endedAt).toBe(new Date(STARTED_AT + 200).toISOString());
     expect(recovered.validity.reasons).toContain("interrupted");
@@ -226,6 +228,30 @@ describe("local training session schema v2", () => {
       workstationId: null,
       build: null,
     });
+  });
+
+  it("records ground RX loss as the explicit interruption and invalidity reason", () => {
+    const session = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+      { interruptionReason: "rx_link_lost" },
+    );
+
+    expect(session).toMatchObject({
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+      validity: { valid: false, reasons: ["rx_link_lost"] },
+    });
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("keeps existing schema v2 sessions without interruptionReason readable", () => {
+    const session = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const storedBeforeLinkIntegrity = { ...session } as Partial<typeof session>;
+    delete storedBeforeLinkIntegrity.interruptionReason;
+
+    expect(parseTrainingSession(storedBeforeLinkIntegrity).interruptionReason).toBeNull();
   });
 
   it("migrates exported schema v1 sessions and derives the four legacy RC channels", () => {
