@@ -19,6 +19,7 @@ Branch: main · Repo: LongXL6/fpvhelper · Status: DECISIONS APPLIED — 历史�
 6. 当前 [`supabase/migrations/20260830192551_app_events_analytics.sql`](../../supabase/migrations/20260830192551_app_events_analytics.sql) 只作为本地逻辑与 pgTAP 参考；共享项目唯一 production migration 必须在 FPVSuperApp 仓库通过 Supabase CLI 创建并审查。
 7. 人工 Marker 只定位 DVR 复盘时刻，不产生圈数/圈速；视觉 YOLO 计圈是独立实验，升级宣传门槛以 [`../vision-lap-experiment.md`](../vision-lap-experiment.md) 为准，且始终非赛事认证。
 8. 下文涉及价格、套餐、法律结论、云端和生产状态的内容均为历史设计/待确认事项；不得据此宣称已收款、已同意、已部署或已通过法务审查。
+9. 2026-09-01 起代码目标为 100 Hz `MSP_RC` 轮询；下文“20 Hz”均是本评审生成时的历史基线。真实飞控、USB、浏览器和 Session 有效采样频率仍须实机验收，不得仅凭目标定时器宣称达到 100 Hz。
 
 如历史段落与上述决定、`README.md`、`CLAUDE.md` 或配套实施规格冲突，以本节和配套实施规格为准。
 

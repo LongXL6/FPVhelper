@@ -123,6 +123,25 @@ test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ pag
   await secondViewport.getByRole("button", { name: "连接 PILOT-02 桥接飞控" }).click();
   await expect(secondViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-source", "serial");
   await expect(secondViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "live");
+  const commandsBeforeRateWindow = await page.evaluate(() => (
+    window.__fpvFakeSerialPorts.slice(0, 2).map((port) => port.requestedCommands.length)
+  ));
+  await page.waitForTimeout(300);
+  const commandsInRateWindow = await page.evaluate((commandOffsets) => (
+    window.__fpvFakeSerialPorts.slice(0, 2).map((port, index) => (
+      port.requestedCommands.slice(commandOffsets[index])
+    ))
+  ), commandsBeforeRateWindow);
+  for (const commands of commandsInRateWindow) {
+    const rcCount = commands.filter((command) => command === 105).length;
+    const statusExCount = commands.filter((command) => command === 150).length;
+    const analogCount = commands.filter((command) => command === 110).length;
+    expect(rcCount).toBeGreaterThanOrEqual(15);
+    expect(rcCount).toBeLessThanOrEqual(40);
+    expect(statusExCount).toBeGreaterThanOrEqual(1);
+    expect(statusExCount).toBeLessThanOrEqual(5);
+    expect(analogCount).toBeLessThanOrEqual(1);
+  }
   await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-2");
   await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK -20");
   await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK +20");

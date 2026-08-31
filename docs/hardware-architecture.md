@@ -25,6 +25,7 @@ FPV Aircraft ── video RF ─────────────┤         
 
 - CH1–CH4：Roll、Pitch、Yaw、Throttle。
 - CH5–CH16：Arm、Mode 和其他 AUX。
+- 软件目标轮询频率为 100 Hz，并以单请求 lease 防止未回复请求持续堆叠；真实有效频率必须在具体 Bridge FC、USB 与俱乐部工作站上实测。
 - 每套地面接收机的 telemetry 行为必须按具体硬件与固件在拆桨台架上验证；不能仅凭 Web UI 选项假定它不会与机上接收机的回传冲突。
 
 这条路径反映发射机发出的通道值，适合操控叠层。`MSP_ANALOG` 的电压和 legacy RSSI 字段属于地面桥；地面接收机离遥控器很近，因此这些值不能代表无人机电池或机上链路质量。

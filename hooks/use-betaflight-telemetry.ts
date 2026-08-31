@@ -11,6 +11,7 @@ import {
 } from "@/lib/hardware-errors";
 import {
   buildMspV1Request,
+  canIssueMspRcRequest,
   connectionStateAfterRcSilence,
   createStatusExFreshnessWatchdog,
   createDemoTelemetry,
@@ -20,6 +21,10 @@ import {
   EMPTY_MSP_PARSER_STATS,
   EMPTY_TELEMETRY,
   MSP,
+  MSP_ANALOG_POLL_INTERVAL_MS,
+  MSP_RC_POLL_INTERVAL_MS,
+  MSP_RC_TARGET_HZ,
+  MSP_STATUS_EX_POLL_INTERVAL_MS,
   mspParserQuality,
   MspV1StreamParser,
   RC_FIRST_FRAME_TIMEOUT_MS,
@@ -41,6 +46,9 @@ import {
   type StickMotionVisualization,
 } from "@/lib/stick-motion";
 import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
+
+const SERIAL_VISUAL_HISTORY_HZ = 20;
+const SERIAL_VISUAL_SAMPLE_STEP = Math.max(1, Math.round(MSP_RC_TARGET_HZ / SERIAL_VISUAL_HISTORY_HZ));
 
 export interface TelemetryController {
   telemetry: FlightTelemetry;
@@ -85,6 +93,7 @@ export function useBetaflightTelemetry({
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusExWatchdogRef = useRef<StatusExFreshnessWatchdog | null>(null);
   const parserRef = useRef(new MspV1StreamParser());
+  const pendingRcRequestStartedAtRef = useRef<number | null>(null);
   const sequenceRef = useRef(0);
   const connectionAttemptRef = useRef(0);
   const demoActiveRef = useRef(false);
@@ -108,13 +117,16 @@ export function useBetaflightTelemetry({
       "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent"
     >,
     sequence: number,
+    appendTrail = true,
   ) => {
     const left = { x: sample.yawStickPercent, y: sample.throttleStickPercent * 2 - 100 };
     const right = { x: sample.rollStickPercent, y: sample.pitchStickPercent };
     leftPeakTrackerRef.current = advanceStickPeakTracker(leftPeakTrackerRef.current, left);
     rightPeakTrackerRef.current = advanceStickPeakTracker(rightPeakTrackerRef.current, right);
     setStickMotion((current) => ({
-      samples: appendStickMotionSample(current.samples, { sequence, left, right }),
+      samples: appendTrail
+        ? appendStickMotionSample(current.samples, { sequence, left, right })
+        : current.samples,
       leftPeak: visibleStickPeak(leftPeakTrackerRef.current),
       rightPeak: visibleStickPeak(rightPeakTrackerRef.current),
     }));
@@ -137,6 +149,7 @@ export function useBetaflightTelemetry({
     if (firstFrameTimerRef.current !== null) clearTimeout(firstFrameTimerRef.current);
     if (staleTimerRef.current !== null) clearTimeout(staleTimerRef.current);
     statusExWatchdogRef.current?.reset();
+    pendingRcRequestStartedAtRef.current = null;
     pollTimerRef.current = null;
     firstFrameTimerRef.current = null;
     staleTimerRef.current = null;
@@ -239,7 +252,7 @@ export function useBetaflightTelemetry({
   }, [disconnect, startDemo]);
 
   const armStaleWatchdog = useCallback((connectionAttempt: number) => {
-    if (staleTimerRef.current !== null) clearTimeout(staleTimerRef.current);
+    if (staleTimerRef.current !== null) return;
 
     const scheduleCheck = (delayMs: number) => {
       const staleTimer = setTimeout(() => {
@@ -274,6 +287,7 @@ export function useBetaflightTelemetry({
     const timestamp = Date.now();
     const monotonicTimestampMs = performance.now();
     if (command === MSP.RC) {
+      pendingRcRequestStartedAtRef.current = null;
       const rc = decodeRc(payload);
       if (!rc) return;
       const isFirstRcFrame = !receivedRcFrameRef.current;
@@ -292,6 +306,7 @@ export function useBetaflightTelemetry({
       }
 
       sequenceRef.current += 1;
+      const appendVisualHistory = sequenceRef.current % SERIAL_VISUAL_SAMPLE_STEP === 0;
       setTelemetry((current) => ({
         ...current,
         ...rc,
@@ -299,8 +314,10 @@ export function useBetaflightTelemetry({
         monotonicTimestampMs,
         sequence: sequenceRef.current,
       }));
-      setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
-      recordStickMotion(rc, sequenceRef.current);
+      if (appendVisualHistory) {
+        setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
+      }
+      recordStickMotion(rc, sequenceRef.current, appendVisualHistory);
       setConnection("live");
       armStaleWatchdog(connectionAttempt);
     } else if (command === MSP.ANALOG) {
@@ -437,27 +454,39 @@ export function useBetaflightTelemetry({
         void failSerial(classifySerialError(readError, "read"), connectionAttempt);
       });
 
-      let pollCount = 0;
+      let lastStatusExRequestAt = performance.now();
+      let lastAnalogRequestAt = performance.now();
       let writing = false;
       pollTimerRef.current = setInterval(() => {
         if (connectionAttemptRef.current !== connectionAttempt) return;
         const writer = writerRef.current;
         if (!writer || writing) return;
+
+        const now = performance.now();
+        if (!canIssueMspRcRequest(now, pendingRcRequestStartedAtRef.current)) return;
+
         writing = true;
-        pollCount += 1;
+        pendingRcRequestStartedAtRef.current = now;
         const requests = [buildMspV1Request(MSP.RC)];
-        if (pollCount % 2 === 0) requests.push(buildMspV1Request(MSP.STATUS_EX));
-        if (pollCount % 10 === 0) requests.push(buildMspV1Request(MSP.ANALOG));
+        if (now - lastStatusExRequestAt >= MSP_STATUS_EX_POLL_INTERVAL_MS) {
+          lastStatusExRequestAt = now;
+          requests.push(buildMspV1Request(MSP.STATUS_EX));
+        }
+        if (now - lastAnalogRequestAt >= MSP_ANALOG_POLL_INTERVAL_MS) {
+          lastAnalogRequestAt = now;
+          requests.push(buildMspV1Request(MSP.ANALOG));
+        }
         void (async () => {
           for (const request of requests) await writer.write(request);
         })()
           .catch((writeError: unknown) => {
+            pendingRcRequestStartedAtRef.current = null;
             void failSerial(classifySerialError(writeError, "write"), connectionAttempt);
           })
           .finally(() => {
             writing = false;
           });
-      }, 50);
+      }, MSP_RC_POLL_INTERVAL_MS);
     } catch (connectError) {
       await failSerial(classifySerialError(connectError, "open"), connectionAttempt);
     }

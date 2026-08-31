@@ -161,7 +161,7 @@ Generated 2026-08-31 · Status: IMPLEMENTATION SPEC · 母文档：[`strategy-re
 ## 3.7 隐私与合规规则
 
 1. **假名化 ID**：`workstation_id` 是随机 UUID，不含机器名/序列号/MAC/指纹，但可由团队线下台账重新关联；映射永远不写进事件表或可 join 的外键。
-2. **不采姓名**：任何时候不采集姓名、手机、邮箱、原始 UA、`device.label`、串口名、`error.message` 原文、Binding phrase（`docs/hardware-architecture.md:56`）、20 Hz 打杆样本、视频帧、串口原始字节。`error_message` 只保留分类枚举；设备只保留 `device_kind` 与 USB VID/PID。
+2. **不采姓名**：任何时候不采集姓名、手机、邮箱、原始 UA、`device.label`、串口名、`error.message` 原文、Binding phrase（`docs/hardware-architecture.md:56`）、高频打杆样本、视频帧、串口原始字节。`error_message` 只保留分类枚举；设备只保留 `device_kind` 与 USB VID/PID。
 3. **选手代号**：Phase 1 事件设计上不含姓名或选手代号；这不替代对假名化工作站数据、平台日志及未成年人场景的法律判断。Phase 2 若引入 `athlete_code_hash`，前端只接收“已取得监护人同意的代号列表”（L113），未同意代号不得出现在任何事件或云端摘要里。
 4. **未成年人与出境**：敏感信息、PIA、跨境机制与平台日志保留应由有权法律/合规负责人结合主体和地区书面判断；本文不提供法律意见。选手档案上云前必须另行审查。Route Handler 不主动落 IP/UA，平台日志边界仍需核验并写入附件。
 5. **报价单附件必须写的一行**（L112 要求“采集字段、用途、处理方/托管方、访问人、保留期、删除方式”）：“假名化产品使用统计：操作事件、设备环境类别、分类错误码、Session 时长与样本数统计；不含画面、原始 RC、选手代号或原始错误文本；经 Vercel 同域入口和 FPVSuperApp 受限摄入处理后写入境外托管的 FPVSuperApp Supabase 专属命名空间；平台日志边界、访问人、保留期与删除方式以最终书面附件为准；工作站可关闭统计。”书面确认、共享项目工程验收完成前保持关闭；`?analytics=off` 是否作为最终关闭机制须由工程实现与验收确认。
@@ -253,7 +253,7 @@ analytics-infra 的历史独立分析原本建议新建项目；2026-08-31 已�
 
 ### A.3 队列与批处理参数
 
-- 遥测样本永远不进埋点：`applyFrame` 与 demo 定时器都是 50 ms 路径，任何放在渲染路径上的 `track()` 都会每秒打 20 次。高频信号折成计数器（`rcFramesRef`、解析器 `droppedFrames`），由 `page_heartbeat` 每 60 秒（仅 `visibilityState === "visible"`）带走并清零：`rc_frames_60s / dropped_frames_60s / observed_hz`。
+- 遥测样本永远不进埋点：真实 `MSP_RC` 目标轮询路径为 10 ms，demo 动画为 50 ms；任何放在渲染路径上的 `track()` 都会制造高频事件。高频信号折成计数器（`rcFramesRef`、解析器 `droppedFrames`），由 `page_heartbeat` 每 60 秒（仅 `visibilityState === "visible"`）带走并清零：`rc_frames_60s / dropped_frames_60s / observed_hz`。
 - 批处理：队列 ≥20 条立即 flush，否则 10 秒定时；`js_error / recording_stopped / session_exported` 标 `urgent` 立即 flush；单批 ≤40 条且 JSON ≤32 KB（`sendBeacon` 64 KiB 上限留一半），超出自动拆批；`props` 单条 ≤2 KB（客户端截断）/ ≤4 KB（服务端与 CHECK 拒绝）。
 - 去重："宁可重发、不可丢"——`event_id` 客户端生成，服务端 `ignoreDuplicates`；beacon 路径发完**不出队**，下次打开页面再 fetch 补发，重复由数据库吸收。
 - 出队按 `event_id` 集合，不按数量（发送期间可能有新事件入队）；`inflight` 单飞标志防并发；4xx（400 / 413 / 422）视为毒数据丢弃，5xx / 429 保留并指数退避（5 s → 5 min）。

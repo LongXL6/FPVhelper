@@ -7,7 +7,7 @@ FPVHelper 是面向 FPV 俱乐部的训练量化工作台：在本机观察 HDMI
 - 通过浏览器 `getUserMedia` 打开 UVC HDMI 采集卡，并只在本机显示画面。
 - 左右摇杆可叠加在视频画面上，布局只保存在当前浏览器。
 - 通过 Web Serial 连接独立的地面桥接飞控，以只读 MSP v1 请求轮询 Betaflight：
-  - `MSP_RC`：Roll / Pitch / Yaw / Throttle 与已解码的 RC 通道。
+  - `MSP_RC`：目标 100 Hz 轮询 Roll / Pitch / Yaw / Throttle 与已解码的 RC 通道；实际有效频率取决于飞控、USB、浏览器与工作站负载。
   - `MSP_ANALOG`：地面桥接飞控电压与 legacy RSSI；该值不是机上 ELRS LQ。
 - 真实串口链路在线且填写选手代号后，才能开始训练 Session；草稿和已完成记录保存在本机 IndexedDB，并可导出 schema v2 JSON。
 - 未连接硬件时可使用明确标记的演示数据；演示数据不计入试点生产记录。
@@ -37,7 +37,7 @@ Pilot Radio → 该选手预绑定的 Ground ELRS RX → 该选手独立 Bridge 
 | 数据 | 是否离开本机 | 目的地与用途 | 状态 / 关闭方式 |
 | --- | --- | --- | --- |
 | 视频帧、DVR 原片 | 否 | 仅本机实时显示；DVR 由俱乐部控制 | 永不由 FPVHelper 上传 |
-| 原始 RC 通道与 20 Hz 样本 | 否 | 本机 IndexedDB；由操作员手动导出本地 JSON | 永不自动上传 |
+| 原始 RC 通道与高频样本 | 否 | 本机 IndexedDB；由操作员手动导出本地 JSON | 永不自动上传 |
 | 本机诊断 JSON / 原始串口夹具 | 否 | 操作员主动下载到本机，用于状态排查与 MSP parser 回归 | 不自动采集或上传；原始 `.bin` 最长 60 秒、内存上限 8 MiB |
 | 选手代号、教练备注 | 否 | 仅本地 Session JSON 与线下台账 | 不进入产品统计 |
 | 假名化产品使用统计 | 条件式 | 同域 Vercel Route Handler → FPVSuperApp 受限摄入入口 → 共享 Supabase 的 FPVHelper 专属命名空间，用于连接、错误和 Session 覆盖率诊断 | 尚需共享项目迁移、最小权限摄入、实现验收与书面确认；确认前关闭；上线后须支持 `?analytics=off` |

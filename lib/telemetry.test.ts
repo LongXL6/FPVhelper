@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMspV1Request,
+  canIssueMspRcRequest,
   connectionStateAfterRcSilence,
   createStatusExFreshnessWatchdog,
   createDemoTelemetry,
@@ -9,6 +10,11 @@ import {
   decodeStatusExLinkState,
   EMPTY_TELEMETRY,
   MSP,
+  MSP_ANALOG_POLL_INTERVAL_MS,
+  MSP_RC_POLL_INTERVAL_MS,
+  MSP_RC_RESPONSE_TIMEOUT_MS,
+  MSP_RC_TARGET_HZ,
+  MSP_STATUS_EX_POLL_INTERVAL_MS,
   mspParserQuality,
   MspV1StreamParser,
   STATUS_EX_STALE_TIMEOUT_MS,
@@ -29,6 +35,16 @@ function uint16Payload(values: number[]) {
 }
 
 describe("MSP v1 telemetry", () => {
+  it("targets 100 Hz RC polling without stacking unanswered requests", () => {
+    expect(MSP_RC_TARGET_HZ).toBe(100);
+    expect(MSP_RC_POLL_INTERVAL_MS).toBe(10);
+    expect(MSP_STATUS_EX_POLL_INTERVAL_MS).toBe(100);
+    expect(MSP_ANALOG_POLL_INTERVAL_MS).toBe(500);
+    expect(canIssueMspRcRequest(1_000, null)).toBe(true);
+    expect(canIssueMspRcRequest(1_099, 1_000)).toBe(false);
+    expect(canIssueMspRcRequest(1_000 + MSP_RC_RESPONSE_TIMEOUT_MS, 1_000)).toBe(true);
+  });
+
   it("builds a read-only request", () => {
     expect(Array.from(buildMspV1Request(MSP.RC))).toEqual([36, 77, 60, 0, 105, 105]);
     expect(Array.from(buildMspV1Request(MSP.STATUS_EX))).toEqual([36, 77, 60, 0, 150, 150]);

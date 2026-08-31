@@ -40,6 +40,16 @@ export const MSP = {
   STATUS_EX: 150,
 } as const;
 
+export const MSP_RC_TARGET_HZ = 100;
+export const MSP_RC_POLL_INTERVAL_MS = 1_000 / MSP_RC_TARGET_HZ;
+export const MSP_RC_RESPONSE_TIMEOUT_MS = 100;
+export const MSP_STATUS_EX_POLL_INTERVAL_MS = 100;
+export const MSP_ANALOG_POLL_INTERVAL_MS = 500;
+
+export function canIssueMspRcRequest(nowMs: number, pendingSinceMs: number | null) {
+  return pendingSinceMs === null || nowMs - pendingSinceMs >= MSP_RC_RESPONSE_TIMEOUT_MS;
+}
+
 const ARMING_DISABLED_FAILSAFE = 1 << 1;
 const ARMING_DISABLED_RX_FAILSAFE = 1 << 2;
 const RX_LINK_LOST_ARMING_FLAGS = ARMING_DISABLED_FAILSAFE | ARMING_DISABLED_RX_FAILSAFE;
