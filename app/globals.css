@@ -192,6 +192,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .export-banner--warning { border-color: #f6bd48; background: rgba(246, 189, 72, 0.08); }
 .export-banner--warning b { color: #f6bd48; }
 
+.workstation-banner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 14px 0 -2px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--signal);
+  background: #0d2028;
+  color: var(--muted);
+  font: 600 10px/1.4 var(--mono);
+}
+.workstation-banner b { color: var(--signal); }
+.workstation-banner--blocked { border-color: #f6bd48; background: rgba(246, 189, 72, 0.08); }
+.workstation-banner--blocked b { color: #f6bd48; }
+
 .update-banner {
   display: flex;
   justify-content: space-between;

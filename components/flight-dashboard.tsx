@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useState, useSyncExternalStore } from "react";
 import {
   DraggableStickOverlay,
   storeStickOverlayLayout,
@@ -16,6 +16,7 @@ import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-a
 import { useTrainingSession } from "@/hooks/use-training-session";
 import { useVideoCapture } from "@/hooks/use-video-capture";
 import { useVersionCheck } from "@/hooks/use-version-check";
+import { useWorkstationRuntime } from "@/hooks/use-workstation-runtime";
 import { clamp } from "@/lib/telemetry";
 import {
   DEFAULT_TRAINING_SESSION_PREFERENCES,
@@ -35,6 +36,10 @@ import {
   type TrainingSessionInvalidReason,
   type TrainingSessionMarkerKind,
 } from "@/lib/training-session";
+import {
+  classifyWorkstationShortcut,
+  workstationTabStartBlockReason,
+} from "@/lib/workstation-runtime";
 
 const statusCopy = {
   demo: "演示数据",
@@ -77,6 +82,7 @@ const COACH_RIGHT_STICK_LAYOUT = { xPercent: 78, yPercent: 57, size: 220 };
 const markerKinds = Object.keys(TRAINING_MARKER_LABELS) as Exclude<TrainingSessionMarkerKind, "manual">[];
 const TRAINING_PREFERENCES_EVENT = "fpvhelper:training-preferences";
 const DEFAULT_TRAINING_PREFERENCES_SNAPSHOT = JSON.stringify(DEFAULT_TRAINING_SESSION_PREFERENCES);
+const RECORD_SHORTCUT_HOLD_MS = 700;
 
 function subscribeToTrainingPreferences(onStoreChange: () => void) {
   const handleStorage = (event: StorageEvent) => {
@@ -261,6 +267,7 @@ export function FlightDashboard() {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [analyticsTokenDraft, setAnalyticsTokenDraft] = useState("");
   const [analyticsInstallMessage, setAnalyticsInstallMessage] = useState<string | null>(null);
+  const [workstationNotice, setWorkstationNotice] = useState<string | null>(null);
   const telemetryControl = useBetaflightTelemetry();
   const {
     videoRef,
@@ -279,6 +286,7 @@ export function FlightDashboard() {
   const trainingSession = useTrainingSession({ telemetry, source, connection, linkState, athleteCode, autoExport });
   const addTrainingMarker = trainingSession.addMarker;
   const sessionIsRecording = trainingSession.isRecording;
+  const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording });
   const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
     ? notesDraft
     : trainingSession.lastSession?.notes ?? "";
@@ -295,25 +303,45 @@ export function FlightDashboard() {
     }
   }, []);
 
-  const toggleCoachMode = useCallback(() => setCoachMode((enabled) => !enabled), []);
+  const toggleCoachMode = useCallback(async () => {
+    setWorkstationNotice(null);
+    if (coachMode) {
+      if (document.fullscreenElement) {
+        try {
+          await document.exitFullscreen();
+        } catch {
+          setWorkstationNotice("浏览器未能退出全屏，请按 Esc 重试");
+          return;
+        }
+      }
+      setCoachMode(false);
+      return;
+    }
+    if (!document.documentElement.requestFullscreen) {
+      setCoachMode(true);
+      setWorkstationNotice("当前浏览器不支持 Fullscreen API，已进入页面内大屏模式");
+      return;
+    }
+    try {
+      await document.documentElement.requestFullscreen();
+      setCoachMode(true);
+    } catch {
+      setWorkstationNotice("浏览器拒绝全屏请求；请从地址栏权限或浏览器菜单手动允许");
+    }
+  }, [coachMode]);
 
   useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) return;
-      if (event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        toggleCoachMode();
-      } else if (event.key.toLowerCase() === "m" && sessionIsRecording) {
-        event.preventDefault();
-        void addTrainingMarker(selectedMarkerKind);
-      }
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) setCoachMode(false);
     };
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
-  }, [addTrainingMarker, selectedMarkerKind, sessionIsRecording, toggleCoachMode]);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
   const preferenceError = preferenceWriteError || loadedPreferences.error;
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing;
   const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
+  const tabStartBlockReason = workstationTabStartBlockReason(workstation.tabState);
+  const tabAllowsStart = tabStartBlockReason === null;
   const bridgeIsLive = source === "serial" && connection === "live";
   const groundRxReady = bridgeIsLive && linkState === "ok";
   const videoLabel = videoState === "live" ? "HDMI 画面在线" : videoState === "connecting" ? "正在打开视频" : "等待 HDMI 输入";
@@ -336,19 +364,21 @@ export function FlightDashboard() {
     : trainingSession.lastSession?.dataSources.map((dataSource) => dataSource === "ground_rc" ? "GROUND_RC" : "DEMO").join(" + ") ?? "—";
   const visibleSessionId = trainingSession.sessionId?.slice(0, 8).toUpperCase() ?? "READY";
   const quarantinedRecordCount = quarantinedTrainingRecordCount(trainingSession.storageIntegrity);
-  const startRequirement = !trainingSession.storageReady
-    ? "正在准备浏览器本地存储"
-    : trainingSession.storageError
-      ? "本地存储异常，暂不能开始"
-      : !normalizeAthleteCode(athleteCode)
-        ? "先填写选手代号"
-        : !bridgeIsLive
-          ? "连接桥接飞控并等待 MSP_RC 数据在线"
-          : linkState === "lost"
-            ? "遥控链路已丢失，不能开始记录"
-            : linkState === "unknown"
-              ? "等待 MSP_STATUS_EX 确认遥控链路"
-              : "已满足开始条件";
+  const startRequirement = tabStartBlockReason
+    ? tabStartBlockReason
+    : !trainingSession.storageReady
+      ? "正在准备浏览器本地存储"
+      : trainingSession.storageError
+        ? "本地存储异常，暂不能开始"
+        : !normalizeAthleteCode(athleteCode)
+          ? "先填写选手代号"
+          : !bridgeIsLive
+            ? "连接桥接飞控并等待 MSP_RC 数据在线"
+            : linkState === "lost"
+              ? "遥控链路已丢失，不能开始记录"
+              : linkState === "unknown"
+                ? "等待 MSP_STATUS_EX 确认遥控链路"
+                : "已满足开始条件";
   const lastSessionValidity = trainingSession.lastSession
     ? trainingSession.lastSession.validity.valid
       ? "技术有效：真实 GROUND_RC、≥60 秒、≥300 个不重复样本、时间戳严格单调且已关联代号"
@@ -411,7 +441,107 @@ export function FlightDashboard() {
           ? "工作站令牌已被服务端拒绝；待发送事件仍保留在本机，请粘贴新令牌。"
         : analytics.status.state === "waiting_token"
           ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
-          : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
+      : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
+
+  const executeWorkstationShortcut = useEffectEvent((shortcut: ReturnType<typeof classifyWorkstationShortcut>) => {
+    if (!shortcut) return;
+    if (shortcut === "toggle_fullscreen") {
+      void toggleCoachMode();
+    } else if (shortcut === "record_hold") {
+      if (controlsLocked) return;
+      if (trainingSession.isRecording) {
+        setWorkstationNotice("空格长按：正在结束并保存记录");
+        void trainingSession.stopRecording();
+      } else if (trainingSession.canStart && tabAllowsStart) {
+        setWorkstationNotice("空格长按：正在开始记录");
+        void trainingSession.startRecording();
+      } else {
+        setWorkstationNotice("当前尚未满足开始记录条件");
+      }
+    } else if (shortcut === "add_marker" && trainingSession.isRecording) {
+      void trainingSession.addMarker(selectedMarkerKind);
+    } else if (shortcut === "export_latest" && !controlsLocked && trainingSession.lastSession) {
+      void trainingSession.exportSession(trainingSession.lastSession.id);
+    } else if (
+      shortcut === "cancel_connection" &&
+      !document.fullscreenElement &&
+      !controlsLocked &&
+      (source === "serial" || connection === "connecting")
+    ) {
+      setWorkstationNotice("Esc：正在取消连接并返回演示");
+      analytics.markDemoReturnIntentional();
+      void telemetryControl.useDemo();
+    }
+  });
+
+  useEffect(() => {
+    let recordHoldTimer: number | null = null;
+    let recordHoldTriggered = false;
+
+    const clearRecordHold = () => {
+      if (recordHoldTimer !== null) window.clearTimeout(recordHoldTimer);
+      recordHoldTimer = null;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const shortcut = classifyWorkstationShortcut({
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        modified: event.altKey || event.ctrlKey || event.metaKey,
+        typing: isTypingTarget(event.target),
+      });
+      if (!shortcut) return;
+
+      if (shortcut === "record_hold") {
+        event.preventDefault();
+        if (recordHoldTimer !== null) return;
+        recordHoldTriggered = false;
+        setWorkstationNotice("继续按住空格 0.7 秒以开始或结束记录");
+        recordHoldTimer = window.setTimeout(() => {
+          recordHoldTimer = null;
+          recordHoldTriggered = true;
+          executeWorkstationShortcut("record_hold");
+        }, RECORD_SHORTCUT_HOLD_MS);
+        return;
+      }
+
+      if (shortcut === "toggle_fullscreen") {
+        event.preventDefault();
+        executeWorkstationShortcut(shortcut);
+      } else if (shortcut === "add_marker") {
+        event.preventDefault();
+        executeWorkstationShortcut(shortcut);
+      } else if (shortcut === "export_latest") {
+        event.preventDefault();
+        executeWorkstationShortcut(shortcut);
+      } else if (shortcut === "cancel_connection") {
+        if (document.fullscreenElement) return;
+        event.preventDefault();
+        executeWorkstationShortcut(shortcut);
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "Space" && event.key !== " ") return;
+      if (event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) return;
+      event.preventDefault();
+      if (recordHoldTimer !== null) {
+        clearRecordHold();
+        setWorkstationNotice("空格按住时间不足，未改变记录状态");
+      } else if (recordHoldTriggered) {
+        recordHoldTriggered = false;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      clearRecordHold();
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
   return (
     <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
       <header className="topbar">
@@ -442,14 +572,14 @@ export function FlightDashboard() {
             className={`button button--quiet button--coach ${coachMode ? "button--coach-active" : ""}`}
             type="button"
             aria-pressed={coachMode}
-            title="F 键切换教练大屏"
-            onClick={toggleCoachMode}
+            title="F 键切换全屏教练大屏；Esc 退出"
+            onClick={() => void toggleCoachMode()}
           >{coachMode ? "退出大屏 (F)" : "教练大屏 (F)"}</button>
           <button
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
             aria-pressed={trainingSession.isRecording}
-            disabled={trainingSession.isRecording ? trainingSession.isFinishing : !trainingSession.canStart}
+            disabled={trainingSession.isRecording ? trainingSession.isFinishing : !trainingSession.canStart || !tabAllowsStart}
             title={trainingSession.isRecording ? "结束并保存当前 Session" : startRequirement}
             onClick={() => void (trainingSession.isRecording ? trainingSession.stopRecording() : trainingSession.startRecording())}
           >
@@ -477,6 +607,21 @@ export function FlightDashboard() {
           </button>
         </div>
       </header>
+
+      {(workstation.tabState === "blocked" || workstationNotice || (trainingSession.isRecording && workstation.wakeState !== "active")) ? (
+        <aside className={`workstation-banner ${workstation.tabState === "blocked" ? "workstation-banner--blocked" : ""}`} role="status">
+          <b>工作站状态</b>
+          <span>{workstation.tabState === "blocked"
+            ? "另一标签页正在使用 FPVHelper；本页不会允许开始新记录。"
+            : workstationNotice ?? (workstation.wakeState === "requesting"
+              ? "正在保持屏幕唤醒"
+              : workstation.wakeState === "unsupported"
+                ? "当前浏览器不支持 Wake Lock；录制时请手动关闭系统休眠"
+                : workstation.wakeState === "error" || workstation.wakeState === "released"
+                  ? "屏幕保持唤醒失败或已释放；请保持本页可见并检查系统休眠设置"
+                  : "训练工作站已就绪")}</span>
+        </aside>
+      ) : null}
 
       {visibleError && (
         <aside className="error-banner" role="status">
