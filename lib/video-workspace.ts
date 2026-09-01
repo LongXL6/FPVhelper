@@ -12,6 +12,8 @@ export interface VideoCropRect {
   heightPercent: number;
 }
 
+export type VideoCropInteraction = "move" | "resize-nw" | "resize-ne" | "resize-sw" | "resize-se";
+
 export interface VideoSourceConfig {
   id: string;
   label: string;
@@ -236,6 +238,19 @@ export function setVideoSourceDevice(
   };
 }
 
+export function setVideoSourceLabel(
+  workspace: VideoWorkspaceConfig,
+  selectedSourceId: string,
+  label: string,
+) {
+  return {
+    ...workspace,
+    sources: workspace.sources.map((source) => source.id === selectedSourceId
+      ? { ...source, label: label.slice(0, 40) }
+      : source),
+  };
+}
+
 export function updatePilotChannel(
   workspace: VideoWorkspaceConfig,
   selectedChannelId: string,
@@ -349,6 +364,51 @@ export function videoCropPixelRect(crop: VideoCropRect, sourceWidth: number, sou
     width: Math.max(1, right - x),
     height: Math.max(1, bottom - y),
   };
+}
+
+export function transformVideoCrop(
+  crop: VideoCropRect,
+  interaction: VideoCropInteraction,
+  deltaXPercent: number,
+  deltaYPercent: number,
+) {
+  const normalized = normalizeVideoCrop(crop);
+  const left = normalized.xPercent;
+  const top = normalized.yPercent;
+  const right = left + normalized.widthPercent;
+  const bottom = top + normalized.heightPercent;
+
+  if (interaction === "move") {
+    return {
+      ...normalized,
+      xPercent: clampPercent(left + deltaXPercent, 0, 100 - normalized.widthPercent),
+      yPercent: clampPercent(top + deltaYPercent, 0, 100 - normalized.heightPercent),
+    };
+  }
+
+  const nextLeft = interaction === "resize-nw" || interaction === "resize-sw"
+    ? clampPercent(left + deltaXPercent, 0, right - MIN_CROP_PERCENT)
+    : left;
+  const nextRight = interaction === "resize-ne" || interaction === "resize-se"
+    ? clampPercent(right + deltaXPercent, left + MIN_CROP_PERCENT, 100)
+    : right;
+  const nextTop = interaction === "resize-nw" || interaction === "resize-ne"
+    ? clampPercent(top + deltaYPercent, 0, bottom - MIN_CROP_PERCENT)
+    : top;
+  const nextBottom = interaction === "resize-sw" || interaction === "resize-se"
+    ? clampPercent(bottom + deltaYPercent, top + MIN_CROP_PERCENT, 100)
+    : bottom;
+
+  return {
+    xPercent: nextLeft,
+    yPercent: nextTop,
+    widthPercent: nextRight - nextLeft,
+    heightPercent: nextBottom - nextTop,
+  };
+}
+
+function clampPercent(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function storageErrorMessage(error: unknown) {

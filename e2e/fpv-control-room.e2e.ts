@@ -50,15 +50,15 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
 
   await page.getByRole("button", { name: "输入布局：四分屏" }).click();
-  const firstPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 1" });
-  const secondPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 2" });
+  const firstPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 1" });
+  const secondPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 2" });
   await expect(secondPilot).toBeVisible();
   await firstPilot.click();
   await page.getByRole("region", { name: "选手 1 画面绑定" })
     .getByRole("button", { name: "选手取景：完整画面" })
     .click();
   await secondPilot.click();
-  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-02");
   const secondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
   await secondBinding.getByRole("slider", { name: "裁切画面宽度" }).fill("40");
   await secondBinding.getByRole("slider", { name: "裁切画面高度" }).fill("40");
@@ -98,13 +98,13 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
 
   await page.reload();
   await expect(page.locator(".video-viewport-tabs").getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("textbox", { name: "选手代号" })).toHaveValue("PILOT-02");
+  await expect(page.getByRole("textbox", { name: "选手姓名或代号" })).toHaveValue("PILOT-02");
   const restoredSecondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("55");
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切上边界" })).toHaveValue("5");
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切画面宽度" })).toHaveValue("40");
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切画面高度" })).toHaveValue("40");
-  await page.locator(".video-viewport-tabs").getByRole("button", { name: "选手 1" }).click();
+  await page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 1" }).click();
   await expect(page.getByRole("region", { name: "选手 1 画面绑定" })
     .getByRole("button", { name: "选手取景：完整画面" })).toHaveAttribute("aria-pressed", "true");
 });
@@ -122,9 +122,35 @@ test("pilot video binding switches between full input and a persisted custom cro
   await binding.getByRole("slider", { name: "裁切画面高度" }).fill("60");
   await binding.getByRole("slider", { name: "裁切左边界" }).fill("10");
   await binding.getByRole("slider", { name: "裁切上边界" }).fill("15");
+  const cropSelection = binding.getByRole("group", { name: /裁切选框/ });
+  await cropSelection.press("ArrowRight");
+  await expect(binding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("11");
+  await cropSelection.press("ArrowLeft");
+  await expect(binding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("10");
+  const cropBounds = await cropSelection.boundingBox();
+  expect(cropBounds).not.toBeNull();
+  await page.mouse.move(cropBounds!.x + cropBounds!.width / 2, cropBounds!.y + cropBounds!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cropBounds!.x + cropBounds!.width / 2 + 12, cropBounds!.y + cropBounds!.height / 2 + 8);
+  await page.mouse.up();
+  await expect.poll(async () => Number(await binding.getByRole("slider", { name: "裁切左边界" }).inputValue())).toBeGreaterThan(10);
+  await binding.getByRole("slider", { name: "裁切左边界" }).fill("10");
+  await binding.getByRole("slider", { name: "裁切上边界" }).fill("15");
 
   await page.getByRole("button", { name: "打开画面" }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
+
+  const cropEditor = binding.locator(".crop-editor");
+  const cropPreview = binding.locator('video[aria-label="裁切输入预览"]');
+  await expect.poll(async () => {
+    const sourceRatio = await cropPreview.evaluate((element) => {
+      const video = element as HTMLVideoElement;
+      return video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 0;
+    });
+    const editorBounds = await cropEditor.boundingBox();
+    if (!editorBounds || sourceRatio <= 0) return Number.POSITIVE_INFINITY;
+    return Math.abs((editorBounds.width / editorBounds.height) - sourceRatio);
+  }).toBeLessThan(0.02);
 
   const croppedCanvas = page.locator("canvas.video-feed--cropped");
   const cropSourceVideo = page.locator("video.video-feed-source");
@@ -177,6 +203,14 @@ test("pilot video binding switches between full input and a persisted custom cro
 test("independent video inputs open together and keep one active telemetry viewport", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "+ 独立输入" }).click();
+
+  await page.getByRole("textbox", { name: "输入名称" }).fill("练习区接收机");
+  await page.getByRole("combobox", { name: "画面输入" }).selectOption("video-source-1");
+  await page.getByRole("textbox", { name: "输入名称" }).fill("主赛道接收机");
+  await page.getByRole("combobox", { name: "画面输入" }).selectOption("video-source-2");
+  await expect(page.getByRole("textbox", { name: "输入名称" })).toHaveValue("练习区接收机");
+  await expect(page.locator(".video-source-tab").filter({ hasText: "主赛道接收机" })).toBeVisible();
+  await expect(page.locator(".video-source-tab").filter({ hasText: "练习区接收机" })).toHaveClass(/is-active/);
 
   const viewports = page.locator(".video-viewport");
   await expect(viewports).toHaveCount(2);
@@ -250,7 +284,7 @@ test("active pilot full and cropped video record to the authorized local folder"
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
-  await page.getByRole("textbox", { name: "选手代号" }).fill("VIDEO-01");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("VIDEO-01");
 
   const recordButton = page.getByRole("button", { name: "● 开始记录" });
   await expect(recordButton).toBeEnabled();
@@ -365,7 +399,7 @@ test("a delayed video file open cannot start after its Training Session has ende
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
-  await page.getByRole("textbox", { name: "选手代号" }).fill("RACE-01");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("RACE-01");
 
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -400,9 +434,9 @@ test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ pag
 
   const firstViewport = page.locator('.video-viewport[data-source-id="video-source-1"]');
   const secondViewport = page.locator('.video-viewport[data-source-id="video-source-2"]');
-  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-02");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-02");
   await firstViewport.locator(".video-viewport-select").click();
-  await page.getByRole("textbox", { name: "选手代号" }).fill("PILOT-01");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-01");
 
   await firstViewport.getByRole("button", { name: "连接 PILOT-01 桥接飞控" }).click();
   await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-source", "serial");
@@ -521,12 +555,11 @@ test("fake media and read-only MSP bridge persist a local training session", asy
   await expect(page.locator(".gauge-grid--primary")).toContainText("1250 μs · GROUND_RC / MSP_RC");
   await expect(page.locator(".hud-top-right")).toContainText("5.0 V");
 
-  await page.getByText("桥接诊断字段（非机上 LQ）").click();
+  await page.getByText("采集桥诊断", { exact: true }).click();
   await expect(page.getByText("遥控链路：遥控链路正常。Bridge FC 在线不等于遥控器在线。")).toBeVisible();
   await expect(page.locator(".bridge-card .card-heading")).toContainText("RX OK");
   await expect(page.getByText(/解析质量：良好 · 有效帧/)).toBeVisible();
-  const rssiGauge = page.locator(".gauge-card").filter({ hasText: "地面桥 RSSI 字段" });
-  await expect(rssiGauge.locator("strong")).toHaveText("88");
+  await expect(page.getByText(/地面桥 RSSI|legacy RSSI/)).toHaveCount(0);
 
   await expect.poll(() => page.evaluate(() => (
     [...new Set(window.__fpvFakeSerial.requestedCommands)].sort((left, right) => left - right)
@@ -544,7 +577,7 @@ test("fake media and read-only MSP bridge persist a local training session", asy
     closeRejectedWhileLocked: 1,
   });
 
-  await page.getByRole("textbox", { name: "选手代号" }).fill("E2E-07");
+  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("E2E-07");
   await expect(recordButton).toBeEnabled();
   await expect(recordButton).toHaveAttribute("title", "已满足开始条件");
   await recordButton.click();

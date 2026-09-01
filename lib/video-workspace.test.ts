@@ -15,7 +15,9 @@ import {
   setPilotChannelCrop,
   setPilotChannelViewMode,
   setVideoSourceDevice,
+  setVideoSourceLabel,
   setVideoSourceLayout,
+  transformVideoCrop,
   updatePilotChannel,
   LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
   VIDEO_WORKSPACE_STORAGE_KEY,
@@ -168,6 +170,38 @@ describe("local video workspace", () => {
     expect(workspace.sources).toHaveLength(1);
     expect(workspace.pilotChannels.every((channel) => channel.sourceId === "video-source-1")).toBe(true);
     expect(removeVideoSource(workspace, "video-source-1")).toBe(workspace);
+  });
+
+  it("gives every video input an independent local name", () => {
+    let workspace = addVideoSource(createDefaultVideoWorkspace());
+    workspace = setVideoSourceLabel(workspace, "video-source-1", "主赛道接收机");
+    workspace = setVideoSourceLabel(workspace, "video-source-2", "练习区接收机");
+
+    expect(workspace.sources.map((source) => source.label)).toEqual(["主赛道接收机", "练习区接收机"]);
+    expect(setVideoSourceLabel(workspace, "video-source-2", "x".repeat(50)).sources[1].label).toHaveLength(40);
+  });
+
+  it("moves and resizes the visual crop selection inside the source frame", () => {
+    const crop = { xPercent: 20, yPercent: 20, widthPercent: 50, heightPercent: 50 };
+
+    expect(transformVideoCrop(crop, "move", 40, -30)).toEqual({
+      xPercent: 50,
+      yPercent: 0,
+      widthPercent: 50,
+      heightPercent: 50,
+    });
+    expect(transformVideoCrop(crop, "resize-nw", 45, 45)).toEqual({
+      xPercent: 60,
+      yPercent: 60,
+      widthPercent: 10,
+      heightPercent: 10,
+    });
+    expect(transformVideoCrop(crop, "resize-se", 50, 50)).toEqual({
+      xPercent: 20,
+      yPercent: 20,
+      widthPercent: 80,
+      heightPercent: 80,
+    });
   });
 
   it("persists only normalized local workspace data", () => {

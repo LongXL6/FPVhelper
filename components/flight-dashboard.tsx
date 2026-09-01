@@ -81,6 +81,7 @@ import {
   setPilotChannelCrop,
   setPilotChannelViewMode,
   setVideoSourceDevice,
+  setVideoSourceLabel,
   setVideoSourceLayout,
   updatePilotChannel,
   LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
@@ -88,6 +89,7 @@ import {
   videoCropPixelRect,
   videoViewportsForSource,
   type VideoCropRect,
+  type VideoSourceConfig,
   type VideoWorkspaceConfig,
 } from "@/lib/video-workspace";
 import {
@@ -115,6 +117,11 @@ const statusCopy = {
   stale: "数据已停滞",
   error: "需要检查",
 } as const;
+
+function videoSourceDisplayName(sources: readonly VideoSourceConfig[], source: VideoSourceConfig) {
+  const index = sources.findIndex((candidate) => candidate.id === source.id);
+  return source.label.trim() || `视频输入 ${index >= 0 ? index + 1 : 1}`;
+}
 
 function MiniStickIndicator({
   label,
@@ -637,7 +644,11 @@ export function FlightDashboard() {
   const activeSource = activeVideoSource(videoWorkspace);
   const activeChannel = activePilotChannel(videoWorkspace);
   const activeViewport = activeVideoViewport(videoWorkspace);
-  const sourceViewports = activeSource ? videoViewportsForSource(videoWorkspace, activeSource) : [];
+  const sourceChannels = activeSource
+    ? videoWorkspace.pilotChannels
+        .filter((channel) => channel.sourceId === activeSource.id)
+        .sort((left, right) => left.slot - right.slot)
+    : [];
   const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
   const localVideoRecording = useLocalVideoRecording();
   const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
@@ -786,7 +797,6 @@ export function FlightDashboard() {
       ].filter(Boolean).join(" · ")
     : "";
   const rcSourceLabel = source === "demo" ? "DEMO" : "GROUND_RC";
-  const bridgeSourceLabel = source === "demo" ? "DEMO" : "GROUND_BRIDGE";
   const timecode = formatLocalTimecode(telemetry.timestamp);
   const sessionRate = trainingSession.isRecording
     ? trainingSession.sampleCount > 1 && trainingSession.elapsedMs > 0
@@ -830,7 +840,7 @@ export function FlightDashboard() {
       : trainingSession.storageError
         ? "本地存储异常，暂不能开始"
         : !normalizeAthleteCode(athleteCode)
-          ? "先填写选手代号"
+          ? "先填写选手姓名或代号"
           : !bridgeIsLive
             ? "连接桥接飞控并等待 MSP_RC 数据在线"
             : linkState === "lost"
@@ -1322,7 +1332,7 @@ export function FlightDashboard() {
           <div className="section-bar">
             <div>
               <span className={`live-dot ${videoState === "live" ? "is-live" : ""}`} />
-              <b>HDMI IN / {activeSource?.label ?? "MAIN FEED"}</b>
+              <b>HDMI IN / {activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "MAIN FEED"}</b>
               <small>
                 {videoFormatLabel ? `${videoLabel} · ${videoFormatLabel}` : videoLabel}
                 {activeViewport ? ` · ${activeViewport.label}` : ""}
@@ -1443,21 +1453,22 @@ export function FlightDashboard() {
           </div>
 
           <div className="video-workspace-bar" aria-label="本机视频工作区">
-            <label>
-              <span>输入档案</span>
-              <select
-                value={videoWorkspace.activeSourceId}
-                disabled={controlsLocked}
-                onChange={(event) => {
-                  const nextWorkspace = selectVideoSource(videoWorkspace, event.target.value);
-                  commitVideoWorkspace(nextWorkspace);
-                }}
-              >
-                {videoWorkspace.sources.map((sourceConfig) => (
-                  <option key={sourceConfig.id} value={sourceConfig.id}>{sourceConfig.label}</option>
-                ))}
-              </select>
-            </label>
+            <span className="video-workspace-label">已配置输入</span>
+            <div className="video-source-tabs" aria-label="画面输入列表">
+              {videoWorkspace.sources.map((sourceConfig, index) => (
+                <button
+                  key={sourceConfig.id}
+                  className={`video-source-tab ${sourceConfig.id === videoWorkspace.activeSourceId ? "is-active" : ""}`}
+                  type="button"
+                  aria-pressed={sourceConfig.id === videoWorkspace.activeSourceId}
+                  disabled={controlsLocked}
+                  onClick={() => commitVideoWorkspace(selectVideoSource(videoWorkspace, sourceConfig.id))}
+                >
+                  <span>输入 {index + 1}</span>
+                  <b>{videoSourceDisplayName(videoWorkspace.sources, sourceConfig)}</b>
+                </button>
+              ))}
+            </div>
             <button
               className="mini-button"
               type="button"
@@ -1477,56 +1488,33 @@ export function FlightDashboard() {
                 commitVideoWorkspace(nextWorkspace);
               }}
             >移除输入</button>
-            <span className="video-workspace-divider" aria-hidden="true" />
-            <span className="video-workspace-label">画面布局</span>
-            <button
-              className={`mini-button ${activeSource?.layout === "full" ? "mini-button--active" : ""}`}
-              type="button"
-              aria-label="输入布局：完整画面"
-              aria-pressed={activeSource?.layout === "full"}
-              disabled={controlsLocked || !activeSource}
-              onClick={() => {
-                if (activeSource) commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, "full"));
-              }}
-            >完整画面</button>
-            <button
-              className={`mini-button ${activeSource?.layout === "quad" ? "mini-button--active" : ""}`}
-              type="button"
-              aria-label="输入布局：四分屏"
-              aria-pressed={activeSource?.layout === "quad"}
-              disabled={controlsLocked || !activeSource}
-              onClick={() => {
-                if (activeSource) commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, "quad"));
-              }}
-            >四分屏</button>
-            {activeSource?.layout === "quad" ? (
-              <div className="video-viewport-tabs" aria-label="四分屏选手画面">
-                {sourceViewports.map((viewport) => {
-                  const channel = videoWorkspace.pilotChannels.find(
-                    (candidate) => candidate.id === viewport.pilotChannelId,
-                  );
-                  const selected = viewport.pilotChannelId === videoWorkspace.activePilotChannelId;
-                  return (
-                    <button
-                      key={viewport.id}
-                      className={`mini-button ${selected ? "mini-button--active" : ""}`}
-                      type="button"
-                      aria-pressed={selected}
-                      disabled={controlsLocked}
-                      onClick={() => commitVideoWorkspace(selectPilotChannel(videoWorkspace, viewport.pilotChannelId))}
-                    >{channel?.athleteCode.trim() || viewport.label}</button>
-                  );
-                })}
-              </div>
-            ) : null}
             <small>配置仅保存在本机 · 已连接 {liveVideoSourceCount}/{videoWorkspace.sources.length} 路</small>
           </div>
 
           {activeSource && activeChannel ? (
             <PilotVideoBindingControls
+              sources={videoWorkspace.sources}
               source={activeSource}
+              sourceChannels={sourceChannels}
               channel={activeChannel}
+              videoState={videoState}
               disabled={controlsLocked}
+              registerVideoElement={videoCapture.registerVideoElement}
+              onSourceChange={(sourceId) => {
+                commitVideoWorkspace(selectVideoSource(videoWorkspace, sourceId));
+              }}
+              onSourceLabelChange={(label) => {
+                commitVideoWorkspace(setVideoSourceLabel(videoWorkspace, activeSource.id, label));
+              }}
+              onSourceLayoutChange={(layout) => {
+                commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, layout));
+              }}
+              onChannelChange={(channelId) => {
+                commitVideoWorkspace(selectPilotChannel(videoWorkspace, channelId));
+              }}
+              onAthleteCodeChange={(athleteCode) => {
+                commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode }));
+              }}
               onViewModeChange={(viewMode) => {
                 commitVideoWorkspace(setPilotChannelViewMode(videoWorkspace, activeChannel.id, viewMode));
               }}
@@ -1544,7 +1532,8 @@ export function FlightDashboard() {
               {workspaceTiles.map(({ sourceConfig, viewport, channel }) => {
                 const runtime = videoSourceRuntime(videoCapture.runtimes, sourceConfig.id);
                 const isActive = viewport.pilotChannelId === videoWorkspace.activePilotChannelId;
-                const tileLabel = channel?.athleteCode.trim() || `${sourceConfig.label} · ${viewport.label}`;
+                const sourceLabel = videoSourceDisplayName(videoWorkspace.sources, sourceConfig);
+                const tileLabel = channel?.athleteCode.trim() || `${sourceLabel} · ${viewport.label}`;
                 const isCropped = viewport.crop.xPercent !== 0
                   || viewport.crop.yPercent !== 0
                   || viewport.crop.widthPercent !== 100
@@ -1566,7 +1555,7 @@ export function FlightDashboard() {
                     />
                     <div className="video-idle">
                       <div className="flight-gate" aria-hidden="true"><span /><span /></div>
-                      <p>{runtime.state === "connecting" ? "正在打开视频" : sourceConfig.label}</p>
+                      <p>{runtime.state === "connecting" ? "正在打开视频" : sourceLabel}</p>
                       <small>{runtime.error ?? "浏览器本地 UVC · 仅本机处理 · 不上传"}</small>
                     </div>
                     <button
@@ -1580,7 +1569,7 @@ export function FlightDashboard() {
                         commitVideoWorkspace(selectPilotChannel(selectedSource, viewport.pilotChannelId));
                       }}
                     >
-                      <span>{isActive ? "CURRENT" : sourceConfig.label}</span>
+                      <span>{isActive ? "CURRENT" : sourceLabel}</span>
                       <b>{tileLabel}</b>
                     </button>
 
@@ -1695,10 +1684,7 @@ export function FlightDashboard() {
           </div>
 
           <details className="telemetry-details">
-            <summary>桥接诊断字段（非机上 LQ）</summary>
-            <div className="gauge-grid">
-              <Gauge label="地面桥 RSSI 字段" value={telemetry.groundMspRssiPercent} detail={`${bridgeSourceLabel} · MSP legacy RSSI · 明确不是机上 LQ`} />
-            </div>
+            <summary>采集桥诊断</summary>
             <section className="bridge-card">
               <div className="card-heading"><span>GROUND BRIDGE</span><b>{!bridgeIsLive
                 ? "MSP WAIT"
@@ -1714,7 +1700,7 @@ export function FlightDashboard() {
                 <span>→</span>
                 <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
               </div>
-              <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；电压与 legacy RSSI 只属于地面桥，不代表飞行器。</p>
+              <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；MSP_ANALOG 仅用于地面桥供电诊断，不代表飞行器。</p>
               <p>遥控链路：{linkStateCopy[linkState]}。Bridge FC 在线不等于遥控器在线。</p>
               <p>
                 解析质量：{parserQualityCopy[telemetryControl.parserQuality]} · 有效帧 {telemetryControl.parserStats.checksumValidFrames.toLocaleString()}
@@ -1728,7 +1714,7 @@ export function FlightDashboard() {
                 <strong>未接入</strong>
               </div>
               <SignalMark active={false} />
-              <p>真实机上 LQ、电池和姿态尚未接入，不从 legacy RSSI 推断。</p>
+              <p>真实机上 LQ、电池和姿态尚未接入。</p>
             </section>
           </details>
         </aside>
@@ -1754,23 +1740,6 @@ export function FlightDashboard() {
         </div>
 
         <div className="session-identity">
-          <label>
-            <span>选手代号</span>
-            <input
-              type="text"
-              value={athleteCode}
-              maxLength={40}
-              disabled={controlsLocked}
-              placeholder="例如 PILOT-07"
-              autoComplete="off"
-              onChange={(event) => {
-                if (!activeChannel) return;
-                commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, {
-                  athleteCode: event.target.value,
-                }));
-              }}
-            />
-          </label>
           <div>
             <b>{startRequirement}</b>
             <small>{trainingSession.storageReady
@@ -2167,7 +2136,7 @@ export function FlightDashboard() {
 
       <footer className="dashboard-footer">
         <p><i className={`footer-light footer-light--${connection}`} />{source === "demo" ? "当前为演示数据，未连接真实飞控" : bridgeIsLive ? "只读 MSP 轮询，不写入 Betaflight 配置" : "桥接飞控当前没有实时 RC 数据"}</p>
-        <p>地面桥 MSP RSSI 字段 ≠ 机上 ELRS LQ；地面桥电压 ≠ 飞行器电池</p>
+        <p>地面桥电压仅用于采集桥诊断，不代表飞行器电池</p>
         <p>FPVHelper v{version.currentVersion}</p>
       </footer>
     </main>
