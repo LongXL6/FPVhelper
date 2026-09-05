@@ -5,12 +5,14 @@ import {
   createTrainingSessionDraft,
   finishTrainingSession,
   normalizeSessionNotes,
+  trainingSessionFilename,
   type TrainingSession,
 } from "../lib/training-session";
 import { EMPTY_TELEMETRY, type LinkState, type SubscribeTelemetrySamples, type TelemetrySampleListener } from "../lib/telemetry";
 import * as storeModule from "../lib/training-session-store";
 import { toTrainingSessionSummary } from "../lib/training-session-index";
 import * as exportModule from "../lib/training-session-export";
+import * as directoryModule from "../lib/training-session-export-directory";
 import * as exportFeedbackModule from "./training-session-export-feedback";
 import * as workstationModule from "../lib/workstation-id";
 import { useTrainingSession, type TrainingSessionExportResult } from "./use-training-session";
@@ -59,6 +61,20 @@ function Harness() {
   });
   useEffect(() => { controller = nextController; }, [nextController]);
   return null;
+}
+
+async function mountWithExportDirectory(handle: directoryModule.TrainingSessionDirectoryHandle) {
+  await act(async () => { renderer?.unmount(); });
+  vi.spyOn(directoryModule, "createTrainingSessionDirectoryStore").mockReturnValue({
+    load: vi.fn(async () => handle),
+    save: vi.fn(async () => undefined),
+    clear: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  });
+  vi.spyOn(directoryModule, "getBrowserTrainingSessionDirectoryPicker").mockReturnValue(async () => handle);
+  await act(async () => { renderer = create(<Harness />); });
+  expect(controller.exportDirectoryName).toBe(handle.name);
+  expect(controller.exportDirectoryState).toBe("ready");
 }
 
 beforeEach(async () => {
@@ -113,6 +129,125 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it("exports to the configured folder with its actual versioned filename only after close completes", async () => {
+    const baseFilename = trainingSessionFilename(records.get("older")!);
+    const filename = baseFilename.replace(/\.json$/, "-v2.json");
+    const existingWritable = vi.fn(async () => { throw new Error("Existing export must not be opened for writing"); });
+    const write = vi.fn(async (_blob: Blob) => { void _blob; });
+    let finishClose!: () => void;
+    const close = new Promise<void>((resolve) => { finishClose = resolve; });
+    const getFileHandle = vi.fn(async (name: string, options: { create: boolean }) => {
+      if (name === baseFilename) return { createWritable: existingWritable };
+      if (!options.create) throw new DOMException("File not found", "NotFoundError");
+      return { createWritable: async () => ({ write, close: () => close }) };
+    });
+    await mountWithExportDirectory({
+      kind: "directory", name: "Training exports", queryPermission: async () => "granted", getFileHandle,
+    });
+    const picker = vi.fn(async () => { throw new Error("Configured exports must not open a save picker"); });
+    vi.mocked(exportModule.getBrowserTrainingSessionSaveFilePicker).mockReturnValue(picker);
+    const requestDownload = vi.spyOn(exportFeedbackModule, "requestUnconfirmedTrainingSessionDownload");
+    let pending!: Promise<TrainingSessionExportResult>;
+    await act(async () => { pending = controller.exportSession("older", "版本二备注"); });
+    expect(getFileHandle.mock.calls).toEqual([
+      [baseFilename, { create: false }], [filename, { create: false }], [filename, { create: true }],
+    ]);
+    expect(write).toHaveBeenCalledOnce();
+    expect(existingWritable).not.toHaveBeenCalled();
+    expect(saveSession).not.toHaveBeenCalled();
+    expect(controller.lastExport).toBeNull();
+
+    let result: TrainingSessionExportResult | undefined;
+    await act(async () => { finishClose(); result = await pending; });
+    const blob = write.mock.calls[0][0];
+    expect(JSON.parse(await blob.text())).toMatchObject({ id: "older", notes: "版本二备注", exportCount: 4 });
+    expect(controller.lastExport).toMatchObject({ method: "folder", filename, bytes: blob.size, session: { id: "older", exportCount: 4 } });
+    expect(controller.exportNotice).toContain(filename);
+    expect(result).toMatchObject({ status: "confirmed", localStateSaved: true });
+    expect(result?.message).toContain(filename);
+    expect(records.get("older")).toMatchObject({ notes: "版本二备注", exportCount: 4 });
+    expect(picker).not.toHaveBeenCalled();
+    expect(requestDownload).not.toHaveBeenCalled();
+  });
+
+  it.each(["prompt", "denied"] as const)("does not use a save picker or confirm a configured-folder export when permission becomes %s", async (permission) => {
+    const queryPermission = vi.fn(async (): Promise<directoryModule.TrainingSessionDirectoryPermission> => "granted");
+    const getFileHandle = vi.fn(async () => { throw new Error("No file access without directory permission"); });
+    await mountWithExportDirectory({ kind: "directory", name: "Training exports", queryPermission, getFileHandle });
+    queryPermission.mockResolvedValue(permission);
+    const picker = vi.fn(async () => { throw new Error("Permission failures must not open another picker"); });
+    vi.mocked(exportModule.getBrowserTrainingSessionSaveFilePicker).mockReturnValue(picker);
+    const requestDownload = vi.spyOn(exportFeedbackModule, "requestUnconfirmedTrainingSessionDownload");
+    let result: TrainingSessionExportResult | undefined;
+    await act(async () => { result = await controller.exportSession("older", "未导出的备注"); });
+
+    expect(result).toMatchObject({ status: "failed", localStateSaved: true });
+    expect(result?.message).toContain("重新授权");
+    expect(controller.exportDirectoryState).toBe("permission_required");
+    expect(controller.exportNotice).toBeNull();
+    expect(controller.lastExport).toBeNull();
+    expect(getFileHandle).not.toHaveBeenCalled();
+    expect(saveSession).not.toHaveBeenCalled();
+    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+    expect(picker).not.toHaveBeenCalled();
+    expect(requestDownload).not.toHaveBeenCalled();
+  });
+
+  it.each(["write", "close"] as const)("keeps a configured-folder %s failure unconfirmed without falling back to another destination", async (failingOperation) => {
+    const failure = new Error(`folder ${failingOperation} failed`);
+    const write = vi.fn(async (_blob: Blob) => { void _blob; });
+    const close = vi.fn(async () => undefined);
+    const abort = vi.fn(async () => undefined);
+    if (failingOperation === "write") write.mockRejectedValueOnce(failure);
+    else close.mockRejectedValueOnce(failure);
+    await mountWithExportDirectory({
+      kind: "directory", name: "Training exports", queryPermission: async () => "granted",
+      getFileHandle: async (_name, options) => {
+        if (!options.create) throw new DOMException("File not found", "NotFoundError");
+        return { createWritable: async () => ({ write, close, abort }) };
+      },
+    });
+    const picker = vi.fn(async () => { throw new Error("Folder failures must not open another picker"); });
+    vi.mocked(exportModule.getBrowserTrainingSessionSaveFilePicker).mockReturnValue(picker);
+    const requestDownload = vi.spyOn(exportFeedbackModule, "requestUnconfirmedTrainingSessionDownload");
+    let result: TrainingSessionExportResult | undefined;
+    await act(async () => { result = await controller.exportSession("older", "失败后保留的备注"); });
+
+    expect(result?.status).toBe("failed");
+    expect(result?.message).toContain(failure.message);
+    expect(controller.exportDirectoryState).toBe("error");
+    expect(controller.lastExport).toBeNull();
+    expect(controller.exportNotice).toBeNull();
+    expect(abort).toHaveBeenCalledWith(failure);
+    expect(close).toHaveBeenCalledTimes(failingOperation === "write" ? 0 : 1);
+    expect(saveSession).not.toHaveBeenCalled();
+    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+    expect(picker).not.toHaveBeenCalled();
+    expect(requestDownload).not.toHaveBeenCalled();
+  });
+
+  it("retains the actual folder receipt when only the local export-state write fails", async () => {
+    await mountWithExportDirectory({
+      kind: "directory", name: "Training exports", queryPermission: async () => "granted",
+      getFileHandle: async (_name, options) => {
+        if (!options.create) throw new DOMException("File not found", "NotFoundError");
+        return { createWritable: async () => ({ write: async () => undefined, close: async () => undefined }) };
+      },
+    });
+    saveSession.mockRejectedValueOnce(new Error("metadata write failed"));
+    let result: TrainingSessionExportResult | undefined;
+    await act(async () => { result = await controller.exportSession("older", "文件已保存的备注"); });
+
+    expect(result).toMatchObject({ status: "confirmed", localStateSaved: false });
+    expect(result?.message).toContain("本机导出状态尚未保存");
+    expect(controller.lastExport).toMatchObject({
+      method: "folder", filename: trainingSessionFilename(records.get("older")!),
+      session: { id: "older", notes: "文件已保存的备注", exportCount: 4 },
+    });
+    expect(controller.storageError).toContain("导出状态未写入 IndexedDB");
+    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+  });
+
   it("keeps migration-limited history exportable while new recording stays disabled", async () => {
     await act(async () => renderer!.unmount());
     vi.mocked(store.getStorageIntegrity).mockResolvedValue({

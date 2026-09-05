@@ -5,10 +5,15 @@ const DIRECTORY_DATABASE_NAME = "fpvhelper-training-export";
 const DIRECTORY_DATABASE_VERSION = 1;
 const DIRECTORY_STORE_NAME = "settings";
 const DIRECTORY_HANDLE_KEY = "training-session-directory";
+const JSON_EXPORT_LOCK_NAME = "fpvhelper-training-json-export";
+const JSON_EXPORT_FILENAME_LIMIT = 1_000;
+
+let jsonExportQueue: Promise<void> = Promise.resolve();
 
 export interface TrainingSessionDirectoryWritable {
   write(data: Blob): Promise<void>;
   close(): Promise<void>;
+  abort?(reason?: unknown): Promise<void>;
 }
 
 interface TrainingSessionDirectoryFileHandle {
@@ -22,7 +27,7 @@ export interface TrainingSessionDirectoryHandle {
   name: string;
   queryPermission?(descriptor: { mode: "readwrite" }): Promise<TrainingSessionDirectoryPermission>;
   requestPermission?(descriptor: { mode: "readwrite" }): Promise<TrainingSessionDirectoryPermission>;
-  getFileHandle(name: string, options: { create: true }): Promise<TrainingSessionDirectoryFileHandle>;
+  getFileHandle(name: string, options: { create: boolean }): Promise<TrainingSessionDirectoryFileHandle>;
 }
 
 export type TrainingSessionDirectoryPicker = (options: {
@@ -208,12 +213,47 @@ export async function closeTrainingSessionDirectoryStoreSafely(
 export async function saveTrainingSessionToDirectory(
   session: TrainingSession,
   handle: TrainingSessionDirectoryHandle,
-) {
+): Promise<{ bytes: number; filename: string }> {
   const blob = createTrainingSessionBlob(session);
-  const writable = await createTrainingSessionDirectoryWritable(handle, trainingSessionFilename(session));
-  await writable.write(blob);
-  await writable.close();
-  return blob.size;
+  const baseFilename = trainingSessionFilename(session);
+  const save = async () => {
+    const filename = await findAvailableJsonFilename(handle, baseFilename);
+    const writable = await createTrainingSessionDirectoryWritable(handle, filename);
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      // Closing after a failed write could commit a partial export.
+      try { await writable.abort?.(error); } catch { /* Preserve the original failure. */ }
+      throw error;
+    }
+    return { bytes: blob.size, filename };
+  };
+
+  const pendingExport = jsonExportQueue.then(() => {
+    const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+    // Hold the lock through close so another FPVHelper tab cannot reuse our filename.
+    return locks ? locks.request(JSON_EXPORT_LOCK_NAME, { mode: "exclusive" }, save) : save();
+  });
+  jsonExportQueue = pendingExport.then(() => undefined, () => undefined);
+  return pendingExport;
+}
+
+async function findAvailableJsonFilename(
+  handle: TrainingSessionDirectoryHandle,
+  baseFilename: string,
+) {
+  for (let version = 1; version <= JSON_EXPORT_FILENAME_LIMIT; version += 1) {
+    const filename = version === 1 ? baseFilename : baseFilename.replace(/\.json$/, `-v${version}.json`);
+    try {
+      await handle.getFileHandle(filename, { create: false });
+    } catch (error) {
+      const name = error && typeof error === "object" && "name" in error ? error.name : undefined;
+      if (name === "NotFoundError") return filename;
+      if (name !== "TypeMismatchError") throw error;
+    }
+  }
+  throw new Error("此记录的导出版本已达 1000 个，请选择其他文件夹；已有文件未被覆盖");
 }
 
 export async function createTrainingSessionDirectoryWritable(
