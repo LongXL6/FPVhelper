@@ -24,7 +24,7 @@
 2. 本地运行：`npm ci`、`npm run check`、`npm run build`、`git diff --check`。
 3. 推送分支并创建 PR；至少 1 名独立 reviewer 复核。本地完整门禁必须通过；CI 如能运行则记录结果，账户/计费型 pre-runner 失败单独标记但不阻塞试点。
 4. 在 Vercel Preview 核验页面、`/version.json`、视频/串口权限提示和无凭据构建；记录 Preview URL 与 commit SHA。
-5. 合并 `main` 后，从 Vercel 明确选择该 commit 的构建 Promote 到生产；不要用“合并成功”代替 Promote 证据。
+5. 合并 `main` 后，核对 Vercel 对应 commit 的生产构建为 `READY`，且生产别名已指向该构建。若 Git 集成已自动发布，记录自动发布证据；否则明确选择该 commit 的构建 Promote。不要用“合并成功”代替生产部署证据。
 6. 核验客户规范域 `race.fpvsuperapp.com` 的页面与 `/version.json`；`helper.longxl.com` 只做内部完整验证，数据不计生产。
 7. 生产核验通过后创建 annotated tag：`git tag -a vX.Y.Z -m "FPVHelper vX.Y.Z"`，再推送该 tag。
 8. 更新发布记录，分别写清代码、CI、Preview、Promote、生产、真机和业务验收状态。
