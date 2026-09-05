@@ -24,7 +24,7 @@ export function validateVisionRange(settings: VisionLabSettings, durationMs: num
   }
 }
 
-export function resolveVisionEvents(run: VisionTimingRun): VisionResolvedEvent[] {
+export function resolveVisionEvents(run: Pick<VisionTimingRun, "candidates" | "reviews">): VisionResolvedEvent[] {
   const events = new Map<string, VisionResolvedEvent>(run.candidates.map((event) => [event.id, {
     ...event, status: "pending", origin: "model",
   }]));
@@ -45,7 +45,7 @@ export function resolveVisionEvents(run: VisionTimingRun): VisionResolvedEvent[]
   return [...events.values()].sort((a, b) => a.timeMs - b.timeMs || a.id.localeCompare(b.id));
 }
 
-export function deriveVisionLaps(run: VisionTimingRun): VisionLap[] {
+export function deriveVisionLaps(run: Pick<VisionTimingRun, "candidates" | "reviews" | "gaps">): VisionLap[] {
   const events = resolveVisionEvents(run);
   const confirmed = events.filter((event) => event.status === "confirmed");
   return confirmed.slice(1).map((end, index) => {

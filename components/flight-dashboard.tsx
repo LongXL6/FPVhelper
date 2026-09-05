@@ -16,6 +16,8 @@ import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
 import { PilotNameField } from "@/components/pilot-name-field";
+import { LiveGatePanel } from "@/components/live-gate-panel";
+import { LiveGateSummary, type LiveGateSummaryData } from "@/components/live-gate-summary";
 import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
@@ -407,6 +409,7 @@ const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; d
 export function FlightDashboard() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("live");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [liveGateSummary, setLiveGateSummary] = useState<LiveGateSummaryData | null>(null);
   const [revealSessionId, setRevealSessionId] = useState<string | null>(null);
   const workspaceHeadingRef = useRef<HTMLHeadingElement>(null);
   const recordingWasActive = useRef(false);
@@ -536,6 +539,17 @@ export function FlightDashboard() {
       setVideoWorkspaceWriteError(storageError instanceof Error ? storageError.message : "无法保存视频工作区设置");
     }
   }, []);
+
+  const setPilotGateProfile = useCallback((pilotChannelId: string, profileId: string | null) => {
+    const current = loadVideoWorkspace(window.localStorage).workspace;
+    commitVideoWorkspace(updatePilotChannel(current, pilotChannelId, { gateProfileId: profileId }));
+  }, [commitVideoWorkspace]);
+  const liveVisionCrop = useMemo(() => ({
+    x: (activeViewport?.crop.xPercent ?? 0) / 100,
+    y: (activeViewport?.crop.yPercent ?? 0) / 100,
+    width: (activeViewport?.crop.widthPercent ?? 100) / 100,
+    height: (activeViewport?.crop.heightPercent ?? 100) / 100,
+  }), [activeViewport?.crop.xPercent, activeViewport?.crop.yPercent, activeViewport?.crop.widthPercent, activeViewport?.crop.heightPercent]);
 
   const registerPilotOutputCanvas = useCallback((pilotChannelId: string, element: HTMLCanvasElement | null) => {
     if (!element) return;
@@ -1431,6 +1445,8 @@ export function FlightDashboard() {
             </div>
           </div>
 
+          <LiveGateSummary summary={liveGateSummary} />
+
           <details className="video-setup-details" ref={videoSetupRef} tabIndex={-1}>
             <summary><span>输入与选手设置</span><small>{activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "配置视频输入"} · {videoWorkspace.sources.length} 路输入 · {activeViewport?.label ?? ""}</small></summary>
           <div className="video-workspace-bar" aria-label="本机视频工作区">
@@ -1705,6 +1721,21 @@ export function FlightDashboard() {
           </details>
         </aside>
       </div>
+
+      <LiveGatePanel
+        stream={activeSource ? videoCapture.getSourceStream(activeSource.id) : null}
+        sourceId={activeSource?.id ?? null}
+        sourceLabel={activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "当前视频输入"}
+        pilotChannelId={activeChannel?.id ?? null}
+        pilotName={athleteCode}
+        crop={liveVisionCrop}
+        profileId={activeChannel?.gateProfileId ?? null}
+        trainingSessionId={trainingSession.isRecording ? trainingSession.sessionId : null}
+        configurationLocked={controlsLocked}
+        startBlockReason={tabStartBlockReason}
+        onProfileChange={setPilotGateProfile}
+        onSummaryChange={setLiveGateSummary}
+      />
 
       <section className="timeline-card">
         <div className="timeline-heading">
