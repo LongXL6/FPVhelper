@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMspV1Request,
   canIssueMspRcRequest,
+  createRcReceiveRate,
   connectionStateAfterRcSilence,
   createStatusExFreshnessWatchdog,
   createDemoTelemetry,
@@ -35,6 +36,20 @@ function uint16Payload(values: number[]) {
 }
 
 describe("MSP v1 telemetry", () => {
+  it("counts received RC frames in a rolling second without extrapolating startup or render rate", () => {
+    const rate = createRcReceiveRate();
+    expect(rate.getHz(0)).toBe(0);
+    for (let timestamp = 10; timestamp <= 1_000; timestamp += 10) rate.observe(timestamp);
+    expect(rate.getHz(1_000)).toBe(100);
+    expect(rate.getHz(1_500)).toBe(50);
+    expect(rate.getHz(2_000)).toBe(0);
+    rate.observe(2_100);
+    rate.observe(2_100);
+    expect(rate.getHz(2_100)).toBe(2);
+    rate.reset();
+    expect(rate.getHz(2_100)).toBe(0);
+  });
+
   it("targets 100 Hz RC polling without stacking unanswered requests", () => {
     expect(MSP_RC_TARGET_HZ).toBe(100);
     expect(MSP_RC_POLL_INTERVAL_MS).toBe(10);

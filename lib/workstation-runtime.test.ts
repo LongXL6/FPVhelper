@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyWorkstationShortcut,
   createRecordHoldController,
@@ -16,6 +16,8 @@ async function flushMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe("workstation runtime", () => {
   it("holds the exclusive tab lease until released", async () => {
@@ -39,6 +41,7 @@ describe("workstation runtime", () => {
   });
 
   it("blocks a second tab when the exclusive lock is unavailable", async () => {
+    vi.useFakeTimers();
     const states: string[] = [];
     const lockManager = {
       request: vi.fn(async (_name, _options, callback) => callback(null)),
@@ -46,8 +49,74 @@ describe("workstation runtime", () => {
 
     createWorkstationTabLease(lockManager, (state) => states.push(state));
     await flushMicrotasks();
-    expect(states).toEqual(["blocked"]);
+    expect(states).toEqual(["checking"]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(states).toEqual(["checking", "checking", "blocked"]);
+    expect(lockManager.request).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lockManager.request).toHaveBeenCalledTimes(3);
+    for (const [, options] of lockManager.request.mock.calls) {
+      expect(options).toEqual({ mode: "exclusive", ifAvailable: true });
+    }
     expect(workstationTabStartBlockReason("blocked")).toContain("另一标签页");
+  });
+
+  it("recovers when a StrictMode replacement requests before the old lease release settles", async () => {
+    vi.useFakeTimers();
+    let held = false;
+    const lockManager = {
+      request: vi.fn(async (_name, _options, callback) => {
+        if (held) return callback(null);
+        held = true;
+        await callback({ name: "exclusive" });
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        held = false;
+      }),
+    };
+    const oldStates: string[] = [];
+    const releaseOld = createWorkstationTabLease(lockManager, (state) => oldStates.push(state));
+    await flushMicrotasks();
+    expect(oldStates).toEqual(["primary"]);
+    releaseOld();
+
+    const states: string[] = [];
+    const release = createWorkstationTabLease(lockManager, (state) => states.push(state));
+    expect(states).toEqual(["checking"]);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(states).toEqual(["checking", "primary"]);
+    expect(oldStates).toEqual(["primary"]);
+    release();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(states).toEqual(["checking", "primary"]);
+    expect(held).toBe(false);
+  });
+
+  it("cancels retries when disposed without reporting later states", async () => {
+    vi.useFakeTimers();
+    const states: string[] = [];
+    const lockManager = {
+      request: vi.fn(async (_name, _options, callback) => callback(null)),
+    };
+    const release = createWorkstationTabLease(lockManager, (state) => states.push(state));
+    await flushMicrotasks();
+    release();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lockManager.request).toHaveBeenCalledTimes(1);
+    expect(states).toEqual(["checking"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("releases a delayed grant after disposal without claiming primary", async () => {
+    type LockCallback = Parameters<Parameters<typeof createWorkstationTabLease>[0]["request"]>[2];
+    let deliver: LockCallback = () => undefined;
+    const states: string[] = [];
+    const lockManager = {
+      request: vi.fn(async (_name, _options, callback: LockCallback) => { deliver = callback; }),
+    };
+    const release = createWorkstationTabLease(lockManager, (state) => states.push(state));
+    release();
+    await deliver({ name: "late" });
+    expect(states).toEqual([]);
   });
 
   it("fails closed when the browser lock request rejects", async () => {

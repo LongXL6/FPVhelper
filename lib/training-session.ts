@@ -1,5 +1,14 @@
 import type { FlightTelemetry, TelemetrySource } from "./telemetry";
 import { isWorkstationId } from "./workstation-id";
+import type { LocalVideoRecordingReceipt } from "./local-video-recording";
+import {
+  calculateTrainingCaptureQuality,
+  createTrainingCaptureContext,
+  parseTrainingCaptureContext,
+  parseTrainingCaptureQuality,
+  type TrainingCaptureContext,
+  type TrainingCaptureQuality,
+} from "./training-capture-quality";
 
 export const TRAINING_SESSION_SCHEMA_VERSION = 2;
 export const MINIMUM_VALID_SESSION_DURATION_MS = 60_000;
@@ -68,6 +77,20 @@ export interface TrainingAttemptCandidateAssessment {
   reasons: TrainingAttemptCandidateReason[];
 }
 
+export type TrainingSessionVideo = { recorded: false; synchronized: false } | {
+  recorded: true;
+  synchronized: false;
+  receiptVersion: 1;
+  receiptEvidence: "write_and_close_resolved";
+  filename: string;
+  mimeType: string;
+  bytes: number;
+  startedAtEpochMs: number;
+  finishedAtEpochMs: number;
+  overlay: "none" | "sticks";
+  overlayTiming: "none" | "latest_available_host_sample";
+};
+
 export interface TrainingSession {
   schemaVersion: typeof TRAINING_SESSION_SCHEMA_VERSION;
   migratedFromSchemaVersion?: 1;
@@ -93,10 +116,9 @@ export interface TrainingSession {
     wallClockStartedAt: string;
     videoOffsetCalibrated: false;
   };
-  video: {
-    recorded: false;
-    synchronized: false;
-  };
+  video: TrainingSessionVideo;
+  captureQuality?: TrainingCaptureQuality;
+  captureContext?: TrainingCaptureContext;
   markers: TrainingSessionMarker[];
   samples: TrainingSessionSample[];
 }
@@ -314,6 +336,8 @@ function finalizeTrainingSession(
       recorded: false,
       synchronized: false,
     },
+    captureQuality: calculateTrainingCaptureQuality(samples),
+    captureContext: createTrainingCaptureContext(),
     markers: [...draft.markers],
     samples,
   };
@@ -344,6 +368,74 @@ export function recoverInterruptedTrainingSession(draft: TrainingSessionDraft) {
 
 export function withTrainingSessionNotes(session: TrainingSession, notes: string): TrainingSession {
   return { ...session, notes: normalizeSessionNotes(notes) };
+}
+
+function parseTrainingSessionVideo(input: unknown): TrainingSessionVideo {
+  if (input === undefined) return { recorded: false, synchronized: false };
+  const video = requireRecord(input, "video");
+  if (video.synchronized !== false) throw new Error("video.synchronized 必须为 false，不能声称已校准同步");
+  if (video.recorded === false) {
+    if (Object.keys(video).some((key) => key !== "recorded" && key !== "synchronized")) {
+      throw new Error("未完成的视频不能包含成功收据");
+    }
+    return { recorded: false, synchronized: false };
+  }
+  if (video.recorded !== true || video.receiptVersion !== 1 || video.receiptEvidence !== "write_and_close_resolved") {
+    throw new Error("video 缺少支持的成功文件收据");
+  }
+  const filename = requireString(video.filename, "video.filename");
+  if (filename.length > 255 || filename.trim() !== filename || /[\\/\u0000-\u001f\u007f]/.test(filename) || filename === "." || filename === "..") {
+    throw new Error("video.filename 必须是本地文件名，不能包含路径或控制字符");
+  }
+  const mimeType = requireString(video.mimeType, "video.mimeType");
+  if (!/^video\/[a-zA-Z0-9.+-]+(?:;[a-zA-Z0-9=., _+-]+)*$/.test(mimeType) || mimeType.length > 150) {
+    throw new Error("video.mimeType 必须是有效视频 MIME 类型");
+  }
+  const bytes = requireFiniteNumber(video.bytes, "video.bytes");
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("video.bytes 必须是正安全整数");
+  const startedAtEpochMs = requireFiniteNumber(video.startedAtEpochMs, "video.startedAtEpochMs");
+  const finishedAtEpochMs = requireFiniteNumber(video.finishedAtEpochMs, "video.finishedAtEpochMs");
+  if (startedAtEpochMs < 0 || finishedAtEpochMs < startedAtEpochMs || !Number.isFinite(new Date(startedAtEpochMs).getTime()) || !Number.isFinite(new Date(finishedAtEpochMs).getTime())) {
+    throw new Error("video 文件收据的开始或结束时间无效");
+  }
+  if (video.overlay !== "none" && video.overlay !== "sticks") throw new Error("video.overlay 不是支持的叠层说明");
+  const overlayTiming = video.overlay === "sticks" ? "latest_available_host_sample" : "none";
+  if (video.overlayTiming !== overlayTiming) throw new Error("video.overlayTiming 与叠层说明不一致");
+  const parsed: TrainingSessionVideo = {
+    recorded: true,
+    synchronized: false,
+    receiptVersion: 1,
+    receiptEvidence: "write_and_close_resolved",
+    filename,
+    mimeType,
+    bytes,
+    startedAtEpochMs,
+    finishedAtEpochMs,
+    overlay: video.overlay,
+    overlayTiming,
+  };
+  if (Object.keys(video).some((key) => !Object.hasOwn(parsed, key))) throw new Error("video 含不支持的收据字段");
+  return parsed;
+}
+
+/** Accept only the resolved receipt from a successful recorder write and close. */
+export function withTrainingSessionVideoReceipt(
+  session: TrainingSession,
+  receipt: LocalVideoRecordingReceipt,
+  overlay: "none" | "sticks" = "none",
+): TrainingSession {
+  return {
+    ...session,
+    video: parseTrainingSessionVideo({
+      recorded: true,
+      synchronized: false,
+      receiptVersion: 1,
+      receiptEvidence: "write_and_close_resolved",
+      ...receipt,
+      overlay,
+      overlayTiming: overlay === "sticks" ? "latest_available_host_sample" : "none",
+    }),
+  };
 }
 
 export function markTrainingSessionExported(session: TrainingSession, exportedAtEpochMs: number): TrainingSession {
@@ -416,7 +508,7 @@ export function assessTrainingSession(session: AssessableTrainingSession | Train
   return { valid: reasons.length === 0, reasons };
 }
 
-export function assessTrainingAttemptCandidate(session: TrainingSession): TrainingAttemptCandidateAssessment {
+export function assessTrainingAttemptCandidate(session: Pick<TrainingSession, "validity" | "notes">): TrainingAttemptCandidateAssessment {
   const reasons: TrainingAttemptCandidateReason[] = [];
   if (!session.validity.valid) reasons.push("technically_invalid");
   if (!normalizeSessionNotes(session.notes ?? "")) reasons.push("missing_notes");
@@ -487,7 +579,11 @@ export function parseTrainingSessionDraft(input: string | unknown): TrainingSess
   if (!Array.isArray(raw.samples)) throw new Error("samples 必须是数组");
   if (!Array.isArray(raw.markers)) throw new Error("markers 必须是数组");
   const startedAt = requireString(raw.startedAt, "startedAt");
-  const wallClockStartedAt = requireString(raw.wallClockStartedAt, "wallClockStartedAt");
+  if (!Number.isFinite(Date.parse(startedAt))) throw new Error("草稿时间字段不是有效日期");
+  // Early v2 drafts stored only the ISO start time. Keep their samples recoverable.
+  const wallClockStartedAt = raw.wallClockStartedAt === undefined
+    ? toLocalWallClockTimestamp(Date.parse(startedAt))
+    : requireString(raw.wallClockStartedAt, "wallClockStartedAt");
   if (!Number.isFinite(Date.parse(startedAt)) || !Number.isFinite(Date.parse(wallClockStartedAt))) {
     throw new Error("草稿时间字段不是有效日期");
   }
@@ -578,10 +674,9 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
       wallClockStartedAt,
       videoOffsetCalibrated: false,
     },
-    video: {
-      recorded: false,
-      synchronized: false,
-    },
+    video: parseTrainingSessionVideo(raw.video),
+    ...(raw.captureQuality === undefined ? {} : { captureQuality: parseTrainingCaptureQuality(raw.captureQuality, samples) }),
+    ...(raw.captureContext === undefined ? {} : { captureContext: parseTrainingCaptureContext(raw.captureContext) }),
     markers,
     samples,
   };
@@ -600,7 +695,7 @@ function safeFilenameSegment(value: string) {
   return value.trim().replaceAll(/[\\/:*?"<>|\s]+/g, "-").replaceAll(/^-+|-+$/g, "").slice(0, 40) || "unknown-pilot";
 }
 
-export function trainingSessionFilename(session: TrainingSession) {
+export function trainingSessionFilename(session: Pick<TrainingSession, "startedAt" | "id" | "initialSource" | "athleteCode">) {
   const timestamp = new Date(session.startedAt);
   const localTimestamp = `${timestamp.getFullYear()}${pad(timestamp.getMonth() + 1)}${pad(timestamp.getDate())}-${pad(timestamp.getHours())}${pad(timestamp.getMinutes())}${pad(timestamp.getSeconds())}`;
   const shortId = session.id.startsWith("session-") ? session.id.slice(8, 16) : session.id.slice(0, 8);

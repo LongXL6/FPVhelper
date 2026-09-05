@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
-import type { ConnectionState, FlightTelemetry, LinkState, TelemetrySource } from "@/lib/telemetry";
+import type { TrainingSessionSummary } from "@/lib/training-session-index";
+import type { LocalVideoRecordingReceipt } from "@/lib/local-video-recording";
+import type { ConnectionState, FlightTelemetry, LinkState, SubscribeTelemetrySamples, TelemetrySource } from "@/lib/telemetry";
 import {
   createTrainingSessionStore,
   EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY,
@@ -19,6 +21,8 @@ import {
   resolveTrainingSessionTermination,
   withTrainingSessionTermination,
   withTrainingSessionNotes,
+  withTrainingSessionVideoReceipt,
+  trainingSessionFilename,
   type TrainingSession,
   type TrainingSessionDraft,
   type TrainingSessionInterruptionReason,
@@ -28,6 +32,7 @@ import {
 import {
   getBrowserTrainingSessionSaveFilePicker,
   saveTrainingSessionWithPicker,
+  type TrainingSessionSaveFilePicker,
 } from "@/lib/training-session-export";
 import {
   closeTrainingSessionDirectoryStoreSafely,
@@ -53,7 +58,7 @@ import {
   requestUnconfirmedTrainingSessionDownload,
 } from "./training-session-export-feedback";
 
-const DRAFT_PERSIST_INTERVAL_MS = 5_000;
+const DRAFT_PERSIST_INTERVAL_MS = 1_000;
 
 interface UseTrainingSessionOptions {
   telemetry: FlightTelemetry;
@@ -63,6 +68,14 @@ interface UseTrainingSessionOptions {
   athleteCode: string;
   autoExport: boolean;
   inputKey: string;
+  subscribeSamples?: SubscribeTelemetrySamples;
+  finishCompanionRecording?: () => Promise<LocalVideoRecordingReceipt | null>;
+}
+
+export interface TrainingSessionExportResult {
+  status: "confirmed" | "requested" | "cancelled" | "failed";
+  message: string;
+  localStateSaved: boolean;
 }
 
 export interface TrainingSessionExportReceipt {
@@ -91,7 +104,11 @@ interface TrainingSessionController {
   markerCount: number;
   elapsedMs: number;
   lastSession: TrainingSession | null;
-  allSessions: TrainingSession[];
+  allSessions: TrainingSessionSummary[];
+  loadSession: (id: string) => Promise<TrainingSession | null>;
+  loadSessionsForReport: () => Promise<TrainingSession[]>;
+  persistedSampleCount: number;
+  persistedElapsedMs: number;
   storageReady: boolean;
   storageError: string | null;
   exportNotice: string | null;
@@ -111,8 +128,9 @@ interface TrainingSessionController {
   createExportFileWritable: (filename: string) => Promise<TrainingSessionDirectoryWritable>;
   retryPendingSave: () => Promise<void>;
   addMarker: (kind: Exclude<TrainingSessionMarkerKind, "manual">) => Promise<void>;
+  updateSessionNotes: (sessionId: string, notes: string) => Promise<void>;
   updateLastSessionNotes: (notes: string) => Promise<void>;
-  exportSession: (sessionId: string) => Promise<void>;
+  exportSession: (sessionId: string, notesOverride?: string) => Promise<TrainingSessionExportResult>;
   configureExportDirectory: () => Promise<void>;
   reauthorizeExportDirectory: () => Promise<void>;
   clearExportDirectory: () => Promise<void>;
@@ -139,6 +157,8 @@ export function useTrainingSession({
   athleteCode,
   autoExport,
   inputKey,
+  subscribeSamples,
+  finishCompanionRecording,
 }: UseTrainingSessionOptions): TrainingSessionController {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -149,7 +169,9 @@ export function useTrainingSession({
   const [markerCount, setMarkerCount] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [lastSession, setLastSession] = useState<TrainingSession | null>(null);
-  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [sessions, setSessions] = useState<TrainingSessionSummary[]>([]);
+  const [persistedSampleCount, setPersistedSampleCount] = useState(0);
+  const [persistedElapsedMs, setPersistedElapsedMs] = useState(0);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -163,21 +185,27 @@ export function useTrainingSession({
   const [exportDirectoryState, setExportDirectoryState] = useState<TrainingSessionDirectoryState>("loading");
   const [exportDirectoryName, setExportDirectoryName] = useState<string | null>(null);
   const draftRef = useRef<TrainingSessionDraft | null>(null);
+  const recordingActiveRef = useRef(false);
+  const uniqueSequencesRef = useRef<{ draftId: string; sequences: Set<number> } | null>(null);
   const recordingInputKeyRef = useRef<string | null>(null);
   const pendingSessionRef = useRef<TrainingSession | null>(null);
+  const completedPendingSessionRef = useRef<TrainingSession | null>(null);
   const storeRef = useRef<TrainingSessionStore | null>(null);
   const directoryStoreRef = useRef<TrainingSessionDirectoryStore | null>(null);
   const directoryHandleRef = useRef<TrainingSessionDirectoryHandle | null>(null);
-  const sessionsRef = useRef<TrainingSession[]>([]);
+  const sessionsRef = useRef<TrainingSessionSummary[]>([]);
+  const draftSaveRef = useRef<Promise<void> | null>(null);
+  const companionFinishingRef = useRef(false);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
   const workstationIdRef = useRef<string | null>(null);
   const terminationRef = useRef<TrainingSessionTermination | null>(null);
+  const noteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionMutationIdsRef = useRef(new Set<string>());
 
-  const applySessions = useCallback((nextSessions: TrainingSession[]) => {
+  const applySessions = useCallback((nextSessions: TrainingSessionSummary[], latestSession: TrainingSession | null) => {
     sessionsRef.current = nextSessions;
     setSessions(nextSessions);
-    const latestSession = nextSessions[0] ?? null;
     if (!draftRef.current && !pendingSessionRef.current) {
       setLastSession(latestSession);
       setSessionId(latestSession?.id ?? null);
@@ -185,43 +213,77 @@ export function useTrainingSession({
       setUniqueSampleCount(latestSession ? countUniqueTrainingSamples(latestSession.samples) : 0);
       setMarkerCount(latestSession?.markers.length ?? 0);
       setElapsedMs(latestSession?.durationMs ?? 0);
+      setPersistedSampleCount(latestSession?.sampleCount ?? 0);
+      setPersistedElapsedMs(latestSession?.samples.at(-1)?.elapsedMs ?? 0);
     }
   }, []);
 
   const refreshSessions = useCallback(async (store: TrainingSessionStore) => {
     const [nextSessions, nextUnexportedValidCount, nextStorageIntegrity] = await Promise.all([
-      store.listSessions(),
+      store.listSessionSummaries(),
       store.countUnexportedValidSessions(),
       store.getStorageIntegrity(),
     ]);
-    applySessions(nextSessions);
+    const latestSession = nextSessions[0] ? await store.getSession(nextSessions[0].id) : null;
+    applySessions(nextSessions, latestSession);
     setUnexportedValidCount(nextUnexportedValidCount);
     setStorageIntegrity(nextStorageIntegrity);
     return nextSessions;
   }, [applySessions]);
 
+  const loadSession = useCallback(async (id: string) => (
+    pendingSessionRef.current?.id === id ? pendingSessionRef.current : await storeRef.current?.getSession(id) ?? null
+  ), []);
+  const loadSessionsForReport = useCallback(async () => await storeRef.current?.listSessions() ?? [], []);
+
+  const persistDraft = useCallback(async (draft: TrainingSessionDraft) => {
+    // Coalesce timer writes; callers adding markers/finalizing can request a fresh checkpoint after this one.
+    if (draftSaveRef.current) await draftSaveRef.current.catch(() => undefined);
+    const store = storeRef.current;
+    if (!store) throw new Error("训练存储尚未就绪");
+    const count = draft.samples.length;
+    const elapsed = draft.samples.at(-1)?.elapsedMs ?? 0;
+    const save = store.saveDraft(draft).then(() => {
+      if (draftRef.current?.id === draft.id) {
+        setPersistedSampleCount(count);
+        setPersistedElapsedMs(elapsed);
+      }
+    });
+    draftSaveRef.current = save;
+    try { await save; }
+    finally { if (draftSaveRef.current === save) draftSaveRef.current = null; }
+  }, []);
+
   const exportStoredSession = useCallback(async (
     session: TrainingSession,
     store: TrainingSessionStore,
     method: TrainingSessionExportReceipt["method"],
-  ) => {
+    openedPicker?: TrainingSessionSaveFilePicker | null,
+  ): Promise<TrainingSessionExportResult> => {
     const exportedAtEpochMs = Date.now();
     const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
-    const picker = getBrowserTrainingSessionSaveFilePicker();
+    const picker = openedPicker === undefined ? getBrowserTrainingSessionSaveFilePicker() : openedPicker;
     if (!picker) {
       const feedback = requestUnconfirmedTrainingSessionDownload(session);
       setExportNotice(feedback.notice);
       setExportWarning(feedback.warning);
-      return;
+      return {
+        status: feedback.warning ? "failed" : "requested",
+        message: feedback.warning ?? feedback.notice ?? "已请求下载但未确认落盘。",
+        localStateSaved: true,
+      };
     }
 
     let bytes: number;
     try {
       bytes = await saveTrainingSessionWithPicker(exportedSession, picker);
     } catch (exportError) {
+      const message = isAbortError(exportError)
+        ? "已取消文件保存；本机记录仍保留，导出状态未改变。"
+        : `文件保存未完成：${storageErrorMessage(exportError)}；本机记录仍保留，导出状态未改变。`;
       setExportNotice(null);
-      setExportWarning(`文件保存未完成：${storageErrorMessage(exportError)}；Session 仍安全保存在本机且保持未导出状态。`);
-      return;
+      setExportWarning(message);
+      return { status: isAbortError(exportError) ? "cancelled" : "failed", message, localStateSaved: true };
     }
 
     setLastExport({
@@ -238,8 +300,13 @@ export function useTrainingSession({
       setStorageError(null);
       setExportWarning(null);
       setExportNotice("已确认 JSON 文件写入完成；本机记录已标记为已导出。");
+      return { status: "confirmed", message: "已确认 JSON 文件写入完成；本机记录已标记为已导出。", localStateSaved: true };
     } catch (saveError) {
-      setStorageError(`JSON 文件已写入，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+      const message = `JSON 文件已写入，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`;
+      setStorageError(message);
+      setExportNotice(null);
+      setExportWarning(message);
+      return { status: "confirmed", message, localStateSaved: false };
     }
   }, [refreshSessions]);
 
@@ -472,7 +539,7 @@ export function useTrainingSession({
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
-    if (!canStart || !store || startingRef.current) return null;
+    if (!canStart || !store || startingRef.current || recordingActiveRef.current || finishingRef.current || pendingSessionRef.current) return null;
     startingRef.current = true;
     setIsStarting(true);
     setStorageError(null);
@@ -497,12 +564,17 @@ export function useTrainingSession({
       draftRef.current = draft;
       recordingInputKeyRef.current = inputKey;
       pendingSessionRef.current = null;
+      completedPendingSessionRef.current = null;
       terminationRef.current = null;
+      uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set() };
+      recordingActiveRef.current = true;
       setSessionId(id);
       setSampleCount(0);
       setUniqueSampleCount(0);
       setMarkerCount(0);
       setElapsedMs(0);
+      setPersistedSampleCount(0);
+      setPersistedElapsedMs(0);
       setHasPendingSave(false);
       setIsRecording(true);
       return id;
@@ -543,47 +615,63 @@ export function useTrainingSession({
   const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
     const store = storeRef.current;
-    if (!draft || !pendingSessionRef.current || !store || finishingRef.current) return;
+    if (!draft || !pendingSessionRef.current || !store || finishingRef.current || companionFinishingRef.current) return;
     finishingRef.current = true;
     setIsFinishing(true);
     setHasPendingSave(true);
 
     let sessionStored = false;
-    let storedSession: TrainingSession | null = null;
+    let storedSession = completedPendingSessionRef.current?.id === draft.id ? completedPendingSessionRef.current : null;
     try {
-      await store.saveDraft(draft);
+      // A list refresh can fail after the atomic completion has already committed.
+      // Retrying that completion must not resurrect its now-closed draft.
+      if (!storedSession) await persistDraft(draft);
       while (true) {
         if (pendingSessionRef.current !== storedSession) {
           storedSession = pendingSessionRef.current;
           if (!storedSession) throw new Error("Session 终止状态丢失");
           await store.completeSession(storedSession);
+          completedPendingSessionRef.current = storedSession;
+          setPersistedSampleCount(storedSession.sampleCount);
+          setPersistedElapsedMs(storedSession.samples.at(-1)?.elapsedMs ?? 0);
         }
         await refreshSessions(store);
         if (pendingSessionRef.current === storedSession) break;
       }
       draftRef.current = null;
+      uniqueSequencesRef.current = null;
       recordingInputKeyRef.current = null;
       pendingSessionRef.current = null;
+      completedPendingSessionRef.current = null;
       setHasPendingSave(false);
       setStorageError(null);
+      setPersistedSampleCount(storedSession?.sampleCount ?? 0);
+      setPersistedElapsedMs(storedSession?.samples.at(-1)?.elapsedMs ?? 0);
       sessionStored = true;
     } catch (saveError) {
-      setStorageError(`Session 尚未安全保存：${storageErrorMessage(saveError)}；记录仍保留在本页，可重试`);
+      setStorageError(completedPendingSessionRef.current?.id === draft.id
+        ? `Session 已写入本机，结束状态或记录列表尚未更新：${storageErrorMessage(saveError)}；请重试`
+        : `Session 尚未安全保存：${storageErrorMessage(saveError)}；记录仍保留在本页，可重试`);
     }
 
     if (sessionStored && autoExport && storedSession) {
-      const directoryResult = await exportStoredSessionToDirectory(storedSession, store);
-      if (!directoryResult.confirmed && directoryResult.reason) {
-        const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
-        const combinedFeedback = combineTrainingSessionExportFailures(directoryResult.reason, feedback);
-        setExportNotice(combinedFeedback.notice);
-        setExportWarning(combinedFeedback.warning);
+      sessionMutationIdsRef.current.add(storedSession.id);
+      try {
+        const directoryResult = await exportStoredSessionToDirectory(storedSession, store);
+        if (!directoryResult.confirmed && directoryResult.reason) {
+          const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
+          const combinedFeedback = combineTrainingSessionExportFailures(directoryResult.reason, feedback);
+          setExportNotice(combinedFeedback.notice);
+          setExportWarning(combinedFeedback.warning);
+        }
+      } finally {
+        sessionMutationIdsRef.current.delete(storedSession.id);
       }
     }
 
     finishingRef.current = false;
     setIsFinishing(false);
-  }, [autoExport, exportStoredSessionToDirectory, refreshSessions]);
+  }, [autoExport, exportStoredSessionToDirectory, persistDraft, refreshSessions]);
 
   const finishRecording = useCallback(async (
     interrupted: boolean,
@@ -600,12 +688,13 @@ export function useTrainingSession({
       const upgradedSession = withTrainingSessionTermination(pendingSession, termination);
       pendingSessionRef.current = upgradedSession;
       setLastSession(upgradedSession);
-      if (!finishingRef.current) await persistPendingSession();
+      if (!finishingRef.current && !companionFinishingRef.current) await persistPendingSession();
       return;
     }
 
     const draft = draftRef.current;
     if (!draft || finishingRef.current) return;
+    recordingActiveRef.current = false;
     setIsRecording(false);
     const session = finishTrainingSession(draft, Date.now(), performance.now(), {
       interrupted: termination.interrupted,
@@ -617,8 +706,23 @@ export function useTrainingSession({
     setSampleCount(session.sampleCount);
     setUniqueSampleCount(countUniqueTrainingSamples(session.samples));
     setMarkerCount(session.markers.length);
+    if (finishCompanionRecording) {
+      companionFinishingRef.current = true;
+      setIsFinishing(true);
+      try {
+        const receipt = await finishCompanionRecording();
+        if (receipt && pendingSessionRef.current) {
+          pendingSessionRef.current = withTrainingSessionVideoReceipt(pendingSessionRef.current, receipt, "sticks");
+          setLastSession(pendingSessionRef.current);
+        }
+      } catch (videoError) {
+        setExportWarning(`视频未完整保存，遥控数据继续保存：${storageErrorMessage(videoError)}`);
+      } finally {
+        companionFinishingRef.current = false;
+      }
+    }
     await persistPendingSession();
-  }, [persistPendingSession]);
+  }, [finishCompanionRecording, persistPendingSession]);
 
   const stopRecording = useCallback(() => linkState === "lost"
     ? finishRecording(true, "rx_link_lost")
@@ -628,7 +732,7 @@ export function useTrainingSession({
   const addMarker = useCallback(async (kind: Exclude<TrainingSessionMarkerKind, "manual">) => {
     const draft = draftRef.current;
     const store = storeRef.current;
-    if (!isRecording || !draft || !store) return;
+    if (!isRecording || !recordingActiveRef.current || pendingSessionRef.current || finishingRef.current || !draft || !store) return;
     appendTrainingSessionMarker(draft, {
       id: uniqueLocalId("marker"),
       kind,
@@ -637,23 +741,34 @@ export function useTrainingSession({
     });
     setMarkerCount(draft.markers.length);
     try {
-      await store.saveDraft(draft);
+      await persistDraft(draft);
       setStorageError(null);
     } catch (saveError) {
       setStorageError(`人工标记尚未写入 IndexedDB：${storageErrorMessage(saveError)}；本页内记录仍保留`);
     }
-  }, [isRecording]);
+  }, [isRecording, persistDraft]);
 
-  useEffect(() => {
-    if (!isRecording || source !== "serial" || connection !== "live") return;
+  const recordTelemetrySample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
+    if (!recordingActiveRef.current || source !== "serial" || sampleSource !== "serial" || connection !== "live" || linkState === "lost") return;
     if (recordingInputKeyRef.current !== inputKey) return;
     const draft = draftRef.current;
-    if (!draft || telemetry.monotonicTimestampMs < draft.startedMonotonicMs) return;
-    if (appendTrainingSessionSample(draft, telemetry, source)) {
+    if (!draft || pendingSessionRef.current || finishingRef.current || sample.monotonicTimestampMs < draft.startedMonotonicMs) return;
+    if (appendTrainingSessionSample(draft, sample, sampleSource)) {
+      if (uniqueSequencesRef.current?.draftId !== draft.id) {
+        uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set(draft.samples.map((entry) => entry.sequence)) };
+      }
+      uniqueSequencesRef.current.sequences.add(sample.sequence);
       setSampleCount(draft.samples.length);
-      setUniqueSampleCount(countUniqueTrainingSamples(draft.samples));
+      setUniqueSampleCount(uniqueSequencesRef.current.sequences.size);
     }
-  }, [connection, inputKey, isRecording, source, telemetry]);
+  }, [connection, inputKey, linkState, source]);
+
+  useEffect(() => {
+    if (subscribeSamples) return;
+    recordTelemetrySample(telemetry, source);
+  }, [recordTelemetrySample, source, subscribeSamples, telemetry]);
+
+  useEffect(() => subscribeSamples?.(recordTelemetrySample), [recordTelemetrySample, subscribeSamples]);
 
   useEffect(() => {
     if (!isRecording || recordingInputKeyRef.current === inputKey) return;
@@ -689,29 +804,29 @@ export function useTrainingSession({
     const timer = window.setInterval(() => {
       const draft = draftRef.current;
       const store = storeRef.current;
-      if (!draft || !store) return;
-      void store.saveDraft(draft)
+      if (!draft || !store || draftSaveRef.current) return;
+      void persistDraft(draft)
         .then(() => setStorageError(null))
         .catch((saveError: unknown) => {
           setStorageError(`草稿自动保存失败：${storageErrorMessage(saveError)}；请勿关闭页面并检查本机存储`);
         });
     }, DRAFT_PERSIST_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [isRecording]);
+  }, [isRecording, persistDraft]);
 
   useEffect(() => {
     const handlePageHide = () => {
       const draft = draftRef.current;
       const store = storeRef.current;
-      if (draft && store) {
-        void store.saveDraft(draft).catch((saveError: unknown) => {
+      if (draft && store && recordingActiveRef.current && !pendingSessionRef.current && !finishingRef.current && !companionFinishingRef.current) {
+        void persistDraft(draft).catch((saveError: unknown) => {
           setStorageError(`关页前草稿保存失败：${storageErrorMessage(saveError)}`);
         });
       }
     };
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, []);
+  }, [persistDraft]);
 
   useEffect(() => {
     if (!shouldWarnBeforeTrainingExit({ isRecording, hasPendingSave, unexportedValidCount })) return;
@@ -723,26 +838,70 @@ export function useTrainingSession({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasPendingSave, isRecording, unexportedValidCount]);
 
-  const updateLastSessionNotes = useCallback(async (notes: string) => {
-    const store = storeRef.current;
-    const currentSession = sessionsRef.current[0];
-    if (!store || !currentSession || hasPendingSave) return;
-    const updatedSession = withTrainingSessionNotes(currentSession, notes);
-    try {
-      await store.saveSession(updatedSession);
-      await refreshSessions(store);
-      setStorageError(null);
-    } catch (saveError) {
-      setStorageError(`训练备注尚未保存：${storageErrorMessage(saveError)}`);
+  const updateSessionNotes = useCallback((targetSessionId: string, notes: string) => {
+    if (sessionMutationIdsRef.current.has(targetSessionId)) {
+      return Promise.reject(new Error("这条记录正在保存或导出，请完成后重试。备注草稿仍保留在页面中。"));
     }
-  }, [hasPendingSave, refreshSessions]);
+    sessionMutationIdsRef.current.add(targetSessionId);
+    const save = noteSaveQueueRef.current.catch(() => undefined).then(async () => {
+      const store = storeRef.current;
+      const currentSession = await store?.getSession(targetSessionId);
+      if (!store || !currentSession) throw new Error("未找到可保存的本机记录，请先完成记录保存。");
+      if (pendingSessionRef.current?.id === targetSessionId) throw new Error("这条记录尚未完成保存，请先重试保存 Session。");
+      const updatedSession = withTrainingSessionNotes(currentSession, notes);
+      try {
+        await store.saveSession(updatedSession);
+        await refreshSessions(store);
+        setStorageError(null);
+      } catch (saveError) {
+        setStorageError(`训练备注尚未保存：${storageErrorMessage(saveError)}`);
+        throw saveError;
+      }
+    }).finally(() => sessionMutationIdsRef.current.delete(targetSessionId));
+    noteSaveQueueRef.current = save;
+    return save;
+  }, [refreshSessions]);
 
-  const exportSession = useCallback(async (targetSessionId: string) => {
+  const updateLastSessionNotes = useCallback(async (notes: string) => {
+    const currentSession = sessionsRef.current[0];
+    if (!currentSession || hasPendingSave) return;
+    // Preserve the legacy UI's handled-error contract; the library uses the rejecting API above.
+    await updateSessionNotes(currentSession.id, notes).catch(() => undefined);
+  }, [hasPendingSave, updateSessionNotes]);
+
+  const exportSession = useCallback(async (targetSessionId: string, notesOverride?: string): Promise<TrainingSessionExportResult> => {
     const store = storeRef.current;
-    const session = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
-    if (!store || !session) return;
-    await exportStoredSession(session, store, "download");
-  }, [exportStoredSession]);
+    const summary = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
+    if (!store || !summary) {
+      const message = "未找到可导出的本机记录，请先完成记录保存。";
+      setExportNotice(null);
+      setExportWarning(message);
+      return { status: "failed", message, localStateSaved: false };
+    }
+    if (sessionMutationIdsRef.current.has(targetSessionId) || pendingSessionRef.current?.id === targetSessionId) {
+      const message = "这条记录正在保存或导出，请完成后重试。";
+      setExportNotice(null);
+      setExportWarning(message);
+      return { status: "failed", message, localStateSaved: true };
+    }
+    sessionMutationIdsRef.current.add(targetSessionId);
+    try {
+      const picker = getBrowserTrainingSessionSaveFilePicker();
+      // Open while the click still has browser activation; reading a long record can take time.
+      const selectedFile = picker?.({ suggestedName: trainingSessionFilename(summary), types: [{ description: "FPVHelper 训练记录", accept: { "application/json": [".json"] } }] });
+      void selectedFile?.catch(() => undefined);
+      const session = await loadSession(targetSessionId);
+      if (!session) throw new Error("记录样本无法完整读取，请检查本机存储或归档文件");
+      const snapshot = notesOverride === undefined ? session : withTrainingSessionNotes(session, notesOverride);
+      return await exportStoredSession(snapshot, store, "download", selectedFile ? () => selectedFile : null);
+    } catch (exportError) {
+      const message = isAbortError(exportError) ? "已取消文件保存，本机记录仍保留。" : `导出未完成：${storageErrorMessage(exportError)}`;
+      setExportWarning(message);
+      return { status: isAbortError(exportError) ? "cancelled" : "failed", message, localStateSaved: true };
+    } finally {
+      sessionMutationIdsRef.current.delete(targetSessionId);
+    }
+  }, [exportStoredSession, loadSession]);
 
   return {
     isRecording,
@@ -755,6 +914,10 @@ export function useTrainingSession({
     elapsedMs,
     lastSession,
     allSessions: sessions,
+    loadSession,
+    loadSessionsForReport,
+    persistedSampleCount,
+    persistedElapsedMs,
     storageReady,
     storageError,
     exportNotice,
@@ -774,6 +937,7 @@ export function useTrainingSession({
     createExportFileWritable,
     retryPendingSave,
     addMarker,
+    updateSessionNotes,
     updateLastSessionNotes,
     exportSession,
     configureExportDirectory,

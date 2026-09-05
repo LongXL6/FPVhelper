@@ -28,6 +28,15 @@ function createSession(id: string, startedAtEpochMs: number) {
 }
 
 describe("training session product summaries", () => {
+  it("shows UTC and offset timestamps for the same marker in the same local time", () => {
+    const epochMs = new Date(2026, 8, 4, 23, 0, 42, 568).getTime();
+    const session = createSession("early-v2", epochMs - 9_000);
+    session.markers = [{ id: "marker", kind: "manual", elapsedMs: 9_000, wallClockAt: new Date(epochMs).toISOString() }];
+    expect(formatDvrReviewChecklist(session)).toContain("本地 23:00:42.568");
+    session.markers[0].wallClockAt = new Date(epochMs).toISOString().replace("Z", "+00:00");
+    expect(formatDvrReviewChecklist(session)).toContain("本地 23:00:42.568");
+  });
+
   it("reports the remaining duration and independent sample thresholds", () => {
     expect(trainingSessionProgress(12_400, 42)).toEqual({
       remainingDurationMs: 47_600,

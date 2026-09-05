@@ -16,7 +16,7 @@ export interface StickOverlayPairLayout {
 }
 
 const OVERLAY_PADDING = 8;
-const MIN_OVERLAY_SIZE = 84;
+const MIN_OVERLAY_SIZE = 132;
 const MAX_OVERLAY_SIZE = 260;
 const OVERLAY_SNAP_DISTANCE = 24;
 

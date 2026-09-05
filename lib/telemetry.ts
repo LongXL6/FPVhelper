@@ -17,6 +17,9 @@ export interface FlightTelemetry {
   groundBridgeVoltage: number | null;
 }
 
+export type TelemetrySampleListener = (sample: FlightTelemetry, source: TelemetrySource) => void;
+export type SubscribeTelemetrySamples = (listener: TelemetrySampleListener) => () => void;
+
 export interface MspFrame {
   command: number;
   payload: Uint8Array;
@@ -45,6 +48,23 @@ export const MSP_RC_POLL_INTERVAL_MS = 1_000 / MSP_RC_TARGET_HZ;
 export const MSP_RC_RESPONSE_TIMEOUT_MS = 100;
 export const MSP_STATUS_EX_POLL_INTERVAL_MS = 100;
 export const MSP_ANALOG_POLL_INTERVAL_MS = 500;
+export const RC_RECEIVE_RATE_WINDOW_MS = 1_000;
+
+export function createRcReceiveRate() {
+  let receivedAt: number[] = [];
+  return {
+    observe(monotonicTimestampMs: number) {
+      receivedAt.push(monotonicTimestampMs);
+    },
+    getHz(nowMs: number) {
+      receivedAt = receivedAt.filter((timestamp) => timestamp > nowMs - RC_RECEIVE_RATE_WINDOW_MS);
+      return receivedAt.length * 1_000 / RC_RECEIVE_RATE_WINDOW_MS;
+    },
+    reset() {
+      receivedAt = [];
+    },
+  };
+}
 
 export function canIssueMspRcRequest(nowMs: number, pendingSinceMs: number | null) {
   return pendingSinceMs === null || nowMs - pendingSinceMs >= MSP_RC_RESPONSE_TIMEOUT_MS;

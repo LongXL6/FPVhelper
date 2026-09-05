@@ -49,13 +49,13 @@ function formatElapsed(elapsedMs: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
-export function formatDvrReviewChecklist(session: TrainingSession) {
+export function formatDvrReviewChecklist(session: Pick<TrainingSession, "athleteCode" | "markers">) {
   const header = `DVR 复盘清单 · ${session.athleteCode ?? "未填写代号"}\n人工标记，仅用于定位画面；不是自动计圈或正式计时。`;
   if (session.markers.length === 0) return `${header}\n- [ ] 无人工标记`;
 
   const items = session.markers.map((marker) => {
     const label = marker.kind === "manual" ? "人工标记" : TRAINING_MARKER_LABELS[marker.kind];
-    const localWallClock = marker.wallClockAt.slice(11, 23);
+    const localWallClock = toLocalWallClockTimestamp(Date.parse(marker.wallClockAt)).slice(11, 23);
     return `- [ ] ${formatElapsed(marker.elapsedMs)} · ${label} · 本地 ${localWallClock}`;
   });
   return `${header}\n${items.join("\n")}`;

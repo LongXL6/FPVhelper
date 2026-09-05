@@ -5,6 +5,13 @@ import {
   DraggableStickOverlay,
   useStickOverlayPairLayout,
 } from "@/components/draggable-stick-overlay";
+import { Icon, type IconName } from "@/components/ui/icon";
+import { WorkspaceVideoElement, PilotViewportTelemetry } from "@/components/video-workspace-display";
+import { SessionLibrary } from "@/components/session-library";
+import { SessionReportLoader } from "@/components/session-report-loader";
+import { startStickVideoCompositor } from "@/lib/stick-video-compositor";
+import { StickAxes } from "@/components/stick-axes";
+import { formatStickAxisValue } from "@/lib/stick-display";
 import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
@@ -20,20 +27,17 @@ import {
 import { TrainingExportNotice } from "@/components/training-export-notice";
 import { TrainingSessionFileValidator } from "@/components/training-session-file-validator";
 import { WorkstationShortcutToggle } from "@/components/workstation-shortcut-toggle";
-import { TrainingWeeklyReport } from "@/components/training-weekly-report";
 import { useAnalyticsLifecycle, type AnalyticsErrorSurface } from "@/hooks/use-analytics-lifecycle";
 import { useLocalVideoRecording } from "@/hooks/use-local-video-recording";
 import {
   createPilotTelemetryWorkspaceStore,
   PilotTelemetryWorkspaceHost,
   usePilotTelemetryController,
-  type PilotTelemetryWorkspaceStore,
 } from "@/hooks/use-pilot-telemetry-workspace";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import {
   useVideoWorkspaceCapture,
   videoSourceRuntime,
-  type VideoWorkspaceElementRegistrar,
 } from "@/hooks/use-video-workspace-capture";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { useWorkstationRuntime } from "@/hooks/use-workstation-runtime";
@@ -62,7 +66,6 @@ import {
   type TrainingSessionPreferences,
 } from "@/lib/training-session-preferences";
 import {
-  formatDvrReviewChecklist,
   TRAINING_MARKER_LABELS,
   trainingSessionProgress,
 } from "@/lib/training-session-summary";
@@ -86,9 +89,7 @@ import {
   updatePilotChannel,
   LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
   VIDEO_WORKSPACE_STORAGE_KEY,
-  videoCropPixelRect,
   videoViewportsForSource,
-  type VideoCropRect,
   type VideoSourceConfig,
   type VideoWorkspaceConfig,
 } from "@/lib/video-workspace";
@@ -121,209 +122,6 @@ const statusCopy = {
 function videoSourceDisplayName(sources: readonly VideoSourceConfig[], source: VideoSourceConfig) {
   const index = sources.findIndex((candidate) => candidate.id === source.id);
   return source.label.trim() || `视频输入 ${index >= 0 ? index + 1 : 1}`;
-}
-
-function MiniStickIndicator({
-  label,
-  x,
-  y,
-  tone,
-}: {
-  label: string;
-  x: number;
-  y: number;
-  tone: "orange" | "blue";
-}) {
-  return (
-    <span className={`pilot-mini-stick pilot-mini-stick--${tone}`}>
-      <i
-        style={{
-          left: `${clamp((x + 100) / 2, 0, 100)}%`,
-          top: `${clamp((100 - y) / 2, 0, 100)}%`,
-        }}
-      />
-      <small>{label}</small>
-    </span>
-  );
-}
-
-function PilotViewportTelemetry({
-  pilotChannelId,
-  label,
-  active,
-  controlsLocked,
-  store,
-  onActivate,
-  onBeginSerialConnect,
-  onDemoReturnIntentional,
-}: {
-  pilotChannelId: string;
-  label: string;
-  active: boolean;
-  controlsLocked: boolean;
-  store: PilotTelemetryWorkspaceStore;
-  onActivate: () => void;
-  onBeginSerialConnect: (pilotChannelId: string) => void;
-  onDemoReturnIntentional: () => void;
-}) {
-  const controller = usePilotTelemetryController(store, pilotChannelId);
-  const isSerial = controller.source === "serial";
-  const isConnecting = controller.connection === "connecting";
-  const buttonLabel = isConnecting
-    ? `取消 ${label} 飞控连接`
-    : isSerial
-      ? `断开 ${label} 桥接飞控`
-      : `连接 ${label} 桥接飞控`;
-
-  return (
-    <>
-      <div
-        className={`pilot-viewport-telemetry pilot-viewport-telemetry--${controller.connection}`}
-        data-telemetry-source={controller.source}
-        data-telemetry-connection={controller.connection}
-        title={controller.error ?? undefined}
-      >
-        <span><i /><b>{isSerial ? "GROUND_RC" : "DEMO"}</b><small>{statusCopy[controller.connection]}</small></span>
-        <button
-          type="button"
-          aria-label={buttonLabel}
-          disabled={controlsLocked || (!controller.serialSupported && !isConnecting && !isSerial)}
-          onClick={() => {
-            if (isConnecting || isSerial) {
-              if (active) onDemoReturnIntentional();
-              void controller.useDemo();
-              return;
-            }
-            onActivate();
-            onBeginSerialConnect(pilotChannelId);
-            void controller.connectSerial();
-          }}
-        >{isConnecting ? "取消" : isSerial ? "断开" : "连接飞控"}</button>
-      </div>
-      {!active ? (
-        <div className="pilot-mini-telemetry" aria-label={`${label} 实时打杆`}>
-          <MiniStickIndicator
-            label="YAW / THR"
-            x={controller.telemetry.yawStickPercent}
-            y={controller.telemetry.throttleStickPercent * 2 - 100}
-            tone="orange"
-          />
-          <MiniStickIndicator
-            label="ROLL / PITCH"
-            x={controller.telemetry.rollStickPercent}
-            y={controller.telemetry.pitchStickPercent}
-            tone="blue"
-          />
-          <strong>THR {Math.round(controller.telemetry.throttleStickPercent)}%</strong>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function WorkspaceVideoElement({
-  sourceId,
-  pilotChannelId,
-  cropped,
-  crop,
-  registerVideoElement,
-  registerOutputCanvas,
-}: {
-  sourceId: string;
-  pilotChannelId: string;
-  cropped: boolean;
-  crop: VideoCropRect;
-  registerVideoElement: VideoWorkspaceElementRegistrar;
-  registerOutputCanvas: (pilotChannelId: string, element: HTMLCanvasElement | null) => (() => void) | undefined;
-}) {
-  const videoElementRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const { xPercent, yPercent, widthPercent, heightPercent } = crop;
-  const videoRef = useCallback((element: HTMLVideoElement | null) => {
-    videoElementRef.current = element;
-    const unregister = registerVideoElement(sourceId, element);
-    return () => {
-      if (videoElementRef.current === element) videoElementRef.current = null;
-      unregister?.();
-    };
-  }, [registerVideoElement, sourceId]);
-  const outputCanvasRef = useCallback((element: HTMLCanvasElement | null) => {
-    canvasRef.current = element;
-    const unregister = registerOutputCanvas(pilotChannelId, element);
-    return () => {
-      if (canvasRef.current === element) canvasRef.current = null;
-      unregister?.();
-    };
-  }, [pilotChannelId, registerOutputCanvas]);
-
-  useEffect(() => {
-    if (!cropped) return;
-    const video = videoElementRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d", { alpha: false });
-    if (!video || !canvas || !context) return;
-
-    let stopped = false;
-    let animationFrame: number | null = null;
-    let videoFrame: number | null = null;
-    const scheduleNextFrame = () => {
-      if (stopped) return;
-      if (typeof video.requestVideoFrameCallback === "function") {
-        videoFrame = video.requestVideoFrameCallback(drawFrame);
-      } else {
-        animationFrame = window.requestAnimationFrame(drawFrame);
-      }
-    };
-    const drawFrame = () => {
-      if (stopped) return;
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
-        const sourceRect = videoCropPixelRect(
-          { xPercent, yPercent, widthPercent, heightPercent },
-          video.videoWidth,
-          video.videoHeight,
-        );
-        if (canvas.width !== sourceRect.width) canvas.width = sourceRect.width;
-        if (canvas.height !== sourceRect.height) canvas.height = sourceRect.height;
-        try {
-          context.drawImage(
-            video,
-            sourceRect.x,
-            sourceRect.y,
-            sourceRect.width,
-            sourceRect.height,
-            0,
-            0,
-            sourceRect.width,
-            sourceRect.height,
-          );
-        } catch {
-          // The next decoded video frame retries transient source changes.
-        }
-      }
-      scheduleNextFrame();
-    };
-    scheduleNextFrame();
-
-    return () => {
-      stopped = true;
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      if (videoFrame !== null && typeof video.cancelVideoFrameCallback === "function") {
-        video.cancelVideoFrameCallback(videoFrame);
-      }
-    };
-  }, [cropped, heightPercent, widthPercent, xPercent, yPercent]);
-
-  return (
-    <>
-      <video
-        ref={videoRef}
-        className={cropped ? "video-feed-source" : undefined}
-        muted
-        playsInline
-      />
-      {cropped ? <canvas ref={outputCanvasRef} className="video-feed--cropped" aria-hidden="true" /> : null}
-    </>
-  );
 }
 
 function useDashboardAnalyticsErrorSurface({
@@ -454,11 +252,6 @@ function getVideoWorkspaceSnapshot() {
   }
 }
 
-function formatSigned(value: number) {
-  const rounded = Math.round(value);
-  return rounded > 0 ? `+${rounded}` : String(rounded);
-}
-
 function formatSessionDuration(durationMs: number) {
   const totalSeconds = Math.max(0, durationMs) / 1000;
   const minutes = Math.floor(totalSeconds / 60);
@@ -480,10 +273,6 @@ function formatLocalTimecode(timestamp: number) {
 
 function captureInteractionEpochMs() {
   return Date.now();
-}
-
-function formatSessionStart(wallClockStartedAt: string) {
-  return `${wallClockStartedAt.slice(0, 10)} ${wallClockStartedAt.slice(11, 19)}`;
 }
 
 function localDiagnosticEnvironment() {
@@ -529,19 +318,16 @@ function StickPlot({
     <section className={`stick-card stick-card--${tone}`}>
       <div className="card-heading">
         <span>{eyebrow}</span>
-        <b>{formatSigned(x)}</b>
+        <b>{formatStickAxisValue(x)}</b>
       </div>
-      <div className="stick-field" aria-label={`${eyebrow}，${xLabel} ${Math.round(x)}，${yLabel} ${Math.round(y)}`}>
-        <span className="axis axis-x" />
-        <span className="axis axis-y" />
+      <div className="stick-field" aria-label={`${eyebrow}，${xLabel} ${formatStickAxisValue(x)}，${yLabel} ${formatStickAxisValue(y)}；归一化行程 −1000 至 +1000，中心 0`}>
         <span className="stick-trace" style={{ left, top }} />
         <span className="stick-dot" style={{ left, top }} />
-        <small className="axis-label axis-label-x">{xLabel}</small>
-        <small className="axis-label axis-label-y">{yLabel}</small>
+        <StickAxes xLabel={xLabel} yLabel={yLabel} />
       </div>
       <div className="stick-values">
-        <span><i />{xLabel}<b>{Math.round(x)}</b></span>
-        <span><i />{yLabel}<b>{Math.round(y)}</b></span>
+        <span><i />{xLabel}<b>{formatStickAxisValue(x)}</b></span>
+        <span><i />{yLabel}<b>{formatStickAxisValue(y)}</b></span>
       </div>
     </section>
   );
@@ -598,7 +384,19 @@ function ThrottleTimeline({ samples }: { samples: number[] }) {
   );
 }
 
+type WorkspaceView = "live" | "records" | "settings";
+const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; description: string }[] = [
+  { id: "live", label: "飞行工作台", icon: "live", description: "每一次练习，都值得被看见。" },
+  { id: "records", label: "训练记录", icon: "folder", description: "从记录里，找到下一次进步。" },
+  { id: "settings", label: "工作站设置", icon: "settings", description: "准备就绪，便可专注飞行。" },
+];
+
 export function FlightDashboard() {
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("live");
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [revealSessionId, setRevealSessionId] = useState<string | null>(null);
+  const workspaceHeadingRef = useRef<HTMLHeadingElement>(null);
+  const recordingWasActive = useRef(false);
   const preferencesSnapshot = useSyncExternalStore(
     subscribeToTrainingPreferences,
     getTrainingPreferencesSnapshot,
@@ -628,10 +426,6 @@ export function FlightDashboard() {
   const [videoWorkspaceWriteError, setVideoWorkspaceWriteError] = useState<string | null>(null);
   const [coachMode, setCoachMode] = useState(false);
   const [selectedMarkerKind, setSelectedMarkerKind] = useState<Exclude<TrainingSessionMarkerKind, "manual">>("clean");
-  const [notesDraft, setNotesDraft] = useState("");
-  const [notesDraftSessionId, setNotesDraftSessionId] = useState<string | null>(null);
-  const [notesSaving, setNotesSaving] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [analyticsTokenDraft, setAnalyticsTokenDraft] = useState("");
   const [analyticsInstallMessage, setAnalyticsInstallMessage] = useState<string | null>(null);
   const [diagnosticNotice, setDiagnosticNotice] = useState<string | null>(null);
@@ -651,6 +445,25 @@ export function FlightDashboard() {
     : [];
   const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
   const localVideoRecording = useLocalVideoRecording();
+  const stopLocalVideo = localVideoRecording.stop;
+  const recordingCompositorRef = useRef<Awaited<ReturnType<typeof startStickVideoCompositor>> | null>(null);
+  const recordingSetupAbortRef = useRef<AbortController | null>(null);
+  const recordingMediaStartedRef = useRef(false);
+  const finishCompanionRecording = useCallback(async () => {
+    recordingSetupAbortRef.current?.abort();
+    recordingSetupAbortRef.current = null;
+    try {
+      return recordingMediaStartedRef.current ? await stopLocalVideo() : null;
+    } finally {
+      recordingMediaStartedRef.current = false;
+      recordingCompositorRef.current?.dispose();
+      recordingCompositorRef.current = null;
+    }
+  }, [stopLocalVideo]);
+  useEffect(() => () => {
+    recordingSetupAbortRef.current?.abort();
+    recordingCompositorRef.current?.dispose();
+  }, []);
   const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
   const videoDevices = videoCapture.devices;
   const selectedDeviceId = activeSource?.deviceId ?? "";
@@ -675,7 +488,11 @@ export function FlightDashboard() {
   const pilotChannelIds = videoWorkspace.pilotChannels.map((channel) => channel.id);
   const telemetryControl = usePilotTelemetryController(telemetryWorkspaceStore, activeChannel?.id);
   const athleteCode = activeChannel?.athleteCode ?? "";
-  const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState } = telemetryControl;
+  const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState, subscribeSamples } = telemetryControl;
+  const recordingTelemetryRef = useRef(telemetry);
+  useEffect(() => subscribeSamples((sample) => {
+    recordingTelemetryRef.current = sample;
+  }), [subscribeSamples]);
   const version = useVersionCheck();
   const trainingSession = useTrainingSession({
     telemetry,
@@ -683,13 +500,13 @@ export function FlightDashboard() {
     connection,
     linkState,
     athleteCode,
-    autoExport,
+    autoExport: autoExport || recordPilotVideo,
     inputKey: activeChannel?.id ?? "unassigned",
+    subscribeSamples,
+    finishCompanionRecording,
   });
   const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording || localVideoRecording.isActive });
-  const visibleSessionNotes = notesDraftSessionId === trainingSession.lastSession?.id
-    ? notesDraft
-    : trainingSession.lastSession?.notes ?? "";
+
 
   const commitVideoWorkspace = useCallback((nextWorkspace: VideoWorkspaceConfig) => {
     try {
@@ -746,6 +563,7 @@ export function FlightDashboard() {
   }, []);
 
   const toggleCoachMode = useCallback(async () => {
+    setWorkspaceView("live");
     setWorkstationNotice(null);
     if (coachMode) {
       if (document.fullscreenElement) {
@@ -780,7 +598,13 @@ export function FlightDashboard() {
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
   const preferenceError = preferenceWriteError || videoWorkspaceWriteError || loadedVideoWorkspace.error || loadedPreferences.error;
-  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || localVideoRecording.isActive;
+  useEffect(() => {
+    if (localVideoRecording.state !== "error" && localVideoRecording.state !== "saved") return;
+    recordingCompositorRef.current?.dispose();
+    recordingCompositorRef.current = null;
+  }, [localVideoRecording.state]);
+
+  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || localVideoRecording.isActive;
   const activeVideoControlsLocked = controlsLocked || videoState === "connecting" || videoState === "live";
   const sessionIsFinalizing = trainingSession.isFinishing
     || trainingSession.hasPendingSave
@@ -806,7 +630,6 @@ export function FlightDashboard() {
   const sessionSources = trainingSession.isRecording
     ? rcSourceLabel
     : trainingSession.lastSession?.dataSources.map((dataSource) => dataSource === "ground_rc" ? "GROUND_RC" : "DEMO").join(" + ") ?? "—";
-  const visibleSessionId = trainingSession.sessionId?.slice(0, 8).toUpperCase() ?? "READY";
   const quarantinedRecordCount = quarantinedTrainingRecordCount(trainingSession.storageIntegrity);
   const activeViewportIsCropped = Boolean(activeViewport && (
     activeViewport.crop.xPercent !== 0
@@ -827,11 +650,11 @@ export function FlightDashboard() {
           ? "先为选手绑定一个视频画面"
           : videoState !== "live"
             ? "先打开当前选手绑定的 HDMI 画面"
-            : activeViewportIsCropped && (
+            : (
               typeof HTMLCanvasElement === "undefined"
               || typeof HTMLCanvasElement.prototype.captureStream !== "function"
             )
-              ? "当前浏览器不能录制裁切画面；请改用完整画面或关闭视频录像"
+              ? "当前浏览器不能合成摇杆录像；可关闭视频录像后只记录打杆数据"
               : null;
   const startRequirement = tabStartBlockReason
     ? tabStartBlockReason
@@ -840,13 +663,13 @@ export function FlightDashboard() {
       : trainingSession.storageError
         ? "本地存储异常，暂不能开始"
         : !normalizeAthleteCode(athleteCode)
-          ? "先填写选手姓名或代号"
+          ? "先填写选手代号"
           : !bridgeIsLive
-            ? "连接桥接飞控并等待 MSP_RC 数据在线"
+            ? "连接桥接飞控，等待遥控输入就绪"
             : linkState === "lost"
               ? "遥控链路已丢失，不能开始记录"
               : linkState === "unknown"
-                ? "等待 MSP_STATUS_EX 确认遥控链路"
+                ? "等待飞控确认遥控链路"
                 : localVideoStartBlockReason ?? "已满足开始条件";
   const canStartDashboardRecording = trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
   const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
@@ -874,7 +697,7 @@ export function FlightDashboard() {
             ? `已确认写入并关闭 ${localVideoRecording.receipt.filename} · ${formatFileSize(localVideoRecording.receipt.bytes)}`
             : localVideoRecording.state === "error"
               ? `视频未保存完整：${localVideoRecording.error ?? "本地编码或写盘失败"}；遥测 Session 不受影响`
-              : `将保存当前选手的${activeViewportIsCropped ? "裁切" : "完整"}视频；不上传，不含网页 HUD`;
+              : `将保存当前选手的${activeViewportIsCropped ? "裁切" : "完整"}画面与摇杆叠层；原始打杆数据另存 JSON`;
 
   const activeRecordingSourceId = activeSource?.id ?? null;
   const activeRecordingPilotChannelId = activeViewport?.pilotChannelId ?? null;
@@ -885,19 +708,20 @@ export function FlightDashboard() {
   const createExportFileWritable = trainingSession.createExportFileWritable;
   const getVideoSourceStream = videoCapture.getSourceStream;
   const startLocalVideo = localVideoRecording.start;
-  const stopLocalVideo = localVideoRecording.stop;
   const failLocalVideo = localVideoRecording.fail;
   const reportLocalVideoStartError = localVideoRecording.reportStartError;
 
   async function startDashboardRecording() {
     if (!canStartDashboardRecording) return;
+    setWorkspaceView("live");
     const startedAtEpochMs = captureInteractionEpochMs();
     const startedSessionId = await startTrainingSession();
     if (!startedSessionId || !recordPilotVideo) return;
 
     let writable: Awaited<ReturnType<typeof createExportFileWritable>> | null = null;
-    let recordingStream: MediaStream | null = null;
-    let stopStreamTracksOnFinish = false;
+    let compositor: Awaited<ReturnType<typeof startStickVideoCompositor>> | null = null;
+    const setupAbort = new AbortController();
+    recordingSetupAbortRef.current = setupAbort;
     let delegatedToRecorder = false;
     try {
       if (!activeRecordingSourceId || !activeRecordingPilotChannelId || !localVideoMimeType) {
@@ -915,58 +739,57 @@ export function FlightDashboard() {
         throw new Error("Session 已在视频编码器启动前结束；未启动孤立录像");
       }
 
-      if (activeViewportIsCropped) {
-        const canvas = pilotOutputCanvasesRef.current.get(activeRecordingPilotChannelId);
-        if (!canvas || canvas.width <= 0 || canvas.height <= 0 || typeof canvas.captureStream !== "function") {
-          throw new Error("裁切画面还没有可录制的视频帧，请等待画面出现后重试");
-        }
-        const frameRate = Math.max(1, Math.min(60, captureFrameRate ?? 30));
-        recordingStream = canvas.captureStream(frameRate);
-        stopStreamTracksOnFinish = true;
-      } else {
-        const sourceStream = getVideoSourceStream(activeRecordingSourceId);
-        if (!sourceStream || sourceStream.getVideoTracks().length === 0) {
-          throw new Error("当前 HDMI 画面没有可录制的视频轨道");
-        }
-        recordingStream = sourceStream;
+      const sourceStream = getVideoSourceStream(activeRecordingSourceId);
+      if (!sourceStream || sourceStream.getVideoTracks().length === 0) {
+        throw new Error("当前 HDMI 画面没有可录制的视频轨道");
       }
+      compositor = await startStickVideoCompositor({
+        sourceStream,
+        ...(activeViewportIsCropped && activeViewport ? { crop: activeViewport.crop } : {}),
+        frameRate: Math.max(1, Math.min(60, captureFrameRate ?? 30)),
+        athleteCode,
+        getTelemetry: () => recordingTelemetryRef.current,
+        getLinkState: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).linkState,
+        getConnection: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).connection,
+        onError: (recordingError) => { void failLocalVideo(recordingError); },
+        signal: setupAbort.signal,
+      });
+      if (!isTrainingSessionRecording(startedSessionId) || setupAbort.signal.aborted) throw new Error("训练已结束，未启动孤立录像");
+      recordingCompositorRef.current = compositor;
 
       delegatedToRecorder = true;
-      await startLocalVideo({
-        stream: recordingStream,
+      const started = await startLocalVideo({
+        stream: compositor.stream,
         writable,
         filename,
         mimeType: localVideoMimeType,
-        stopStreamTracksOnFinish,
-        startedAtEpochMs,
+        stopStreamTracksOnFinish: true,
+        startedAtEpochMs: captureInteractionEpochMs(),
       });
+      recordingMediaStartedRef.current = started;
+      if (recordingSetupAbortRef.current === setupAbort) recordingSetupAbortRef.current = null;
+      if (!started) {
+        compositor.dispose();
+        recordingCompositorRef.current = null;
+      }
     } catch (recordingError) {
+      const currentSetup = recordingSetupAbortRef.current === setupAbort;
+      if (currentSetup) recordingSetupAbortRef.current = null;
+      compositor?.dispose();
       if (!delegatedToRecorder) {
-        if (stopStreamTracksOnFinish) recordingStream?.getTracks().forEach((track) => track.stop());
         await writable?.close().catch(() => undefined);
       }
-      reportLocalVideoStartError(recordingError);
+      if (currentSetup && !setupAbort.signal.aborted && isTrainingSessionRecording(startedSessionId)) reportLocalVideoStartError(recordingError);
     }
   }
 
   async function stopDashboardRecording() {
-    await Promise.allSettled([
-      stopTrainingSession(),
-      stopLocalVideo(),
-    ]);
+    await stopTrainingSession();
   }
 
-  const stopVideoAfterSession = useEffectEvent(() => {
-    void localVideoRecording.stop();
-  });
   const failVideoAfterSourceLoss = useEffectEvent(() => {
     void failLocalVideo(new Error("当前 HDMI 视频源已中断；断线前片段已关闭，但不算完整录像"));
   });
-
-  useEffect(() => {
-    if (trainingSession.isRecording || trainingSession.isStarting) return;
-    if (localVideoRecording.state === "recording") stopVideoAfterSession();
-  }, [localVideoRecording.state, trainingSession.isRecording, trainingSession.isStarting]);
 
   useEffect(() => {
     if (localVideoRecording.state === "recording" && videoState !== "live") {
@@ -982,7 +805,6 @@ export function FlightDashboard() {
     ? assessTrainingAttemptCandidate(trainingSession.lastSession)
     : null;
   const progress = trainingSessionProgress(trainingSession.elapsedMs, trainingSession.uniqueSampleCount);
-  const dvrChecklist = trainingSession.lastSession ? formatDvrReviewChecklist(trainingSession.lastSession) : "";
   const visibleError = trainingSession.storageError || preferenceError || error || videoError;
   const analyticsErrorSurface = useDashboardAnalyticsErrorSurface({
     storageError: trainingSession.storageError,
@@ -1195,34 +1017,66 @@ export function FlightDashboard() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [singleKeyShortcutsEnabled]);
+  const completedSessionId = trainingSession.lastSession?.id;
+  useEffect(() => {
+    if (trainingSession.isRecording) recordingWasActive.current = true;
+    if (!recordingWasActive.current || trainingSession.isRecording || sessionIsFinalizing || !completedSessionId) return;
+    const timer = window.setTimeout(() => {
+      recordingWasActive.current = false;
+      setSelectedSessionId(completedSessionId);
+      setRevealSessionId(completedSessionId);
+      setWorkspaceView("records");
+      setCoachMode(false);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      workspaceHeadingRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [trainingSession.isRecording, sessionIsFinalizing, completedSessionId]);
+
+  function navigateWorkspace(view: WorkspaceView) {
+    setWorkspaceView(view);
+    workspaceHeadingRef.current?.focus();
+  }
+  const currentPage = workspaceNavigation.find((item) => item.id === workspaceView)!;
+  const librarySessions = trainingSession.hasPendingSave && trainingSession.lastSession
+    ? [trainingSession.lastSession, ...trainingSession.allSessions.filter((session) => session.id !== trainingSession.lastSession?.id)]
+    : trainingSession.allSessions;
+
   return (
-    <main className={`dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
+    <div className={`workspace-shell ${coachMode ? "workspace-shell--coach" : ""}`}>
+      <a className="skip-link" href="#workspace-main">跳到工作区</a>
+      <aside className="workspace-nav">
+        <button className="workspace-brand" type="button" aria-label="FPV Helper 首页" onClick={() => navigateWorkspace("live")}>
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 25V7h22v18M11 25V13h10v12M2 25h12m4 0h12" stroke="currentColor" strokeWidth="2.4" /></svg>
+          <span>fpv<span>helper</span><small>Flight, in perspective.</small></span>
+        </button>
+        <div className="workspace-local-label"><span>L</span><div>本地工作区<small>专注训练，持续进步</small></div></div>
+        <nav aria-label="主导航">
+          {workspaceNavigation.map((item) => (
+            <button key={item.id} type="button" className={`workspace-nav-item ${workspaceView === item.id ? "is-active" : ""}`} aria-label={item.label} aria-current={workspaceView === item.id ? "page" : undefined} onClick={() => navigateWorkspace(item.id)}>
+              <Icon name={item.icon} /><span>{item.label}</span>{item.id === "records" && trainingSession.allSessions.length > 0 ? <small>{trainingSession.allSessions.length}</small> : null}
+            </button>
+          ))}
+        </nav>
+        <div className="workspace-nav-footer"><Icon name="shield" /><p>留在本机，专注飞行<small>实时画面与训练记录本机处理</small></p><span>LongXL <small>Made for pilots.</small></span></div>
+      </aside>
+      <main id="workspace-main" className={`workspace-main dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
+      <div className="workspace-page-heading">
+        <div><p>{currentPage.description}</p><h1 ref={workspaceHeadingRef} tabIndex={-1}>{currentPage.label}<span className="heading-dot">.</span></h1></div>
+        <span className={`status-chip status-chip--${connection}`}><i />{statusCopy[connection]}</span>
+      </div>
       <PilotTelemetryWorkspaceHost
         pilotChannelIds={pilotChannelIds}
         activePilotChannelId={activeChannel?.id}
         store={telemetryWorkspaceStore}
       />
       <header className="topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-          <div>
-            <p>FPV / CONTROL ROOM</p>
-            <h1>飞行操控台</h1>
-          </div>
-        </div>
-
         <div className="session-strip">
-          <span className={`status-chip status-chip--${connection}`}><i />{statusCopy[connection]}</span>
-          <span className="session-meta">SESSION <b>{trainingSession.isRecording ? `REC / ${visibleSessionId}` : "LOCAL / READY"}</b></span>
-          <span className="session-meta">RATE <b>{source === "demo"
-            ? "20 HZ"
-            : !bridgeIsLive
-              ? "MSP WAIT"
-              : linkState === "ok"
-                ? "RX OK"
-                : linkState === "lost"
-                  ? "RX LOST"
-                  : "RX UNKNOWN"}</b></span>
+          <span className="session-meta">当前选手 <b>{athleteCode.trim() || "待填写"}</b></span>
+          <span className="session-meta">采集目标 <b>100 Hz</b></span>
+          {source === "serial" ? <span className="session-meta">实收 <b>{telemetryControl.rcReceiveHz === null ? "—" : `${telemetryControl.rcReceiveHz} Hz`}</b></span> : null}
+          <span className="session-meta">链路 <b>{source === "demo" ? "演示 · 20 Hz" : !bridgeIsLive ? "等待数据" : linkState === "ok" ? "RX 正常" : linkState === "lost" ? "RX 丢失" : "RX 待确认"}</b></span>
+          {trainingSession.isRecording ? <span className="session-meta">记录中 <b>{formatSessionDuration(trainingSession.elapsedMs)}</b></span> : null}
         </div>
 
         <div className="top-actions">
@@ -1268,10 +1122,7 @@ export function FlightDashboard() {
         </div>
       </header>
 
-      <WorkstationShortcutToggle
-        enabled={singleKeyShortcutsEnabled}
-        onChange={updateSingleKeyShortcuts}
-      />
+
 
       {tabStartBlockReason ? (
         <aside className="workstation-banner workstation-banner--blocked" role="alert">
@@ -1313,6 +1164,12 @@ export function FlightDashboard() {
         warning={trainingSession.exportWarning}
       />
 
+      {workspaceView !== "live" && localVideoRecording.state !== "idle" ? (
+        <aside className={`export-banner ${localVideoRecording.state === "error" ? "export-banner--warning" : ""}`} role="status">
+          <b>本地视频</b><span>{localVideoStatusCopy}</span>
+        </aside>
+      ) : null}
+
       {version.updateAvailable ? (
         <aside className="update-banner" role="status">
           <div>
@@ -1327,6 +1184,15 @@ export function FlightDashboard() {
         </aside>
       ) : null}
 
+      <div className="workspace-view workspace-view--live" hidden={workspaceView !== "live"}>
+      <div className="preflight-strip">
+        <label className="active-pilot-field">当前选手代号<input aria-label="当前训练选手代号" value={athleteCode} maxLength={40} placeholder="例如 PILOT-01" disabled={controlsLocked || !activeChannel} onChange={(event) => {
+          if (activeChannel) commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode: event.target.value }));
+        }} /></label>
+        <span className={groundRxReady ? "is-ready" : ""}><Icon name={groundRxReady ? "check" : "usb"} size={16} />{groundRxReady ? "遥控输入就绪" : source === "demo" ? "正在预览演示输入" : "等待真实遥控输入"}</span>
+        <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : "视频可选接入"}</span>
+        <small>{trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
+      </div>
       <div className="workspace-grid">
         <section className="video-console">
           <div className="section-bar">
@@ -1401,6 +1267,7 @@ export function FlightDashboard() {
                   >打开全部</button>
                 )
               ) : null}
+              <details className="overlay-options"><summary>摇杆叠层</summary><div className="overlay-options-body">
               <button
                 className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
                 type="button"
@@ -1449,9 +1316,12 @@ export function FlightDashboard() {
                   >重置叠层</button>
                 </>
               ) : null}
+              </div></details>
             </div>
           </div>
 
+          <details className="video-setup-details">
+            <summary><span>输入与选手设置</span><small>{activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "配置视频输入"} · {videoWorkspace.sources.length} 路输入 · {activeViewport?.label ?? ""}</small></summary>
           <div className="video-workspace-bar" aria-label="本机视频工作区">
             <span className="video-workspace-label">已配置输入</span>
             <div className="video-source-tabs" aria-label="画面输入列表">
@@ -1527,6 +1397,8 @@ export function FlightDashboard() {
             />
           ) : null}
 
+          </details>
+
           <div className={`video-stage ${anyVideoLive ? "has-video" : ""} ${workspaceTiles.length > 1 ? "video-stage--multi" : ""}`}>
             <div className="video-feed-grid" data-viewport-count={workspaceTiles.length}>
               {workspaceTiles.map(({ sourceConfig, viewport, channel }) => {
@@ -1549,6 +1421,7 @@ export function FlightDashboard() {
                       sourceId={sourceConfig.id}
                       pilotChannelId={viewport.pilotChannelId}
                       cropped={isCropped}
+                      keepFramesActive={localVideoRecording.isActive && isActive}
                       crop={viewport.crop}
                       registerVideoElement={videoCapture.registerVideoElement}
                       registerOutputCanvas={registerPilotOutputCanvas}
@@ -1577,7 +1450,7 @@ export function FlightDashboard() {
                       pilotChannelId={viewport.pilotChannelId}
                       label={tileLabel}
                       active={isActive}
-                      controlsLocked={controlsLocked}
+                      controlsLocked={controlsLocked || !tabAllowsStart}
                       store={telemetryWorkspaceStore}
                       onActivate={() => {
                         const selectedSource = selectVideoSource(videoWorkspace, sourceConfig.id);
@@ -1590,14 +1463,6 @@ export function FlightDashboard() {
                     {isActive ? (
                       <>
                         <DemoTelemetryWatermark source={source} />
-                        <div className="hud hud-top-left">
-                          <span>{source === "demo" ? "SIM" : "MSP"}</span>
-                          <b>{source === "demo" ? "演示遥测" : "桥接飞控"}</b>
-                        </div>
-                        <div className="hud hud-top-right">
-                          <b>{telemetry.groundBridgeVoltage === null ? "—" : telemetry.groundBridgeVoltage.toFixed(1)} V</b>
-                          <span>{source === "demo" ? "DEMO BRIDGE VOLTAGE" : "GROUND BRIDGE VOLTAGE"}</span>
-                        </div>
                         <div className={`coach-status coach-status--${connection}`}>
                           <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
                           <b>{trainingSession.isRecording
@@ -1643,16 +1508,6 @@ export function FlightDashboard() {
                             />
                           </>
                         ) : null}
-                        <div className="hud hud-bottom-left">
-                          <span>ROLL STICK <b>{formatSigned(telemetry.rollStickPercent)}</b></span>
-                          <span>PITCH STICK <b>{formatSigned(telemetry.pitchStickPercent)}</b></span>
-                          <span>YAW STICK <b>{formatSigned(telemetry.yawStickPercent)}</b></span>
-                        </div>
-                        <div className="throttle-ladder">
-                          <span>THR STICK</span>
-                          <div><i style={{ height: `${telemetry.throttleStickPercent}%` }} /></div>
-                          <b>{Math.round(telemetry.throttleStickPercent)}%</b>
-                        </div>
                       </>
                     ) : null}
                   </div>
@@ -1678,6 +1533,7 @@ export function FlightDashboard() {
             <StickPlot eyebrow={`左摇杆 · ${rcSourceLabel}`} xLabel="YAW" yLabel="THR" x={telemetry.yawStickPercent} y={telemetry.throttleStickPercent * 2 - 100} tone="orange" />
             <StickPlot eyebrow={`右摇杆 · ${rcSourceLabel}`} xLabel="ROLL" yLabel="PITCH" x={telemetry.rollStickPercent} y={telemetry.pitchStickPercent} tone="blue" />
           </div>
+          <p className="stick-scale-note">行程 ±1000 · 油门中心 0 = 50%</p>
 
           <div className="gauge-grid gauge-grid--primary">
             <Gauge label="遥控油门指令" value={telemetry.throttleStickPercent} detail={`${Math.round(telemetry.rcThrottleUs)} μs · ${rcSourceLabel}${source === "serial" ? " / MSP_RC" : ""}`} accent="orange" />
@@ -1700,6 +1556,7 @@ export function FlightDashboard() {
                 <span>→</span>
                 <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
               </div>
+              <p>地面桥电压：{telemetry.groundBridgeVoltage === null ? "—" : `${telemetry.groundBridgeVoltage.toFixed(1)} V`}{source === "demo" ? "（演示值）" : ""}。</p>
               <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；MSP_ANALOG 仅用于地面桥供电诊断，不代表飞行器。</p>
               <p>遥控链路：{linkStateCopy[linkState]}。Bridge FC 在线不等于遥控器在线。</p>
               <p>
@@ -1722,7 +1579,7 @@ export function FlightDashboard() {
 
       <section className="timeline-card">
         <div className="timeline-heading">
-          <div><span>LIVE TRACE</span><h2>油门时间轴</h2></div>
+          <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
           <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
         </div>
         <ThrottleTimeline samples={throttleHistory} />
@@ -1743,9 +1600,10 @@ export function FlightDashboard() {
           <div>
             <b>{startRequirement}</b>
             <small>{trainingSession.storageReady
-              ? `IndexedDB 已就绪 · 本机 ${trainingSession.recentSessionCount} 条可读记录${quarantinedRecordCount > 0 ? ` · 隔离 ${quarantinedRecordCount} 条` : ""}`
+              ? `本机存储已就绪 · ${trainingSession.recentSessionCount} 条可读记录${quarantinedRecordCount > 0 ? ` · 隔离 ${quarantinedRecordCount} 条` : ""}`
               : "正在检查草稿与历史记录"}</small>
           </div>
+          <details className="recording-options"><summary>保存与录像设置 <small>{recordPilotVideo ? "视频＋摇杆" : "遥测 JSON"}{autoExport || recordPilotVideo ? " · 自动导出" : " · 手动导出"}</small></summary>
           <div className="session-toggle-group">
             <label className="session-toggle">
               <input
@@ -1759,13 +1617,13 @@ export function FlightDashboard() {
                   stickOverlayMode,
                 })}
               />
-              <span>同时录制当前选手视频</span>
+              <span>录制视频与摇杆叠层</span>
             </label>
             <label className="session-toggle">
               <input
                 type="checkbox"
-                checked={autoExport}
-                disabled={controlsLocked}
+                checked={autoExport || recordPilotVideo}
+                disabled={controlsLocked || recordPilotVideo}
                 onChange={(event) => updateTrainingPreferences({
                   autoExport: event.target.checked,
                   recordPilotVideo,
@@ -1773,7 +1631,7 @@ export function FlightDashboard() {
                   stickOverlayMode,
                 })}
               />
-              <span>结束成功后自动保存 JSON</span>
+              <span>{recordPilotVideo ? "随录像保存原始打杆 JSON" : "结束后自动保存 JSON"}</span>
             </label>
           </div>
           <div className="session-export-directory">
@@ -1812,6 +1670,7 @@ export function FlightDashboard() {
               ) : null}
             </span>
           </div>
+          </details>
           <div
             className={`session-video-status session-video-status--${localVideoRecording.state}`}
             role="status"
@@ -1879,7 +1738,9 @@ export function FlightDashboard() {
 
         <div className="session-note">
           <div>
-            <p>草稿保存在浏览器 IndexedDB：开始即写、每 5 秒更新、结束即保存；刷新残留草稿会恢复为 interrupted，不会静默丢弃。</p>
+            {trainingSession.isRecording || sessionIsFinalizing ? <p role="status">已采集 {trainingSession.sampleCount.toLocaleString()} 帧 · 已保存 {trainingSession.persistedSampleCount.toLocaleString()} 帧（至 {formatSessionDuration(trainingSession.persistedElapsedMs)}）</p> : null}
+            <p>切换页面会继续录制；结束前请保持浏览器打开。{recordPilotVideo ? "录像和原始打杆数据保存在同一文件夹。" : ""}</p>
+            <p>记录会自动暂存，结束后保存在本机。若页面意外关闭，下次打开可恢复最近暂存的记录，并标记为中断。</p>
             {lastSessionValidity && !trainingSession.isRecording && !sessionIsFinalizing ? (
               <>
                 <p className={trainingSession.lastSession?.validity.valid ? "validity-copy validity-copy--valid" : "validity-copy validity-copy--invalid"}>{lastSessionValidity}</p>
@@ -1897,105 +1758,37 @@ export function FlightDashboard() {
         </div>
       </section>
 
-      {trainingSession.lastSession && !trainingSession.isRecording ? (
-        <section className="session-summary-card">
-          <div className="session-heading">
-            <div><span>POST-FLIGHT REVIEW</span><h2>停止后小结</h2></div>
-            <span>{trainingSession.lastSession.markers.length} 条人工标记</span>
-          </div>
-          <div className="summary-grid">
-            <div className="summary-notes">
-              <label htmlFor="session-notes">训练备注</label>
-              <textarea
-                id="session-notes"
-                value={visibleSessionNotes}
-                maxLength={2_000}
-                disabled={trainingSession.hasPendingSave}
-                placeholder="记录练习目标、失误与下一轮调整"
-                onChange={(event) => {
-                  setNotesDraftSessionId(trainingSession.lastSession?.id ?? null);
-                  setNotesDraft(event.target.value);
-                }}
-              />
-              <button
-                className="mini-button mini-button--active"
-                type="button"
-                disabled={notesSaving || trainingSession.hasPendingSave}
-                onClick={() => {
-                  setNotesSaving(true);
-                  void trainingSession.updateLastSessionNotes(visibleSessionNotes).finally(() => setNotesSaving(false));
-                }}
-              >{notesSaving ? "保存中…" : "保存备注到本机"}</button>
-            </div>
-            <div className="dvr-checklist">
-              <label htmlFor="dvr-checklist">可复制 DVR 复盘清单</label>
-              <textarea id="dvr-checklist" readOnly value={dvrChecklist} />
-              <button
-                className="mini-button"
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      if (!navigator.clipboard) throw new Error("当前浏览器未提供剪贴板权限");
-                      await navigator.clipboard.writeText(dvrChecklist);
-                      setCopyStatus("已复制 DVR 清单");
-                    } catch {
-                      setCopyStatus("复制失败，请在清单中手动全选复制");
-                    }
-                  })();
-                }}
-              >复制清单</button>
-              {copyStatus ? <small role="status">{copyStatus}</small> : null}
-            </div>
-          </div>
+      </div>
+
+      <div className="workspace-view workspace-view--records" hidden={workspaceView !== "records"}>
+        <TrainingStorageIntegrityNotice integrity={trainingSession.storageIntegrity} />
+        <SessionLibrary
+          sessions={librarySessions}
+          loadSession={trainingSession.loadSession}
+          selectedSessionId={selectedSessionId}
+          revealSessionId={revealSessionId}
+          onSelectSession={setSelectedSessionId}
+          onExport={(session) => trainingSession.exportSession(session.id, session.notes ?? "")}
+          onUpdateNotes={trainingSession.updateSessionNotes}
+          onGoToLive={() => navigateWorkspace("live")}
+          isRecording={trainingSession.isRecording}
+          storageState={trainingSession.storageError ? "error" : trainingSession.storageReady ? "ready" : "loading"}
+          saveState={trainingSession.hasPendingSave ? "error" : sessionIsFinalizing ? "saving" : "saved"}
+          unsavedSessionIds={trainingSession.hasPendingSave && trainingSession.lastSession ? [trainingSession.lastSession.id] : []}
+        />
+        <SessionReportLoader loadSessions={trainingSession.loadSessionsForReport} revision={trainingSession.allSessions} />
+        <details className="review-tool"><summary>检查导出文件 <small>重新校验 JSON 的完整性与有效条件</small></summary><TrainingSessionFileValidator /></details>
+      </div>
+      <div className="workspace-view workspace-view--settings" hidden={workspaceView !== "settings"}>
+        <section className="connection-guide">
+          <div><span>GET READY</span><h2>三步，准备好下一次训练</h2><p>真实训练需要地面接收机、桥接飞控与浏览器串口连接。视频可独立接入。</p></div>
+          <ol><li><b>连接输入</b><p>遥控器 → 地面接收机 → Betaflight 桥接飞控 → USB。点击上方「连接桥接飞控」，等待 RX 正常。</p></li><li><b>选择画面与选手</b><p>在工作台展开「输入与选手设置」，连接采集卡；单画面、四分屏与每位选手的独立裁切都保留在本机。</p></li><li><b>开始与复盘</b><p>填写选手代号后开始。训练中可标记片段，结束后保存备注并导出 JSON；开启视频录制前先选择保存文件夹。</p></li></ol>
+          <button className="button button--primary" type="button" onClick={() => navigateWorkspace("live")}>回到工作台 <Icon name="arrow-right" size={16} /></button>
         </section>
-      ) : null}
-
-      <TrainingSessionFileValidator />
-
-      <TrainingWeeklyReport localSessions={trainingSession.allSessions} />
-
-      <section className="today-records-card">
-        <div className="session-heading">
-          <div><span>LOCAL INDEXEDDB</span><h2>全部历史 Session</h2></div>
-          <span>共 {trainingSession.allSessions.length} 条 · 未导出 {trainingSession.unexportedCount} 条（技术有效 {trainingSession.unexportedValidCount} 条）</span>
-        </div>
-        {trainingSession.allSessions.length === 0 ? (
-          <p className="empty-records">本机还没有已完成的训练记录。</p>
-        ) : (
-          <div className="today-records-list">
-            {trainingSession.allSessions.map((session) => {
-              const attemptCandidate = assessTrainingAttemptCandidate(session);
-              const sessionLabel = `${session.athleteCode ?? "未填写代号"} ${formatSessionStart(session.timing.wallClockStartedAt)}`;
-              return (
-                <article key={session.id} aria-label={`训练 Session：${sessionLabel}`}>
-                  <div><span>代号</span><b>{session.athleteCode ?? "—"}</b></div>
-                  <div><span>开始（本地）</span><b>{formatSessionStart(session.timing.wallClockStartedAt)}</b></div>
-                  <div><span>时长</span><b>{formatSessionDuration(session.durationMs)}</b></div>
-                  <div className={session.validity.valid ? "record-valid" : "record-invalid"}>
-                    <span>技术有效</span>
-                    <b>{session.validity.valid ? "有效" : session.validity.reasons.map((reason) => invalidReasonCopy[reason]).join("；")}</b>
-                  </div>
-                  <div className={attemptCandidate.candidate ? "record-valid" : "record-invalid"}>
-                    <span>80% 验收候选</span>
-                    <b>{attemptCandidate.candidate ? "满足基础条件（仍需外部台账）" : "不满足（需技术有效 + 非空备注）"}</b>
-                  </div>
-                  <div><span>导出状态</span><b>{session.exportedAt ? `已导出 ${session.exportCount} 次` : "未导出"}</b></div>
-                  <button
-                    className="mini-button mini-button--active"
-                    type="button"
-                    aria-label={`${session.exportedAt ? "再次导出" : "导出 JSON"}：${sessionLabel}`}
-                    onClick={() => void trainingSession.exportSession(session.id)}
-                  >
-                    {session.exportedAt ? "再次导出" : "导出 JSON"}
-                  </button>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
+      <WorkstationShortcutToggle
+        enabled={singleKeyShortcutsEnabled}
+        onChange={updateSingleKeyShortcuts}
+      />
       <section className="diagnostics-card" aria-label="本机诊断工具">
         <div>
           <span>LOCAL DIAGNOSTICS</span>
@@ -2134,11 +1927,14 @@ export function FlightDashboard() {
         {analyticsInstallMessage ? <small role="status">{analyticsInstallMessage}</small> : null}
       </section>
 
+      </div>
+
       <footer className="dashboard-footer">
         <p><i className={`footer-light footer-light--${connection}`} />{source === "demo" ? "当前为演示数据，未连接真实飞控" : bridgeIsLive ? "只读 MSP 轮询，不写入 Betaflight 配置" : "桥接飞控当前没有实时 RC 数据"}</p>
         <p>地面桥电压仅用于采集桥诊断，不代表飞行器电池</p>
         <p>FPVHelper v{version.currentVersion}</p>
       </footer>
     </main>
+    </div>
   );
 }

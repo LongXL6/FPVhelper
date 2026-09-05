@@ -15,6 +15,7 @@ import {
   trainingSessionFilename,
   withTrainingSessionTermination,
   withTrainingSessionNotes,
+  withTrainingSessionVideoReceipt,
   type TrainingSessionDraft,
 } from "./training-session";
 
@@ -57,6 +58,19 @@ function createValidSessionDraft() {
 }
 
 describe("local training session schema v2", () => {
+  it("recovers early v2 drafts without a local timestamp while preserving samples", () => {
+    const draft = createDraft();
+    addSample(draft, 1);
+    const raw: Record<string, unknown> = { ...draft };
+    delete raw.wallClockStartedAt;
+    const parsed = parseTrainingSessionDraft(raw);
+    expect(Date.parse(parsed.wallClockStartedAt)).toBe(Date.parse(draft.startedAt));
+    expect(parsed.samples).toEqual(draft.samples);
+    expect(recoverInterruptedTrainingSession(parsed).interrupted).toBe(true);
+    expect(() => parseTrainingSessionDraft({ ...raw, wallClockStartedAt: "invalid" })).toThrow();
+    expect(() => parseTrainingSessionDraft({ ...raw, startedAt: "invalid" })).toThrow();
+  });
+
   it("records unique samples with raw RC channels and local wall-clock time", () => {
     const draft = createDraft();
 
@@ -362,6 +376,9 @@ describe("local training session schema v2", () => {
     });
     expect(migrated.samples[0].channelsUs).toEqual([1600, 1450, 1500, 1600]);
     expect(migrated.validity.reasons).toContain("no_athlete_code");
+    expect(migrated).not.toHaveProperty("captureQuality");
+    expect(migrated).not.toHaveProperty("captureContext");
+    expect(parseTrainingSession(serializeTrainingSession(migrated))).toEqual(migrated);
   });
 
   it("keeps existing schema v2 records readable when additive metadata is absent", () => {
@@ -384,5 +401,99 @@ describe("local training session schema v2", () => {
       workstationId: "old-local-machine-label",
       build: "old debug build",
     })).toMatchObject({ workstationId: null, build: null, id: current.id });
+  });
+});
+
+describe("training capture and successful video receipt extensions", () => {
+  const receipt = {
+    filename: "训练录像.webm",
+    mimeType: "video/webm;codecs=vp9",
+    bytes: 12_345,
+    startedAtEpochMs: STARTED_AT + 500,
+    finishedAtEpochMs: STARTED_AT + 60_500,
+  };
+
+  function finishedSession() {
+    return finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+  }
+
+  it("adds actual stored sample quality without changing the established validity contract", () => {
+    const session = finishedSession();
+    expect(session.validity).toEqual({ valid: true, reasons: [] });
+    expect(session.captureQuality).toMatchObject({
+      targetPollHz: 100, sampleCount: 300, positiveIntervalCount: 299,
+      intervalStatsMs: { median: 200, p95: 200, p99: 200, max: 200 },
+      usablePeriods: [], rfPacketLossMeasured: false,
+    });
+    expect(session.captureQuality!.gaps).toHaveLength(299);
+    expect(session.captureContext?.timestamp.clock).toBe("performance.now");
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("preserves absent capture facts in old schema v2 records", () => {
+    const raw: Record<string, unknown> = { ...finishedSession() };
+    delete raw.captureQuality;
+    delete raw.captureContext;
+    delete raw.video;
+    const parsed = parseTrainingSession(raw);
+    expect(parsed).not.toHaveProperty("captureQuality");
+    expect(parsed).not.toHaveProperty("captureContext");
+    expect(parsed.video).toEqual({ recorded: false, synchronized: false });
+    expect(parseTrainingSession(serializeTrainingSession(parsed))).toEqual(parsed);
+  });
+
+  it("rejects present but invalid optional capture extensions", () => {
+    const session = finishedSession();
+    for (const raw of [
+      { ...session, captureQuality: null },
+      { ...session, captureContext: null },
+      { ...session, captureQuality: { ...session.captureQuality, version: 2 } },
+      { ...session, captureContext: { ...session.captureContext, version: 2 } },
+      { ...session, samples: session.samples.slice(1) },
+    ]) expect(() => parseTrainingSession(raw)).toThrow(/captureQuality|captureContext/);
+  });
+
+  it("attaches a successful receipt immutably and preserves raw data and quality", () => {
+    const session = finishedSession();
+    const recorded = withTrainingSessionVideoReceipt(session, receipt, "sticks");
+    expect(session.video).toEqual({ recorded: false, synchronized: false });
+    expect(recorded.samples).toBe(session.samples);
+    expect(recorded.captureQuality).toBe(session.captureQuality);
+    expect(recorded.video).toEqual({
+      ...receipt, recorded: true, synchronized: false, receiptVersion: 1,
+      receiptEvidence: "write_and_close_resolved", overlay: "sticks", overlayTiming: "latest_available_host_sample",
+    });
+    expect(parseTrainingSession(serializeTrainingSession(recorded))).toEqual(recorded);
+    expect(withTrainingSessionVideoReceipt(session, receipt).video).toMatchObject({ overlay: "none", overlayTiming: "none" });
+  });
+
+  it.each([
+    { bytes: 0 }, { bytes: -1 }, { bytes: 1.5 }, { bytes: Number.MAX_SAFE_INTEGER + 1 },
+    { filename: "../recording.webm" }, { filename: " record.webm" }, { filename: "a\n.webm" },
+    { mimeType: "text/html" }, { mimeType: "video/webm\n" },
+    { startedAtEpochMs: -1 }, { finishedAtEpochMs: STARTED_AT }, { finishedAtEpochMs: Number.NaN },
+  ])("rejects incomplete or invalid file receipts: %o", (invalid) => {
+    expect(() => withTrainingSessionVideoReceipt(finishedSession(), { ...receipt, ...invalid }, "sticks")).toThrow("video");
+  });
+
+  it("rejects unsupported or misleading imported video claims", () => {
+    const session = withTrainingSessionVideoReceipt(finishedSession(), receipt, "sticks");
+    for (const video of [
+      null,
+      { ...session.video, synchronized: true },
+      { ...session.video, receiptVersion: 2 },
+      { ...session.video, receiptEvidence: "started" },
+      { ...session.video, recorded: false },
+      { ...session.video, overlay: "unknown" },
+      { ...session.video, overlayTiming: "calibrated" },
+      { ...session.video, constructor: "unsupported" },
+    ]) expect(() => parseTrainingSession({ ...session, video })).toThrow(/video|收据/);
+  });
+
+  it("allows lightweight summaries to produce filenames and assess notes", () => {
+    const session = finishedSession();
+    const { startedAt, id, initialSource, athleteCode, validity, notes } = session;
+    expect(trainingSessionFilename({ startedAt, id, initialSource, athleteCode })).toBe(trainingSessionFilename(session));
+    expect(assessTrainingAttemptCandidate({ validity, notes })).toEqual(assessTrainingAttemptCandidate(session));
   });
 });

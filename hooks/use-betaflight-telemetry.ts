@@ -14,6 +14,7 @@ import {
   canIssueMspRcRequest,
   connectionStateAfterRcSilence,
   createStatusExFreshnessWatchdog,
+  createRcReceiveRate,
   createDemoTelemetry,
   decodeAnalog,
   decodeRc,
@@ -35,6 +36,8 @@ import {
   type MspParserQuality,
   type MspParserStats,
   type StatusExFreshnessWatchdog,
+  type SubscribeTelemetrySamples,
+  type TelemetrySampleListener,
   type TelemetrySource,
 } from "@/lib/telemetry";
 import {
@@ -60,6 +63,7 @@ export interface TelemetryController {
   errorCode: SerialErrorCode | null;
   parserStats: MspParserStats;
   parserQuality: MspParserQuality;
+  rcReceiveHz: number | null;
   linkState: LinkState;
   rawCapture: RawSerialCaptureState;
   serialSupported: boolean;
@@ -68,6 +72,7 @@ export interface TelemetryController {
   startRawCapture: () => boolean;
   cancelRawCapture: () => void;
   downloadRawCapture: () => boolean;
+  subscribeSamples: SubscribeTelemetrySamples;
 }
 
 export function useBetaflightTelemetry({
@@ -84,6 +89,7 @@ export function useBetaflightTelemetry({
   const [errorCode, setErrorCode] = useState<SerialErrorCode | null>(null);
   const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
   const [linkState, setLinkState] = useState<LinkState>("unknown");
+  const [rcReceiveHz, setRcReceiveHz] = useState<number | null>(null);
   const portRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
@@ -100,6 +106,10 @@ export function useBetaflightTelemetry({
   const demoPlaybackActiveRef = useRef(demoPlaybackActive);
   const receivedRcFrameRef = useRef(false);
   const lastRcFrameAtRef = useRef<number | null>(null);
+  const currentTelemetryRef = useRef(EMPTY_TELEMETRY);
+  const sampleListenersRef = useRef(new Set<TelemetrySampleListener>());
+  const rcReceiveRateRef = useRef(createRcReceiveRate());
+  const lastRatePublishedAtRef = useRef(0);
   const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
   const rightPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: 0 }));
   const {
@@ -110,6 +120,17 @@ export function useBetaflightTelemetry({
     cancel: cancelRawCapture,
     download: downloadRawCapture,
   } = useRawSerialCapture();
+
+  const subscribeSamples = useCallback<SubscribeTelemetrySamples>((listener) => {
+    sampleListenersRef.current.add(listener);
+    return () => { sampleListenersRef.current.delete(listener); };
+  }, []);
+
+  const publishSample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
+    currentTelemetryRef.current = sample;
+    setTelemetry(sample);
+    for (const listener of sampleListenersRef.current) listener(sample, sampleSource);
+  }, []);
 
   const recordStickMotion = useCallback((
     sample: Pick<
@@ -168,6 +189,9 @@ export function useBetaflightTelemetry({
     finishRawCapture("disconnected");
     receivedRcFrameRef.current = false;
     lastRcFrameAtRef.current = null;
+    rcReceiveRateRef.current.reset();
+    lastRatePublishedAtRef.current = 0;
+    setRcReceiveHz(null);
     setLinkState("unknown");
     const reader = readerRef.current;
     const writer = writerRef.current;
@@ -211,10 +235,10 @@ export function useBetaflightTelemetry({
     if (!demoActiveRef.current) return;
     sequenceRef.current += 1;
     const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
-    setTelemetry(nextTelemetry);
+    publishSample(nextTelemetry, "demo");
     setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
     recordStickMotion(nextTelemetry, nextTelemetry.sequence);
-  }, [recordStickMotion]);
+  }, [publishSample, recordStickMotion]);
 
   const startDemo = useCallback(() => {
     stopTimers();
@@ -293,6 +317,7 @@ export function useBetaflightTelemetry({
       const isFirstRcFrame = !receivedRcFrameRef.current;
       receivedRcFrameRef.current = true;
       lastRcFrameAtRef.current = monotonicTimestampMs;
+      rcReceiveRateRef.current.observe(monotonicTimestampMs);
 
       if (isFirstRcFrame) {
         if (firstFrameTimerRef.current !== null) clearTimeout(firstFrameTimerRef.current);
@@ -303,17 +328,19 @@ export function useBetaflightTelemetry({
         setSource("serial");
         setError(null);
         setErrorCode(null);
+        setRcReceiveHz(rcReceiveRateRef.current.getHz(monotonicTimestampMs));
       }
 
       sequenceRef.current += 1;
       const appendVisualHistory = sequenceRef.current % SERIAL_VISUAL_SAMPLE_STEP === 0;
-      setTelemetry((current) => ({
-        ...current,
+      const sample: FlightTelemetry = {
+        ...(isFirstRcFrame ? EMPTY_TELEMETRY : currentTelemetryRef.current),
         ...rc,
         timestamp,
         monotonicTimestampMs,
         sequence: sequenceRef.current,
-      }));
+      };
+      publishSample(sample, "serial");
       if (appendVisualHistory) {
         setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
       }
@@ -324,13 +351,14 @@ export function useBetaflightTelemetry({
       if (!receivedRcFrameRef.current) return;
       const analog = decodeAnalog(payload);
       if (analog) {
-        setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
+        currentTelemetryRef.current = { ...currentTelemetryRef.current, ...analog, timestamp, monotonicTimestampMs };
+        setTelemetry(currentTelemetryRef.current);
       }
     } else if (command === MSP.STATUS_EX) {
       setLinkState(decodeStatusExLinkState(payload));
       statusExWatchdogRef.current?.observe();
     }
-  }, [armStaleWatchdog, recordStickMotion, resetStickMotion, stopDemoTimer]);
+  }, [armStaleWatchdog, publishSample, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
   const readLoop = useCallback(
     async (port: SerialPort, connectionAttempt: number) => {
@@ -459,10 +487,14 @@ export function useBetaflightTelemetry({
       let writing = false;
       pollTimerRef.current = setInterval(() => {
         if (connectionAttemptRef.current !== connectionAttempt) return;
+        const now = performance.now();
+        if (receivedRcFrameRef.current && now - lastRatePublishedAtRef.current >= 250) {
+          lastRatePublishedAtRef.current = now;
+          setRcReceiveHz(rcReceiveRateRef.current.getHz(now));
+        }
         const writer = writerRef.current;
         if (!writer || writing) return;
 
-        const now = performance.now();
         if (!canIssueMspRcRequest(now, pendingRcRequestStartedAtRef.current)) return;
 
         writing = true;
@@ -536,6 +568,7 @@ export function useBetaflightTelemetry({
     errorCode,
     parserStats,
     parserQuality: mspParserQuality(parserStats),
+    rcReceiveHz,
     linkState,
     rawCapture,
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),
@@ -544,5 +577,6 @@ export function useBetaflightTelemetry({
     startRawCapture,
     cancelRawCapture,
     downloadRawCapture,
+    subscribeSamples,
   };
 }

@@ -60,6 +60,22 @@ function build(
 }
 
 describe("training weekly report", () => {
+  it("counts RX link loss as a finite invalid reason and includes it in the report", () => {
+    const report = build([
+      reportInput(session({
+        id: "rx-link-lost",
+        interrupted: true,
+        interruptionReason: "rx_link_lost",
+        validity: { valid: false, reasons: ["rx_link_lost"] },
+      })),
+    ]);
+
+    expect(report.invalidReasonCounts.rx_link_lost).toBe(1);
+    expect(report.invalidReasonCounts.interrupted).toBe(0);
+    expect(Object.values(report.invalidReasonCounts).every(Number.isFinite)).toBe(true);
+    expect(formatTrainingWeeklyReportMarkdown(report)).toContain("遥控链路丢失：1");
+  });
+
   it("keeps commercial coverage unavailable when the independent intent ledger is missing", () => {
     const invalidReason: TrainingSessionInvalidReason = "too_short";
     const report = build([

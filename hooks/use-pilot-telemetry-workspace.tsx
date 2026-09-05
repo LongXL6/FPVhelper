@@ -28,6 +28,7 @@ const UNAVAILABLE_TELEMETRY_CONTROLLER: TelemetryController = {
   errorCode: null,
   parserStats: EMPTY_MSP_PARSER_STATS,
   parserQuality: "unknown",
+  rcReceiveHz: null,
   linkState: "unknown",
   rawCapture: IDLE_RAW_CAPTURE,
   serialSupported: false,
@@ -36,6 +37,7 @@ const UNAVAILABLE_TELEMETRY_CONTROLLER: TelemetryController = {
   startRawCapture: returnFalse,
   cancelRawCapture: noAction,
   downloadRawCapture: returnFalse,
+  subscribeSamples: () => noAction,
 };
 
 export interface PilotTelemetryWorkspaceStore {

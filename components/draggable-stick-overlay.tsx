@@ -7,8 +7,11 @@ import {
   useRef,
   useSyncExternalStore,
   type PointerEvent as ReactPointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { clamp } from "@/lib/telemetry";
+import { StickAxes } from "@/components/stick-axes";
+import { formatStickAxisValue } from "@/lib/stick-display";
 import {
   constrainStickOverlayPairLayout,
   finishStickOverlayPairInteraction,
@@ -225,6 +228,7 @@ export function DraggableStickOverlay({
     const stage = overlayRef.current?.parentElement;
     if (!stage) return;
     const bounds = stage.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
     interactionRef.current = {
       mode,
       pointerId: event.pointerId,
@@ -268,6 +272,23 @@ export function DraggableStickOverlay({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }, [member, onInteractionCommit, onPairChange]);
 
+  const handleKeyboard = (mode: "move" | "resize", event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    const bounds = overlayRef.current?.parentElement?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 10 : 2;
+    const deltaX = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+    const deltaY = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+    const nextPair = mode === "move"
+      ? moveStickOverlayPairLayout(pairLayout, member, deltaX, deltaY, bounds.width, bounds.height)
+      : resizeStickOverlayPairLayout(pairLayout, member, deltaX + deltaY, bounds.width, bounds.height);
+    onInteractionStart?.();
+    onPairChange(nextPair, true);
+    onInteractionCommit?.(nextPair);
+  };
+
   return (
     <section
       ref={overlayRef}
@@ -279,6 +300,8 @@ export function DraggableStickOverlay({
         className="video-stick-overlay__drag"
         type="button"
         aria-label={`拖动${label}`}
+        title="方向键微调，Shift + 方向键加速移动"
+        onKeyDown={(event) => handleKeyboard("move", event)}
         onPointerDown={(event) => startInteraction("move", event)}
         onPointerMove={continueInteraction}
         onPointerUp={endInteraction}
@@ -296,9 +319,7 @@ export function DraggableStickOverlay({
           onClick={onToggleLock}
         >{pairLayout.locked ? "已锁" : "锁定"}</button>
       ) : null}
-      <div className="video-stick-overlay__field" aria-label={`${xLabel} ${Math.round(x)}，${yLabel} ${Math.round(y)}`}>
-        <span className="axis axis-x" />
-        <span className="axis axis-y" />
+      <div className="video-stick-overlay__field" aria-label={`${xLabel} ${formatStickAxisValue(x)}，${yLabel} ${formatStickAxisValue(y)}；归一化行程 −1000 至 +1000，中心 0`}>
         {visibleTrail.map((point, index) => {
           const progress = (index + 1) / visibleTrail.length;
           return (
@@ -320,17 +341,18 @@ export function DraggableStickOverlay({
         ) : null}
         <span className="video-stick-overlay__trace" style={{ left, top }} />
         <span className="video-stick-overlay__dot" style={{ left, top }} />
-        <small className="axis-label axis-label-x">{xLabel}</small>
-        <small className="axis-label axis-label-y">{yLabel}</small>
+        <StickAxes xLabel={xLabel} yLabel={yLabel} />
       </div>
       <div className="video-stick-overlay__values">
-        <span>{xLabel}<b>{Math.round(x)}</b></span>
-        <span>{yLabel}<b>{Math.round(y)}</b></span>
+        <span>{xLabel}<b>{formatStickAxisValue(x)}</b></span>
+        <span>{yLabel}<b>{formatStickAxisValue(y)}</b></span>
       </div>
       <button
         className="video-stick-overlay__resize"
         type="button"
         aria-label={`调整${label}大小`}
+        title="方向键调整大小，Shift + 方向键加速"
+        onKeyDown={(event) => handleKeyboard("resize", event)}
         onPointerDown={(event) => startInteraction("resize", event)}
         onPointerMove={continueInteraction}
         onPointerUp={endInteraction}

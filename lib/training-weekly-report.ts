@@ -60,6 +60,7 @@ const INVALID_REASONS: TrainingSessionInvalidReason[] = [
   "too_few_unique_samples",
   "non_monotonic",
   "no_athlete_code",
+  "rx_link_lost",
   "interrupted",
 ];
 

@@ -17,12 +17,14 @@ export function useLocalVideoRecording() {
   const [filename, setFilename] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const runtimeRef = useRef<LocalVideoRecordingRuntime | null>(null);
+  const receiptRef = useRef<LocalVideoRecordingReceipt | null>(null);
   const startedAtRef = useRef<number | null>(null);
 
   const settleRuntime = useCallback((runtime: LocalVideoRecordingRuntime) => {
     void runtime.done.then((nextReceipt) => {
       if (runtimeRef.current !== runtime) return;
       runtimeRef.current = null;
+      receiptRef.current = nextReceipt;
       setReceipt(nextReceipt);
       setElapsedMs(nextReceipt.finishedAtEpochMs - nextReceipt.startedAtEpochMs);
       setError(null);
@@ -58,6 +60,7 @@ export function useLocalVideoRecording() {
     setState("starting");
     setError(null);
     setReceipt(null);
+    receiptRef.current = null;
     setFilename(filename);
     setElapsedMs(0);
     try {
@@ -83,7 +86,7 @@ export function useLocalVideoRecording() {
 
   const stop = useCallback(async () => {
     const runtime = runtimeRef.current;
-    if (!runtime) return null;
+    if (!runtime) return receiptRef.current;
     setState("stopping");
     try {
       return await runtime.stop();

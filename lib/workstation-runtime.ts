@@ -77,29 +77,47 @@ export function createWorkstationTabLease(
   onState: (state: WorkstationTabState) => void,
 ) {
   let disposed = false;
+  let retries = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let releaseLease: () => void = () => undefined;
   const lease = new Promise<void>((resolve) => {
     releaseLease = resolve;
   });
 
-  void lockManager.request(
-    WORKSTATION_LOCK_NAME,
-    { mode: "exclusive", ifAvailable: true },
-    async (lock) => {
-      if (disposed) return;
-      if (!lock) {
-        onState("blocked");
-        return;
-      }
-      onState("primary");
-      await lease;
-    },
-  ).catch(() => {
-    if (!disposed) onState("unsupported");
-  });
+  const requestLease = () => {
+    if (disposed) return;
+    void lockManager.request(
+      WORKSTATION_LOCK_NAME,
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        if (disposed) return;
+        if (!lock) {
+          // StrictMode or HMR may request a new lease before the previous release settles.
+          if (retries < 2) {
+            retries += 1;
+            onState("checking");
+            retryTimer = setTimeout(() => {
+              retryTimer = null;
+              requestLease();
+            }, 50);
+          } else {
+            onState("blocked");
+          }
+          return;
+        }
+        onState("primary");
+        await lease;
+      },
+    ).catch(() => {
+      if (!disposed) onState("unsupported");
+    });
+  };
+  requestLease();
 
   return () => {
     disposed = true;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
     releaseLease();
   };
 }
