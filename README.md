@@ -85,6 +85,10 @@ CLI 不连接数据库、不接收 secret/数据库 URL/现有 token 参数。`i
 
 已实现的存储与合成逻辑不代表真设备验收完成：真实飞控/UVC、持续录像、真实目录写盘与权限恢复仍待验证。当前浏览器合成 WebM 的验收进展另见[集成审查](docs/designs/integration-review-2026-09-04.md)。
 
+### 本地视觉实验台
+
+从侧栏“视觉实验”进入 `/vision-lab`，使用自己的门照片和录像，选择完整画面或四分之一画面，本地分析后逐个复核候选、计算起终点间隔，并保存门档案及 JSON/CSV。首次分析下载约 24.5 MB 模型与运行库，视频和参考图不上传；已接入真实参考匹配模型，当前仍需人工确认，尚不提供实时自动计圈或物理过门精度保证。详见[使用说明](docs/vision-lab.md)。
+
 ### 本机诊断
 
 “下载诊断 JSON”只导出公开构建号、浏览器能力与最近 200 次枚举状态变化，不包含画面、选手代号、备注、设备名称、原始 UA 或原始 RC。只有真实桥接链路在线时，操作员才能主动开始“录制 60 秒原始串口夹具”；响应字节暂存在当前页面内存，到时、断线或达到 8 MiB 即停止，必须再次点击才会下载本地 `.bin`。原始夹具不进入诊断 JSON、Session、analytics 或任何网络请求，排查完成后由操作员按俱乐部数据规则删除。
@@ -109,7 +113,7 @@ npm run dev
 - `MSP_ANALOG` 的 legacy RSSI 与桥接飞控电压只属于地面桥，不能标成机上 ELRS LQ 或飞行器电池电压。
 - Session 使用 `performance.now()` 记录主机解码 RC 帧的时间；序号也是主机生成，不能据此测量 RF 丢包。批量串口接收可能产生很短或相同的时间间隔。
 - MP4/WebM 烧录绘制时最新的主机摇杆样本；JSON 保存原始通道与成功录像收据，视频二进制不进入 JSON。`synchronized` 与 `videoOffsetCalibrated` 保持 `false`，没有设备时间或帧级同步校准。
-- 人工 Marker 只用于定位 DVR 复盘时刻；视觉计圈是独立实验，见 [`docs/vision-lap-experiment.md`](docs/vision-lap-experiment.md)。
+- 人工 Marker 只用于定位 DVR 复盘时刻；视觉计圈是独立实验，当前入口和限制见 [`docs/vision-lab.md`](docs/vision-lab.md)，验收规则见 [`docs/vision-lap-experiment.md`](docs/vision-lap-experiment.md)。
 
 硬件取值边界见 [`docs/hardware-architecture.md`](docs/hardware-architecture.md)，试点流程见 [`docs/pilot-runbook.md`](docs/pilot-runbook.md)。
 

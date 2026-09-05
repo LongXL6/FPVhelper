@@ -1,6 +1,6 @@
 {
   "name": "fpvhelper",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "engines": {
     "node": ">=24"
@@ -18,11 +18,18 @@
     "check": "npm run typecheck && npm run test && npm run lint"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.112.4",
+    "hash-wasm": "4.12.0",
     "next": "^16.3.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
+  },
+  "overrides": {
+    "@huggingface/transformers": {
+      "sharp": "0.35.4"
+    }
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
