@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MSP, type FlightTelemetry } from "../lib/telemetry";
+import * as measurement from "../lib/capture-measurement";
+import * as hardwareErrors from "../lib/hardware-errors";
 import { useBetaflightTelemetry, type TelemetryController } from "./use-betaflight-telemetry";
 
 vi.mock("@/lib/telemetry", () => import("../lib/telemetry"));
@@ -80,6 +82,75 @@ afterEach(async () => {
 });
 
 describe("Betaflight telemetry fidelity", () => {
+  it.each([true, false])("keeps batched delivery order and cleanup unchanged with measurement enabled=%s", async (enabled) => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(enabled);
+    vi.spyOn(measurement, "measurementIdentity").mockImplementation((_object, prefix) => `${prefix}-test`);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
+    vi.spyOn(measurement, "measurementSampleFields").mockImplementation((sample): measurement.MeasurementFields => sample ? {
+      sequence: sample.sequence, monotonicTimestampMs: sample.monotonicTimestampMs, channelsUs: [...sample.rcChannelsUs],
+    } : {});
+    const binding = vi.spyOn(measurement, "measurementBindSample");
+    await act(async () => { await controller.connectSerial(); });
+    const deliveries: string[] = [];
+    const unsubscribeOne = controller.subscribeSamples((sample, source) => { if (source === "serial") deliveries.push(`one:${sample.rcThrottleUs}`); });
+    const unsubscribeTwo = controller.subscribeSamples((sample, source) => { if (source === "serial") deliveries.push(`two:${sample.rcThrottleUs}`); });
+    nowMs = 500;
+    await receive(Array.from({ length: 100 }, (_, index) => rcFrame(1000 + index)).flat());
+    expect(deliveries).toEqual(Array.from({ length: 100 }, (_, index) => [`one:${1000 + index}`, `two:${1000 + index}`]).flat());
+    expect(controller.throttleHistory).toHaveLength(20);
+    expect(controller.stickMotion.samples).toHaveLength(20);
+    unsubscribeOne();
+    unsubscribeTwo();
+    await receive(rcFrame());
+    expect(deliveries).toHaveLength(200);
+    if (!enabled) {
+      expect(events).not.toHaveBeenCalled();
+      expect(binding).not.toHaveBeenCalled();
+      return;
+    }
+    const rawEvents = events.mock.calls.filter(([kind]) => kind === "rc.decoded");
+    expect(rawEvents).toHaveLength(101);
+    expect(events.mock.calls.filter(([kind]) => kind === "read.batch").map(([, fields]) => fields.byteLength)).toEqual([1400, 14]);
+    expect(events.mock.calls.filter(([kind]) => kind === "parser.frame")).toHaveLength(101);
+    expect(events.mock.calls.find(([kind]) => kind === "parser.frame")?.[1]).toMatchObject({ batchId: "read-batch-test", command: MSP.RC, error: false, payloadLength: 8 });
+    expect(events.mock.calls.filter(([kind]) => kind === "read.batch" || kind === "parser.frame").every(([, fields]) => !("bytes" in fields) && !("payload" in fields))).toBe(true);
+    expect(events.mock.calls.filter(([kind]) => kind === "sample.delivery.attempted")).toHaveLength(200);
+    expect(events.mock.calls.filter(([kind]) => kind === "sample.delivery.returned")).toHaveLength(200);
+    expect(events.mock.calls.filter(([kind]) => kind === "sample.subscription.remove")).toHaveLength(2);
+    const firstSequence = rawEvents[0][1].sequence;
+    expect(events.mock.calls.filter(([, fields]) => fields.sequence === firstSequence).map(([kind]) => kind))
+      .toEqual(["rc.decoded", "sample.published", "sample.delivery.attempted", "sample.delivery.returned", "sample.delivery.attempted", "sample.delivery.returned"]);
+    const originalGeneration = binding.mock.calls.find(([, context]) => context.source === "serial")![1].connectionGeneration;
+    await act(async () => { await controller.useDemo(); });
+    requestPort.mockResolvedValueOnce(createPort());
+    await act(async () => { await controller.connectSerial(); });
+    await receive(rcFrame());
+    expect(binding.mock.calls.at(-1)![1].connectionGeneration).toBeGreaterThan(originalGeneration);
+  });
+
+  it("observes a throwing subscriber while preserving the exact read error and later-listener skip", async () => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(true);
+    vi.spyOn(measurement, "measurementIdentity").mockImplementation((_object, prefix) => `${prefix}-test`);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
+    const classify = vi.spyOn(hardwareErrors, "classifySerialError");
+    await act(async () => { await controller.connectSerial(); });
+    const failure = new Error("subscriber failure");
+    const later = vi.fn();
+    const unsubscribeFirst = controller.subscribeSamples((_sample, source) => { if (source === "serial") throw failure; });
+    const unsubscribeLater = controller.subscribeSamples((_sample, source) => { if (source === "serial") later(); });
+    await receive([...rcFrame(), ...frame(MSP.RC, [], true), ...rcFrame()]);
+    expect(classify).toHaveBeenCalledWith(failure, "read");
+    expect(later).not.toHaveBeenCalled();
+    expect(controller.connection).toBe("error");
+    expect(events.mock.calls.filter(([kind]) => kind === "parser.frame").map(([, fields]) => fields.error)).toEqual([false, true, false]);
+    expect(events.mock.calls.filter(([kind]) => kind === "rc.decoded")).toHaveLength(1);
+    const kinds = events.mock.calls.map(([kind]) => kind);
+    const attempted = kinds.indexOf("sample.delivery.attempted");
+    expect(kinds.slice(attempted, attempted + 2)).toEqual(["sample.delivery.attempted", "sample.delivery.threw"]);
+    unsubscribeFirst();
+    unsubscribeLater();
+  });
+
   it("retains receive timestamps and limits the live trace to three seconds at 20 Hz input", async () => {
     await act(async () => { await controller.connectSerial(); });
     const samples: FlightTelemetry[] = [];

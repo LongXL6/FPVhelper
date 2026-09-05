@@ -9,6 +9,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { WorkspaceVideoElement, PilotViewportTelemetry } from "@/components/video-workspace-display";
 import { SessionLibrary } from "@/components/session-library";
 import { ThrottleTimeline } from "@/components/throttle-timeline";
+import { withMeasurementProfiler } from "@/components/measurement-profiler";
 import { SessionReportLoader } from "@/components/session-report-loader";
 import { startStickVideoCompositor } from "@/lib/stick-video-compositor";
 import { StickAxes } from "@/components/stick-axes";
@@ -1668,7 +1669,7 @@ export function FlightDashboard() {
           </div>
         </section>
 
-        <aside className="telemetry-rail">
+        {withMeasurementProfiler("telemetry-display", <aside className="telemetry-rail">
           <div className="rail-heading">
             <div><span>CONTROL INPUT</span><h2>遥控输入</h2></div>
             <span className={`source-badge source-badge--${source}`}>{rcSourceLabel}</span>
@@ -1719,7 +1720,7 @@ export function FlightDashboard() {
               <p>真实机上 LQ、电池和姿态尚未接入。</p>
             </section>
           </details>
-        </aside>
+        </aside>)}
       </div>
 
       <LiveGatePanel
@@ -1742,10 +1743,10 @@ export function FlightDashboard() {
           <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
           <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
         </div>
-        <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />
+        {withMeasurementProfiler("throttle-timeline", <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />)}
       </section>
 
-      <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
+      {withMeasurementProfiler("recording-ui", <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
         <div className="session-heading">
           <div>
             <span>LOCAL SESSION RECORDER</span>
@@ -1904,7 +1905,7 @@ export function FlightDashboard() {
             <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试保存 Session</button>
           ) : null}
         </div>
-      </section>
+      </section>)}
 
       </div>
 

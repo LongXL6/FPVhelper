@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { liveThrottleSegments, type LiveThrottleSample } from "@/lib/live-throttle-history";
+import { measurementEnabled, measurementEvent } from "@/lib/capture-measurement";
 
 export function ThrottleTimeline({ samples, active = true }: { samples: readonly LiveThrottleSample[]; active?: boolean }) {
   const [nowMs, setNowMs] = useState(0);
@@ -9,8 +10,15 @@ export function ThrottleTimeline({ samples, active = true }: { samples: readonly
     if (!active) return;
     // The clock must advance even when RC reception stops. Keep this tick local
     // to the visible chart; it never publishes or changes telemetry samples.
-    const timer = setInterval(() => setNowMs(performance.now()), 50);
-    return () => clearInterval(timer);
+    if (measurementEnabled()) measurementEvent("throttle.timer.start", { intervalMs: 50, active });
+    const timer = setInterval(() => {
+      if (measurementEnabled()) measurementEvent("throttle.tick", { intervalMs: 50, active });
+      setNowMs(performance.now());
+    }, 50);
+    return () => {
+      clearInterval(timer);
+      if (measurementEnabled()) measurementEvent("throttle.timer.stop", { intervalMs: 50, active });
+    };
   }, [active]);
   const segments = useMemo(() => liveThrottleSegments(samples, nowMs), [nowMs, samples]);
 

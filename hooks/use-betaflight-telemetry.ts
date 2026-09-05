@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  measurementBindSample, measurementEnabled, measurementEvent, measurementIdentity,
+  measurementInheritSample, measurementRegisterSubscription, measurementRemoveSubscription,
+  measurementSampleFields, measurementSubscriptionFields,
+} from "@/lib/capture-measurement";
+import {
   classifySerialError,
   serialDisconnectDecision,
   serialIssue,
@@ -84,8 +89,10 @@ export interface TelemetryController {
 
 export function useBetaflightTelemetry({
   demoPlaybackActive = true,
+  measurementChannelId,
 }: {
   demoPlaybackActive?: boolean;
+  measurementChannelId?: string;
 } = {}): TelemetryController {
   const [telemetry, setTelemetry] = useState(EMPTY_TELEMETRY);
   const [throttleHistory, setThrottleHistory] = useState<LiveThrottleSample[]>([]);
@@ -133,14 +140,34 @@ export function useBetaflightTelemetry({
   } = useRawSerialCapture();
 
   const subscribeSamples = useCallback<SubscribeTelemetrySamples>((listener) => {
+    const registration = measurementEnabled() ? measurementRegisterSubscription(sampleListenersRef.current, listener) : null;
     sampleListenersRef.current.add(listener);
-    return () => { sampleListenersRef.current.delete(listener); };
+    if (measurementEnabled()) measurementEvent("sample.subscription.add", {
+      ...registration, hookId: measurementIdentity(connectionAttemptRef, "hook"),
+    });
+    return () => {
+      sampleListenersRef.current.delete(listener);
+      if (measurementEnabled()) measurementEvent("sample.subscription.remove", {
+        ...measurementRemoveSubscription(sampleListenersRef.current, listener, registration?.registrationId ?? null),
+        hookId: measurementIdentity(connectionAttemptRef, "hook"),
+      });
+    };
   }, []);
 
   const publishSample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
     currentTelemetryRef.current = sample;
     setTelemetry(sample);
-    for (const listener of sampleListenersRef.current) listener(sample, sampleSource);
+    if (measurementEnabled()) measurementEvent("sample.published", {
+      ...measurementSampleFields(sample), listenerCount: sampleListenersRef.current.size,
+    });
+    for (const listener of sampleListenersRef.current) {
+      if (!measurementEnabled()) { listener(sample, sampleSource); continue; }
+      const fields = { ...measurementSampleFields(sample), ...measurementSubscriptionFields(sampleListenersRef.current, listener) };
+      measurementEvent("sample.delivery.attempted", fields);
+      try { listener(sample, sampleSource); }
+      catch (error) { measurementEvent("sample.delivery.threw", fields); throw error; }
+      measurementEvent("sample.delivery.returned", fields);
+    }
   }, []);
 
   const publishDeviceNames = useCallback(() => {
@@ -203,6 +230,9 @@ export function useBetaflightTelemetry({
   const disconnect = useCallback(async () => {
     connectionAttemptRef.current += 1;
     const disconnectedAttempt = connectionAttemptRef.current;
+    if (measurementEnabled()) measurementEvent("connection.disconnect", {
+      hookId: measurementIdentity(connectionAttemptRef, "hook"), connectionGeneration: disconnectedAttempt,
+    });
     stopTimers();
     finishRawCapture("disconnected");
     receivedRcFrameRef.current = false;
@@ -255,11 +285,15 @@ export function useBetaflightTelemetry({
     if (!demoActiveRef.current) return;
     sequenceRef.current += 1;
     const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
+    if (measurementEnabled()) measurementBindSample(nextTelemetry, {
+      hookId: measurementIdentity(connectionAttemptRef, "hook"), pilotChannelId: measurementChannelId ?? null,
+      connectionGeneration: connectionAttemptRef.current, source: "demo",
+    });
     publishSample(nextTelemetry, "demo");
     const history = throttleHistoryRef.current.observe(nextTelemetry, "demo", true);
     if (history) setThrottleHistory(history);
     recordStickMotion(nextTelemetry, nextTelemetry.sequence);
-  }, [publishSample, recordStickMotion]);
+  }, [measurementChannelId, publishSample, recordStickMotion]);
 
   const startDemo = useCallback(() => {
     stopTimers();
@@ -330,13 +364,23 @@ export function useBetaflightTelemetry({
   }, []);
 
   const applyFrame = useCallback((command: number, payload: Uint8Array, connectionAttempt: number) => {
-    if (connectionAttemptRef.current !== connectionAttempt) return;
+    if (connectionAttemptRef.current !== connectionAttempt) {
+      if (measurementEnabled() && command === MSP.RC) measurementEvent("rc.rejected", {
+        hookId: measurementIdentity(connectionAttemptRef, "hook"), connectionGeneration: connectionAttempt, reason: "stale_generation",
+      });
+      return;
+    }
     const timestamp = Date.now();
     const monotonicTimestampMs = performance.now();
     if (command === MSP.RC) {
       pendingRcRequestStartedAtRef.current = null;
       const rc = decodeRc(payload);
-      if (!rc) return;
+      if (!rc) {
+        if (measurementEnabled()) measurementEvent("rc.rejected", {
+          hookId: measurementIdentity(connectionAttemptRef, "hook"), connectionGeneration: connectionAttempt, reason: "invalid_payload",
+        });
+        return;
+      }
       const isFirstRcFrame = !receivedRcFrameRef.current;
       receivedRcFrameRef.current = true;
       lastRcFrameAtRef.current = monotonicTimestampMs;
@@ -364,6 +408,13 @@ export function useBetaflightTelemetry({
         monotonicTimestampMs,
         sequence: sequenceRef.current,
       };
+      if (measurementEnabled()) {
+        measurementBindSample(sample, {
+          hookId: measurementIdentity(connectionAttemptRef, "hook"), pilotChannelId: measurementChannelId ?? null,
+          connectionGeneration: connectionAttempt, source: "serial",
+        });
+        measurementEvent("rc.decoded", measurementSampleFields(sample));
+      }
       publishSample(sample, "serial");
       const history = throttleHistoryRef.current.observe(sample, "serial", appendVisualHistory);
       if (history) setThrottleHistory(history);
@@ -374,14 +425,16 @@ export function useBetaflightTelemetry({
       if (!receivedRcFrameRef.current) return;
       const analog = decodeAnalog(payload);
       if (analog) {
+        const previousSample = currentTelemetryRef.current;
         currentTelemetryRef.current = { ...currentTelemetryRef.current, ...analog, timestamp, monotonicTimestampMs };
+        if (measurementEnabled()) measurementInheritSample(currentTelemetryRef.current, previousSample);
         setTelemetry(currentTelemetryRef.current);
       }
     } else if (command === MSP.STATUS_EX) {
       setLinkState(decodeStatusExLinkState(payload));
       statusExWatchdogRef.current?.observe();
     }
-  }, [armStaleWatchdog, publishSample, recordStickMotion, resetStickMotion, stopDemoTimer]);
+  }, [armStaleWatchdog, measurementChannelId, publishSample, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
   const readLoop = useCallback(
     async (port: SerialPort, connectionAttempt: number) => {
@@ -392,6 +445,11 @@ export function useBetaflightTelemetry({
       try {
         while (portRef.current === port && connectionAttemptRef.current === connectionAttempt) {
           const { value, done } = await reader.read();
+          const batchId = value && measurementEnabled() ? measurementIdentity({}, "read-batch") : null;
+          if (batchId) measurementEvent("read.batch", {
+            batchId, byteLength: value!.byteLength, done,
+            hookId: measurementIdentity(connectionAttemptRef, "hook"), connectionGeneration: connectionAttempt,
+          });
           if (done) {
             if (portRef.current === port && connectionAttemptRef.current === connectionAttempt) {
               throw new DOMException("", "NetworkError");
@@ -402,6 +460,12 @@ export function useBetaflightTelemetry({
           if (portRef.current !== port || connectionAttemptRef.current !== connectionAttempt) break;
           ingestRawCapture(value);
           const frames = parserRef.current.push(value);
+          if (batchId && measurementEnabled()) {
+            for (const frame of frames) measurementEvent("parser.frame", {
+              batchId, command: frame.command, error: frame.error, payloadLength: frame.payload.byteLength,
+              hookId: measurementIdentity(connectionAttemptRef, "hook"), connectionGeneration: connectionAttempt,
+            });
+          }
           setParserStats(parserRef.current.getStats());
           for (const frame of frames) {
             if (portRef.current !== port || connectionAttemptRef.current !== connectionAttempt) break;

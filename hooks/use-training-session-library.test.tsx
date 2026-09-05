@@ -15,6 +15,7 @@ import * as exportModule from "../lib/training-session-export";
 import * as directoryModule from "../lib/training-session-export-directory";
 import * as exportFeedbackModule from "./training-session-export-feedback";
 import * as workstationModule from "../lib/workstation-id";
+import * as measurement from "../lib/capture-measurement";
 import { useTrainingSession, type TrainingSessionExportResult } from "./use-training-session";
 import type { LocalVideoRecordingReceipt } from "../lib/local-video-recording";
 
@@ -285,7 +286,9 @@ describe("training library session actions", () => {
     expect(order).toEqual(["picker", "read"]);
   });
 
-  it("freezes RC immediately and waits for video close before completing the matching session", async () => {
+  it.each([true, false])("freezes RC and waits for video close with measurement enabled=%s", async (enabled) => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(enabled);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
     let closeVideo!: (receipt: LocalVideoRecordingReceipt) => void;
     finishCompanionRecording = vi.fn(() => new Promise<LocalVideoRecordingReceipt>((resolve) => { closeVideo = resolve; }));
     await act(async () => renderer!.update(<Harness />));
@@ -303,6 +306,11 @@ describe("training library session actions", () => {
     window.dispatchEvent(closingDuringVideo);
     expect(closingDuringVideo.defaultPrevented).toBe(true);
     expect(store.completeSession).not.toHaveBeenCalled();
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.start.confirmed")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.stop.frozen")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.complete.confirmed")).toHaveLength(0);
+    }
     act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 2, monotonicTimestampMs: 2_010 }, "serial"));
     expect(controller.sampleCount).toBe(1);
     await act(async () => {
@@ -315,6 +323,13 @@ describe("training library session actions", () => {
     const closingAfterSave = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(closingAfterSave);
     expect(closingAfterSave.defaultPrevented).toBe(false);
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.appended")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.rejected")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.complete.confirmed")).toEqual([
+        ["session.complete.confirmed", { sessionId, sampleCount: 1 }],
+      ]);
+    } else expect(events).not.toHaveBeenCalled();
   });
 
   it("coalesces slow one-second checkpoints and reports only confirmed samples", async () => {
@@ -541,8 +556,14 @@ describe("training library session actions", () => {
     expect(controller.exportWarning).toContain("导出状态未写入 IndexedDB");
   });
 
-  it("records every subscribed RC frame even when React batches 100 frames into one render", async () => {
+  it.each([true, false])("records all 100 batched frames with measurement enabled=%s", async (enabled) => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(enabled);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
+    vi.spyOn(measurement, "measurementSampleFields").mockImplementation((sample): measurement.MeasurementFields => sample ? {
+      sequence: sample.sequence, monotonicTimestampMs: sample.monotonicTimestampMs, channelsUs: [...sample.rcChannelsUs],
+    } : {});
     vi.spyOn(performance, "now").mockReturnValue(1_000);
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 0, monotonicTimestampMs: 990 }, "serial"));
     await act(async () => { await controller.startRecording(); });
     expect(controller.isRecording).toBe(true);
 
@@ -550,6 +571,7 @@ describe("training library session actions", () => {
       for (let sequence = 1; sequence <= 100; sequence += 1) {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_000 + sequence * 10 }, "serial");
       }
+      sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 100, monotonicTimestampMs: 2_000 }, "serial");
     });
     expect(controller.sampleCount).toBe(100);
     expect(controller.uniqueSampleCount).toBe(100);
@@ -558,6 +580,12 @@ describe("training library session actions", () => {
     await act(async () => controller.stopRecording());
     expect(controller.lastSession?.samples.map((sample) => sample.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
     expect(controller.lastSession?.estimatedRcSampleRateHz).toBe(100);
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.appended").map(([, fields]) => fields.sequence))
+        .toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.duplicate")).toHaveLength(1);
+      expect(events.mock.calls.find(([kind]) => kind === "session.sample.rejected")?.[1]).toMatchObject({ sessionId: null, reason: "not_recording" });
+    } else expect(events).not.toHaveBeenCalled();
   });
 
   it("accepts frames immediately after starting resolves before React commits the recording state", async () => {

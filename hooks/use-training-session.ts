@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { measurementEnabled, measurementEvent, measurementIdentity, measurementSampleFields } from "@/lib/capture-measurement";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
 import type { TrainingSessionSummary } from "@/lib/training-session-index";
 import type { LocalVideoRecordingReceipt } from "@/lib/local-video-recording";
@@ -251,7 +252,19 @@ export function useTrainingSession({
       }
     });
     draftSaveRef.current = save;
-    try { await save; }
+    try {
+      await save;
+      if (measurementEnabled()) measurementEvent("session.checkpoint.confirmed", {
+        sessionId: draft.id, sampleCount: count, elapsedMs: elapsed,
+        operationId: measurementIdentity(save, "checkpoint"),
+      });
+    }
+    catch (error) {
+      if (measurementEnabled()) measurementEvent("session.checkpoint.failed", {
+        sessionId: draft.id, sampleCount: count, operationId: measurementIdentity(save, "checkpoint"),
+      });
+      throw error;
+    }
     finally { if (draftSaveRef.current === save) draftSaveRef.current = null; }
   }, []);
 
@@ -543,6 +556,9 @@ export function useTrainingSession({
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
+    if (measurementEnabled()) measurementEvent("session.start.requested", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), inputKey, canStart,
+    });
     if (!canStart || !store || startingRef.current || recordingActiveRef.current || finishingRef.current || pendingSessionRef.current) return null;
     startingRef.current = true;
     setIsStarting(true);
@@ -572,6 +588,10 @@ export function useTrainingSession({
       terminationRef.current = null;
       uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set() };
       recordingActiveRef.current = true;
+      if (measurementEnabled()) measurementEvent("session.start.confirmed", {
+        sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: id, inputKey,
+        startedMonotonicMs: draft.startedMonotonicMs,
+      });
       setSessionId(id);
       setSampleCount(0);
       setUniqueSampleCount(0);
@@ -583,6 +603,9 @@ export function useTrainingSession({
       setIsRecording(true);
       return id;
     } catch (saveError) {
+      if (measurementEnabled()) measurementEvent("session.start.failed", {
+        sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: id, inputKey,
+      });
       setStorageError(`开始记录失败：${storageErrorMessage(saveError)}`);
       return null;
     } finally {
@@ -634,7 +657,17 @@ export function useTrainingSession({
         if (pendingSessionRef.current !== storedSession) {
           storedSession = pendingSessionRef.current;
           if (!storedSession) throw new Error("Session 终止状态丢失");
-          await store.completeSession(storedSession);
+          try {
+            await store.completeSession(storedSession);
+          } catch (error) {
+            if (measurementEnabled()) measurementEvent("session.complete.failed", {
+              sessionId: storedSession.id, sampleCount: storedSession.sampleCount,
+            });
+            throw error;
+          }
+          if (measurementEnabled()) measurementEvent("session.complete.confirmed", {
+            sessionId: storedSession.id, sampleCount: storedSession.sampleCount,
+          });
           completedPendingSessionRef.current = storedSession;
           setPersistedSampleCount(storedSession.sampleCount);
           setPersistedElapsedMs(storedSession.samples.at(-1)?.elapsedMs ?? 0);
@@ -681,6 +714,10 @@ export function useTrainingSession({
     interrupted: boolean,
     interruptionReason: TrainingSessionInterruptionReason | null = null,
   ) => {
+    if (measurementEnabled()) measurementEvent("session.stop.requested", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: draftRef.current?.id ?? null,
+      interrupted, interruptionReason,
+    });
     const termination = resolveTrainingSessionTermination(terminationRef.current, {
       interrupted,
       interruptionReason,
@@ -705,6 +742,11 @@ export function useTrainingSession({
       ...(termination.interruptionReason ? { interruptionReason: termination.interruptionReason } : {}),
     });
     pendingSessionRef.current = session;
+    if (measurementEnabled()) measurementEvent("session.stop.frozen", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: session.id,
+      sampleCount: session.sampleCount, durationMs: session.durationMs,
+      lastSequence: session.samples.at(-1)?.sequence ?? null,
+    });
     setHasPendingSave(true);
     setLastSession(session);
     setElapsedMs(session.durationMs);
@@ -753,18 +795,38 @@ export function useTrainingSession({
     }
   }, [isRecording, persistDraft]);
 
-  const recordTelemetrySample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
-    if (!recordingActiveRef.current || source !== "serial" || sampleSource !== "serial" || connection !== "live" || linkState === "lost") return;
-    if (recordingInputKeyRef.current !== inputKey) return;
+  const recordTelemetrySample = useCallback(function recordTelemetrySample(sample: FlightTelemetry, sampleSource: TelemetrySource) {
+    const fields = measurementEnabled() ? {
+      ...measurementSampleFields(sample), consumerId: measurementIdentity(recordTelemetrySample, "consumer"),
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: draftRef.current?.id ?? null,
+      inputKey, recordingInputKey: recordingInputKeyRef.current, sampleSource,
+    } : null;
+    if (!recordingActiveRef.current || source !== "serial" || sampleSource !== "serial" || connection !== "live" || linkState === "lost") {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason:
+        !recordingActiveRef.current ? "not_recording" : source !== "serial" ? "source_not_serial"
+          : sampleSource !== "serial" ? "sample_not_serial" : connection !== "live" ? "connection_not_live" : "link_lost" });
+      return;
+    }
+    if (recordingInputKeyRef.current !== inputKey) {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason: "input_changed" });
+      return;
+    }
     const draft = draftRef.current;
-    if (!draft || pendingSessionRef.current || finishingRef.current || sample.monotonicTimestampMs < draft.startedMonotonicMs) return;
+    if (!draft || pendingSessionRef.current || finishingRef.current || sample.monotonicTimestampMs < draft.startedMonotonicMs) {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason:
+        !draft ? "no_draft" : pendingSessionRef.current ? "pending_session" : finishingRef.current ? "finishing" : "before_start" });
+      return;
+    }
     if (appendTrainingSessionSample(draft, sample, sampleSource)) {
+      if (fields) measurementEvent("session.sample.appended", { ...fields, accepted: true, sampleCount: draft.samples.length });
       if (uniqueSequencesRef.current?.draftId !== draft.id) {
         uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set(draft.samples.map((entry) => entry.sequence)) };
       }
       uniqueSequencesRef.current.sequences.add(sample.sequence);
       setSampleCount(draft.samples.length);
       setUniqueSampleCount(uniqueSequencesRef.current.sequences.size);
+    } else if (fields) {
+      measurementEvent("session.sample.duplicate", { ...fields, accepted: false, reason: "adjacent_sequence_source" });
     }
   }, [connection, inputKey, linkState, source]);
 
