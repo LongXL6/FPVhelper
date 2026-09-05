@@ -1,14 +1,20 @@
 {
   "name": "fpvhelper",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "analytics:token": "node scripts/analytics-ingest-token.mts",
+    "vision:evaluate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/evaluate-vision-laps.mts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:smoke": "playwright test --project=chromium-smoke",
     "check": "npm run typecheck && npm run test && npm run lint"
   },
   "dependencies": {
@@ -19,11 +25,15 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
+    "@types/react-test-renderer": "^19.1.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.3",
+    "fake-indexeddb": "^6.2.5",
+    "react-test-renderer": "^19.2.8",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   }

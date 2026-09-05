@@ -2,17 +2,43 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  classifySerialError,
+  serialDisconnectDecision,
+  serialIssue,
+  serialPreflightIssue,
+  type SerialErrorCode,
+  type SerialIssue,
+} from "@/lib/hardware-errors";
+import {
   buildMspV1Request,
-  ConnectionState,
+  canIssueMspRcRequest,
+  connectionStateAfterRcSilence,
+  createStatusExFreshnessWatchdog,
+  createRcReceiveRate,
   createDemoTelemetry,
   decodeAnalog,
-  decodeMotors,
   decodeRc,
+  decodeStatusExLinkState,
+  EMPTY_MSP_PARSER_STATS,
   EMPTY_TELEMETRY,
-  FlightTelemetry,
   MSP,
+  MSP_ANALOG_POLL_INTERVAL_MS,
+  MSP_RC_POLL_INTERVAL_MS,
+  MSP_RC_TARGET_HZ,
+  MSP_STATUS_EX_POLL_INTERVAL_MS,
+  mspParserQuality,
   MspV1StreamParser,
-  TelemetrySource,
+  RC_FIRST_FRAME_TIMEOUT_MS,
+  RC_STALE_TIMEOUT_MS,
+  type ConnectionState,
+  type FlightTelemetry,
+  type LinkState,
+  type MspParserQuality,
+  type MspParserStats,
+  type StatusExFreshnessWatchdog,
+  type SubscribeTelemetrySamples,
+  type TelemetrySampleListener,
+  type TelemetrySource,
 } from "@/lib/telemetry";
 import {
   advanceStickPeakTracker,
@@ -22,43 +48,106 @@ import {
   visibleStickPeak,
   type StickMotionVisualization,
 } from "@/lib/stick-motion";
+import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
 
-interface TelemetryController {
+const SERIAL_VISUAL_HISTORY_HZ = 20;
+const SERIAL_VISUAL_SAMPLE_STEP = Math.max(1, Math.round(MSP_RC_TARGET_HZ / SERIAL_VISUAL_HISTORY_HZ));
+
+export interface TelemetryController {
   telemetry: FlightTelemetry;
   throttleHistory: number[];
   stickMotion: StickMotionVisualization;
   connection: ConnectionState;
   source: TelemetrySource;
   error: string | null;
+  errorCode: SerialErrorCode | null;
+  parserStats: MspParserStats;
+  parserQuality: MspParserQuality;
+  rcReceiveHz: number | null;
+  linkState: LinkState;
+  rawCapture: RawSerialCaptureState;
   serialSupported: boolean;
   connectSerial: () => Promise<void>;
   useDemo: () => Promise<void>;
+  startRawCapture: () => boolean;
+  cancelRawCapture: () => void;
+  downloadRawCapture: () => boolean;
+  subscribeSamples: SubscribeTelemetrySamples;
 }
 
-export function useBetaflightTelemetry(): TelemetryController {
+export function useBetaflightTelemetry({
+  demoPlaybackActive = true,
+}: {
+  demoPlaybackActive?: boolean;
+} = {}): TelemetryController {
   const [telemetry, setTelemetry] = useState(EMPTY_TELEMETRY);
   const [throttleHistory, setThrottleHistory] = useState<number[]>([]);
   const [stickMotion, setStickMotion] = useState<StickMotionVisualization>(EMPTY_STICK_MOTION);
   const [connection, setConnection] = useState<ConnectionState>("demo");
   const [source, setSource] = useState<TelemetrySource>("demo");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<SerialErrorCode | null>(null);
+  const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
+  const [linkState, setLinkState] = useState<LinkState>("unknown");
+  const [rcReceiveHz, setRcReceiveHz] = useState<number | null>(null);
   const portRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const demoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const firstFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusExWatchdogRef = useRef<StatusExFreshnessWatchdog | null>(null);
   const parserRef = useRef(new MspV1StreamParser());
+  const pendingRcRequestStartedAtRef = useRef<number | null>(null);
   const sequenceRef = useRef(0);
+  const connectionAttemptRef = useRef(0);
+  const demoActiveRef = useRef(false);
+  const demoPlaybackActiveRef = useRef(demoPlaybackActive);
+  const receivedRcFrameRef = useRef(false);
+  const lastRcFrameAtRef = useRef<number | null>(null);
+  const currentTelemetryRef = useRef(EMPTY_TELEMETRY);
+  const sampleListenersRef = useRef(new Set<TelemetrySampleListener>());
+  const rcReceiveRateRef = useRef(createRcReceiveRate());
+  const lastRatePublishedAtRef = useRef(0);
   const leftPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: -100 }));
   const rightPeakTrackerRef = useRef(createStickPeakTracker({ x: 0, y: 0 }));
+  const {
+    capture: rawCapture,
+    start: beginRawCapture,
+    ingest: ingestRawCapture,
+    finish: finishRawCapture,
+    cancel: cancelRawCapture,
+    download: downloadRawCapture,
+  } = useRawSerialCapture();
 
-  const recordStickMotion = useCallback((sample: Pick<FlightTelemetry, "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent">, sequence: number) => {
+  const subscribeSamples = useCallback<SubscribeTelemetrySamples>((listener) => {
+    sampleListenersRef.current.add(listener);
+    return () => { sampleListenersRef.current.delete(listener); };
+  }, []);
+
+  const publishSample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
+    currentTelemetryRef.current = sample;
+    setTelemetry(sample);
+    for (const listener of sampleListenersRef.current) listener(sample, sampleSource);
+  }, []);
+
+  const recordStickMotion = useCallback((
+    sample: Pick<
+      FlightTelemetry,
+      "rollStickPercent" | "pitchStickPercent" | "yawStickPercent" | "throttleStickPercent"
+    >,
+    sequence: number,
+    appendTrail = true,
+  ) => {
     const left = { x: sample.yawStickPercent, y: sample.throttleStickPercent * 2 - 100 };
     const right = { x: sample.rollStickPercent, y: sample.pitchStickPercent };
     leftPeakTrackerRef.current = advanceStickPeakTracker(leftPeakTrackerRef.current, left);
     rightPeakTrackerRef.current = advanceStickPeakTracker(rightPeakTrackerRef.current, right);
     setStickMotion((current) => ({
-      samples: appendStickMotionSample(current.samples, { sequence, left, right }),
+      samples: appendTrail
+        ? appendStickMotionSample(current.samples, { sequence, left, right })
+        : current.samples,
       leftPeak: visibleStickPeak(leftPeakTrackerRef.current),
       rightPeak: visibleStickPeak(rightPeakTrackerRef.current),
     }));
@@ -70,15 +159,40 @@ export function useBetaflightTelemetry(): TelemetryController {
     setStickMotion(EMPTY_STICK_MOTION);
   }, []);
 
-  const stopTimers = useCallback(() => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    if (demoTimerRef.current) clearInterval(demoTimerRef.current);
-    pollTimerRef.current = null;
+  const stopDemoTimer = useCallback(() => {
+    demoActiveRef.current = false;
+    if (demoTimerRef.current !== null) clearInterval(demoTimerRef.current);
     demoTimerRef.current = null;
   }, []);
 
+  const stopSerialTimers = useCallback(() => {
+    if (pollTimerRef.current !== null) clearInterval(pollTimerRef.current);
+    if (firstFrameTimerRef.current !== null) clearTimeout(firstFrameTimerRef.current);
+    if (staleTimerRef.current !== null) clearTimeout(staleTimerRef.current);
+    statusExWatchdogRef.current?.reset();
+    pendingRcRequestStartedAtRef.current = null;
+    pollTimerRef.current = null;
+    firstFrameTimerRef.current = null;
+    staleTimerRef.current = null;
+    statusExWatchdogRef.current = null;
+  }, []);
+
+  const stopTimers = useCallback(() => {
+    stopDemoTimer();
+    stopSerialTimers();
+  }, [stopDemoTimer, stopSerialTimers]);
+
   const disconnect = useCallback(async () => {
+    connectionAttemptRef.current += 1;
+    const disconnectedAttempt = connectionAttemptRef.current;
     stopTimers();
+    finishRawCapture("disconnected");
+    receivedRcFrameRef.current = false;
+    lastRcFrameAtRef.current = null;
+    rcReceiveRateRef.current.reset();
+    lastRatePublishedAtRef.current = 0;
+    setRcReceiveHz(null);
+    setLinkState("unknown");
     const reader = readerRef.current;
     const writer = writerRef.current;
     const port = portRef.current;
@@ -88,17 +202,43 @@ export function useBetaflightTelemetry(): TelemetryController {
 
     try {
       await reader?.cancel();
-      reader?.releaseLock();
     } catch {
       // The port can already be gone when a USB cable is removed.
+    } finally {
+      try {
+        reader?.releaseLock();
+      } catch {
+        // The read loop may already have released its lock.
+      }
     }
     try {
-      writer?.releaseLock();
+      await writer?.abort();
+    } catch {
+      // Pending writes can already be rejected after a device disconnect.
+    } finally {
+      try {
+        writer?.releaseLock();
+      } catch {
+        // The stream may already have released its lock.
+      }
+    }
+    try {
       await port?.close();
     } catch {
-      // Closing is best-effort after a device disconnect.
+      // Closing is best-effort after a physical disconnect.
     }
-  }, [stopTimers]);
+
+    return disconnectedAttempt;
+  }, [finishRawCapture, stopTimers]);
+
+  const emitDemoFrame = useCallback(() => {
+    if (!demoActiveRef.current) return;
+    sequenceRef.current += 1;
+    const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
+    publishSample(nextTelemetry, "demo");
+    setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
+    recordStickMotion(nextTelemetry, nextTelemetry.sequence);
+  }, [publishSample, recordStickMotion]);
 
   const startDemo = useCallback(() => {
     stopTimers();
@@ -106,132 +246,317 @@ export function useBetaflightTelemetry(): TelemetryController {
     setSource("demo");
     setConnection("demo");
     setError(null);
-    demoTimerRef.current = setInterval(() => {
-      sequenceRef.current += 1;
-      const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
-      setTelemetry(nextTelemetry);
-      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
-      recordStickMotion(nextTelemetry, nextTelemetry.sequence);
-    }, 50);
-  }, [recordStickMotion, resetStickMotion, stopTimers]);
+    setErrorCode(null);
+    setLinkState("unknown");
+    demoActiveRef.current = true;
+    emitDemoFrame();
+    if (demoPlaybackActiveRef.current) {
+      demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    } else {
+      demoActiveRef.current = false;
+    }
+  }, [emitDemoFrame, resetStickMotion, stopTimers]);
+
+  const failSerial = useCallback(async (issue: SerialIssue, connectionAttempt: number) => {
+    if (connectionAttemptRef.current !== connectionAttempt) return;
+    const recoveryAttempt = await disconnect();
+    if (connectionAttemptRef.current !== recoveryAttempt) return;
+    startDemo();
+    setConnection("error");
+    setErrorCode(issue.code);
+    setError(issue.message);
+  }, [disconnect, startDemo]);
 
   const useDemo = useCallback(async () => {
-    await disconnect();
+    const disconnectedAttempt = await disconnect();
+    if (connectionAttemptRef.current !== disconnectedAttempt) return;
+    parserRef.current.reset();
+    setParserStats(EMPTY_MSP_PARSER_STATS);
     startDemo();
   }, [disconnect, startDemo]);
 
-  useEffect(() => {
-    demoTimerRef.current = setInterval(() => {
-      sequenceRef.current += 1;
-      const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
-      setTelemetry(nextTelemetry);
-      setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
-      recordStickMotion(nextTelemetry, nextTelemetry.sequence);
-    }, 50);
-    return () => {
-      stopTimers();
-      void readerRef.current?.cancel();
-      readerRef.current?.releaseLock();
-      writerRef.current?.releaseLock();
-      void portRef.current?.close();
-    };
-  }, [recordStickMotion, stopTimers]);
+  const armStaleWatchdog = useCallback((connectionAttempt: number) => {
+    if (staleTimerRef.current !== null) return;
 
-  const applyFrame = useCallback((command: number, payload: Uint8Array) => {
+    const scheduleCheck = (delayMs: number) => {
+      const staleTimer = setTimeout(() => {
+        if (staleTimerRef.current !== staleTimer) return;
+        if (
+          connectionAttemptRef.current !== connectionAttempt ||
+          portRef.current === null ||
+          lastRcFrameAtRef.current === null
+        ) {
+          staleTimerRef.current = null;
+          return;
+        }
+
+        const silenceMs = performance.now() - lastRcFrameAtRef.current;
+        const nextConnection = connectionStateAfterRcSilence("live", silenceMs);
+        if (nextConnection === "stale") {
+          staleTimerRef.current = null;
+          setConnection((current) => connectionStateAfterRcSilence(current, silenceMs));
+          return;
+        }
+
+        scheduleCheck(Math.max(1, RC_STALE_TIMEOUT_MS - silenceMs));
+      }, delayMs);
+      staleTimerRef.current = staleTimer;
+    };
+
+    scheduleCheck(RC_STALE_TIMEOUT_MS);
+  }, []);
+
+  const applyFrame = useCallback((command: number, payload: Uint8Array, connectionAttempt: number) => {
+    if (connectionAttemptRef.current !== connectionAttempt) return;
     const timestamp = Date.now();
     const monotonicTimestampMs = performance.now();
     if (command === MSP.RC) {
+      pendingRcRequestStartedAtRef.current = null;
       const rc = decodeRc(payload);
       if (!rc) return;
+      const isFirstRcFrame = !receivedRcFrameRef.current;
+      receivedRcFrameRef.current = true;
+      lastRcFrameAtRef.current = monotonicTimestampMs;
+      rcReceiveRateRef.current.observe(monotonicTimestampMs);
+
+      if (isFirstRcFrame) {
+        if (firstFrameTimerRef.current !== null) clearTimeout(firstFrameTimerRef.current);
+        firstFrameTimerRef.current = null;
+        stopDemoTimer();
+        resetStickMotion();
+        setThrottleHistory([]);
+        setSource("serial");
+        setError(null);
+        setErrorCode(null);
+        setRcReceiveHz(rcReceiveRateRef.current.getHz(monotonicTimestampMs));
+      }
+
       sequenceRef.current += 1;
-      setTelemetry((current) => ({
-        ...current,
+      const appendVisualHistory = sequenceRef.current % SERIAL_VISUAL_SAMPLE_STEP === 0;
+      const sample: FlightTelemetry = {
+        ...(isFirstRcFrame ? EMPTY_TELEMETRY : currentTelemetryRef.current),
         ...rc,
         timestamp,
         monotonicTimestampMs,
         sequence: sequenceRef.current,
-      }));
-      setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
-      recordStickMotion(rc, sequenceRef.current);
+      };
+      publishSample(sample, "serial");
+      if (appendVisualHistory) {
+        setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
+      }
+      recordStickMotion(rc, sequenceRef.current, appendVisualHistory);
       setConnection("live");
-    } else if (command === MSP.MOTOR) {
-      const motors = decodeMotors(payload);
-      setTelemetry((current) => ({ ...current, ...motors, timestamp, monotonicTimestampMs }));
+      armStaleWatchdog(connectionAttempt);
     } else if (command === MSP.ANALOG) {
+      if (!receivedRcFrameRef.current) return;
       const analog = decodeAnalog(payload);
-      if (analog) setTelemetry((current) => ({ ...current, ...analog, timestamp, monotonicTimestampMs }));
+      if (analog) {
+        currentTelemetryRef.current = { ...currentTelemetryRef.current, ...analog, timestamp, monotonicTimestampMs };
+        setTelemetry(currentTelemetryRef.current);
+      }
+    } else if (command === MSP.STATUS_EX) {
+      setLinkState(decodeStatusExLinkState(payload));
+      statusExWatchdogRef.current?.observe();
     }
-  }, [recordStickMotion]);
+  }, [armStaleWatchdog, publishSample, recordStickMotion, resetStickMotion, stopDemoTimer]);
 
   const readLoop = useCallback(
-    async (port: SerialPort) => {
-      if (!port.readable) throw new Error("飞控串口不可读");
+    async (port: SerialPort, connectionAttempt: number) => {
+      if (!port.readable) throw new Error("serial_not_readable");
       const reader = port.readable.getReader();
       readerRef.current = reader;
 
-      while (portRef.current === port) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        for (const frame of parserRef.current.push(value)) {
-          if (!frame.error) applyFrame(frame.command, frame.payload);
+      try {
+        while (portRef.current === port && connectionAttemptRef.current === connectionAttempt) {
+          const { value, done } = await reader.read();
+          if (done) {
+            if (portRef.current === port && connectionAttemptRef.current === connectionAttempt) {
+              throw new DOMException("", "NetworkError");
+            }
+            break;
+          }
+          if (!value) continue;
+          ingestRawCapture(value);
+          const frames = parserRef.current.push(value);
+          setParserStats(parserRef.current.getStats());
+          for (const frame of frames) {
+            if (!frame.error) applyFrame(frame.command, frame.payload, connectionAttempt);
+          }
+        }
+      } finally {
+        if (readerRef.current === reader) readerRef.current = null;
+        try {
+          reader.releaseLock();
+        } catch {
+          // Disconnect cleanup may already have released the lock.
         }
       }
     },
-    [applyFrame],
+    [applyFrame, ingestRawCapture],
   );
 
+  const startRawCapture = useCallback(() => {
+    if (source !== "serial" || connection !== "live" || portRef.current === null) return false;
+    return beginRawCapture();
+  }, [beginRawCapture, connection, source]);
+
   const connectSerial = useCallback(async () => {
-    if (!navigator.serial) {
+    const serial = navigator.serial;
+    const preflightIssue = serialPreflightIssue({
+      secureContext: typeof window !== "undefined" && window.isSecureContext,
+      serialSupported: Boolean(serial),
+    });
+    if (preflightIssue || !serial) {
+      setSource("demo");
       setConnection("error");
-      setError("当前浏览器不支持 Web Serial，请使用桌面版 Chrome 或 Edge，并通过 HTTPS 或 localhost 打开。 ");
+      setErrorCode(preflightIssue?.code ?? "serial_unsupported");
+      setError((preflightIssue ?? serialIssue("serial_unsupported")).message);
       return;
     }
 
-    await disconnect();
-    resetStickMotion();
+    const portSelection = serial.requestPort().then(
+      (port) => ({ port, error: null as unknown }),
+      (requestError: unknown) => ({ port: null, error: requestError }),
+    );
+
+    const connectionAttempt = await disconnect();
+    if (connectionAttemptRef.current !== connectionAttempt) return;
+    startDemo();
     setConnection("connecting");
-    setSource("serial");
     setError(null);
+    setErrorCode(null);
+
+    const selection = await portSelection;
+    if (!selection.port) {
+      if (connectionAttemptRef.current !== connectionAttempt) return;
+      const issue = classifySerialError(selection.error, "picker");
+      setConnection(issue.code === "serial_picker_cancelled" ? "demo" : "error");
+      setSource("demo");
+      setErrorCode(issue.code);
+      setError(issue.message);
+      return;
+    }
+    const port = selection.port;
+
+    if (connectionAttemptRef.current !== connectionAttempt) return;
 
     try {
-      const port = await navigator.serial.requestPort();
       await port.open({ baudRate: 115200, bufferSize: 4096 });
-      if (!port.writable) throw new Error("飞控串口不可写");
+      if (connectionAttemptRef.current !== connectionAttempt) {
+        try {
+          await port.close();
+        } catch {
+          // A superseded connection may already have closed the port.
+        }
+        return;
+      }
       portRef.current = port;
+      if (!port.readable) {
+        await failSerial(serialIssue("serial_not_readable"), connectionAttempt);
+        return;
+      }
+      if (!port.writable) {
+        await failSerial(serialIssue("serial_not_writable"), connectionAttempt);
+        return;
+      }
       writerRef.current = port.writable.getWriter();
       parserRef.current = new MspV1StreamParser();
+      setParserStats(EMPTY_MSP_PARSER_STATS);
+      receivedRcFrameRef.current = false;
+      lastRcFrameAtRef.current = null;
+      setLinkState("unknown");
+      statusExWatchdogRef.current = createStatusExFreshnessWatchdog(() => {
+        if (
+          connectionAttemptRef.current === connectionAttempt &&
+          portRef.current === port
+        ) {
+          setLinkState("unknown");
+        }
+      });
 
-      let pollCount = 0;
+      firstFrameTimerRef.current = setTimeout(() => {
+        void failSerial(serialIssue("serial_no_rc_frames"), connectionAttempt);
+      }, RC_FIRST_FRAME_TIMEOUT_MS);
+
+      void readLoop(port, connectionAttempt).catch((readError: unknown) => {
+        void failSerial(classifySerialError(readError, "read"), connectionAttempt);
+      });
+
+      let lastStatusExRequestAt = performance.now();
+      let lastAnalogRequestAt = performance.now();
       let writing = false;
       pollTimerRef.current = setInterval(() => {
+        if (connectionAttemptRef.current !== connectionAttempt) return;
+        const now = performance.now();
+        if (receivedRcFrameRef.current && now - lastRatePublishedAtRef.current >= 250) {
+          lastRatePublishedAtRef.current = now;
+          setRcReceiveHz(rcReceiveRateRef.current.getHz(now));
+        }
         const writer = writerRef.current;
         if (!writer || writing) return;
+
+        if (!canIssueMspRcRequest(now, pendingRcRequestStartedAtRef.current)) return;
+
         writing = true;
-        pollCount += 1;
+        pendingRcRequestStartedAtRef.current = now;
         const requests = [buildMspV1Request(MSP.RC)];
-        if (pollCount % 10 === 0) requests.push(buildMspV1Request(MSP.ANALOG));
-        void Promise.all(requests.map((request) => writer.write(request)))
-          .catch(() => {
-            setConnection("error");
-            setError("飞控数据读取中断，请检查 USB 连接和串口占用。 ");
+        if (now - lastStatusExRequestAt >= MSP_STATUS_EX_POLL_INTERVAL_MS) {
+          lastStatusExRequestAt = now;
+          requests.push(buildMspV1Request(MSP.STATUS_EX));
+        }
+        if (now - lastAnalogRequestAt >= MSP_ANALOG_POLL_INTERVAL_MS) {
+          lastAnalogRequestAt = now;
+          requests.push(buildMspV1Request(MSP.ANALOG));
+        }
+        void (async () => {
+          for (const request of requests) await writer.write(request);
+        })()
+          .catch((writeError: unknown) => {
+            pendingRcRequestStartedAtRef.current = null;
+            void failSerial(classifySerialError(writeError, "write"), connectionAttempt);
           })
           .finally(() => {
             writing = false;
           });
-      }, 50);
-
-      void readLoop(port).catch((readError: unknown) => {
-        if (portRef.current !== port) return;
-        setConnection("error");
-        setError(readError instanceof Error ? readError.message : "飞控数据读取失败");
-      });
+      }, MSP_RC_POLL_INTERVAL_MS);
     } catch (connectError) {
-      await disconnect();
-      setConnection("error");
-      setError(connectError instanceof Error ? connectError.message : "无法连接飞控");
+      await failSerial(classifySerialError(connectError, "open"), connectionAttempt);
     }
-  }, [disconnect, readLoop, resetStickMotion]);
+  }, [disconnect, failSerial, readLoop, startDemo]);
+
+  useEffect(() => {
+    if (demoPlaybackActiveRef.current) {
+      demoActiveRef.current = true;
+      demoTimerRef.current = setInterval(emitDemoFrame, 50);
+    }
+    const serial = navigator.serial;
+    const handleSerialDisconnect = (event: Event) => {
+      if (serialDisconnectDecision(portRef.current, event.target as SerialPort | null) === "ignore") {
+        return;
+      }
+      const connectionAttempt = connectionAttemptRef.current;
+      setConnection("stale");
+      void failSerial(serialIssue("serial_device_disconnected"), connectionAttempt);
+    };
+    serial?.addEventListener("disconnect", handleSerialDisconnect);
+    return () => {
+      serial?.removeEventListener("disconnect", handleSerialDisconnect);
+      void disconnect();
+    };
+  }, [disconnect, emitDemoFrame, failSerial]);
+
+  useEffect(() => {
+    demoPlaybackActiveRef.current = demoPlaybackActive;
+    if (source !== "demo") return;
+    if (!demoPlaybackActive) {
+      stopDemoTimer();
+      return;
+    }
+    if (demoTimerRef.current !== null) return;
+    demoActiveRef.current = true;
+    emitDemoFrame();
+    demoTimerRef.current = setInterval(emitDemoFrame, 50);
+  }, [demoPlaybackActive, emitDemoFrame, source, stopDemoTimer]);
 
   return {
     telemetry,
@@ -240,8 +565,18 @@ export function useBetaflightTelemetry(): TelemetryController {
     connection,
     source,
     error,
+    errorCode,
+    parserStats,
+    parserQuality: mspParserQuality(parserStats),
+    rcReceiveHz,
+    linkState,
+    rawCapture,
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),
     connectSerial,
     useDemo,
+    startRawCapture,
+    cancelRawCapture,
+    downloadRawCapture,
+    subscribeSamples,
   };
 }

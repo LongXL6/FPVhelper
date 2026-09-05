@@ -1,66 +1,499 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_TELEMETRY } from "./telemetry";
 import {
+  assessTrainingAttemptCandidate,
   appendTrainingSessionSample,
+  appendTrainingSessionMarker,
   createTrainingSessionDraft,
   finishTrainingSession,
+  markTrainingSessionExported,
+  parseTrainingSession,
+  parseTrainingSessionDraft,
+  recoverInterruptedTrainingSession,
+  resolveTrainingSessionTermination,
   serializeTrainingSession,
   trainingSessionFilename,
+  withTrainingSessionTermination,
+  withTrainingSessionNotes,
+  withTrainingSessionVideoReceipt,
+  type TrainingSessionDraft,
 } from "./training-session";
 
-describe("local training session", () => {
-  it("records unique RC samples against a monotonic session clock", () => {
-    const draft = createTrainingSessionDraft("session-12345678", "serial", 1_700_000_000_000, 1_000);
-    const first = {
-      ...EMPTY_TELEMETRY,
-      timestamp: 1_700_000_000_100,
-      monotonicTimestampMs: 1_100,
+const STARTED_AT = 1_700_000_000_000;
+const STARTED_MONOTONIC = 1_000;
+const WORKSTATION_ID = "10000000-0000-4000-8000-000000000001";
+const BUILD = "0.2.0+test";
+
+function createDraft(source: "demo" | "serial" = "serial", athleteCode = "PILOT-07") {
+  return createTrainingSessionDraft({
+    id: "session-12345678",
+    workstationId: WORKSTATION_ID,
+    build: BUILD,
+    athleteCode,
+    source,
+    startedAtEpochMs: STARTED_AT,
+    startedMonotonicMs: STARTED_MONOTONIC,
+  });
+}
+
+function addSample(draft: TrainingSessionDraft, sequence: number, source: "demo" | "serial" = "serial") {
+  return appendTrainingSessionSample(draft, {
+    ...EMPTY_TELEMETRY,
+    timestamp: STARTED_AT + sequence * 200,
+    monotonicTimestampMs: STARTED_MONOTONIC + sequence * 200,
+    sequence,
+    rcChannelsUs: [1520, 1480, 1500, 1600, 1800, 1000],
+    rollStickPercent: 4,
+    throttleStickPercent: 60,
+    rcThrottleUs: 1600,
+    groundMspRssiPercent: 92,
+    groundBridgeVoltage: 5,
+  }, source);
+}
+
+function createValidSessionDraft() {
+  const draft = createDraft();
+  for (let sequence = 1; sequence <= 300; sequence += 1) addSample(draft, sequence);
+  return draft;
+}
+
+describe("local training session schema v2", () => {
+  it("recovers early v2 drafts without a local timestamp while preserving samples", () => {
+    const draft = createDraft();
+    addSample(draft, 1);
+    const raw: Record<string, unknown> = { ...draft };
+    delete raw.wallClockStartedAt;
+    const parsed = parseTrainingSessionDraft(raw);
+    expect(Date.parse(parsed.wallClockStartedAt)).toBe(Date.parse(draft.startedAt));
+    expect(parsed.samples).toEqual(draft.samples);
+    expect(recoverInterruptedTrainingSession(parsed).interrupted).toBe(true);
+    expect(() => parseTrainingSessionDraft({ ...raw, wallClockStartedAt: "invalid" })).toThrow();
+    expect(() => parseTrainingSessionDraft({ ...raw, startedAt: "invalid" })).toThrow();
+  });
+
+  it("records unique samples with raw RC channels and local wall-clock time", () => {
+    const draft = createDraft();
+
+    expect(addSample(draft, 1)).toBe(true);
+    expect(addSample(draft, 1)).toBe(false);
+    expect(draft.wallClockStartedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
+    expect(draft.samples[0]).toMatchObject({
+      elapsedMs: 200,
       sequence: 1,
-      rollStickPercent: 20,
-      throttleStickPercent: 60,
-      rcThrottleUs: 1600,
-      groundMspRssiPercent: 92,
-      groundBridgeVoltage: 5,
+      source: "ground_rc",
+      channelsUs: [1520, 1480, 1500, 1600, 1800, 1000],
+      rc: { rollStickPercent: 4, throttleStickPercent: 60, throttleUs: 1600 },
+      groundBridge: { mspRssiPercent: 92, voltage: 5 },
+    });
+  });
+
+  it("accepts only a real, long enough, strictly monotonic, identified ground RC session", () => {
+    const session = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+    );
+
+    expect(session).toMatchObject({
+      schemaVersion: 2,
+      athleteCode: "PILOT-07",
+      notes: null,
+      exportedAt: null,
+      exportCount: 0,
+      durationMs: 60_000,
+      dataSources: ["ground_rc"],
+      sampleCount: 300,
+      interrupted: false,
+      interruptionReason: null,
+      validity: { valid: true, reasons: [] },
+      video: { recorded: false, synchronized: false },
+      timing: { clock: "performance.now", videoOffsetCalibrated: false },
+    });
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+    expect(serializeTrainingSession(session)).not.toContain("\n  \"");
+    expect(trainingSessionFilename(session)).toMatch(/^fpv-session-\d{8}-\d{6}-PILOT-07-12345678\.json$/);
+  });
+
+  it("writes workstation and trusted public-build metadata into new schema v2 JSON", () => {
+    const draft = createTrainingSessionDraft({
+      id: "session-metadata",
+      workstationId: WORKSTATION_ID,
+      build: "0.2.0+1234567",
+      athleteCode: "PILOT-07",
+      source: "serial",
+      startedAtEpochMs: STARTED_AT,
+      startedMonotonicMs: STARTED_MONOTONIC,
+    });
+    for (let sequence = 1; sequence <= 300; sequence += 1) addSample(draft, sequence);
+
+    const session = finishTrainingSession(draft, STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    expect(session).toMatchObject({
+      schemaVersion: 2,
+      workstationId: "10000000-0000-4000-8000-000000000001",
+      build: "0.2.0+1234567",
+    });
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("rejects untrusted workstation and public-build metadata before recording", () => {
+    const baseOptions = {
+      id: "session-invalid-metadata",
+      athleteCode: "PILOT-07",
+      source: "serial" as const,
+      startedAtEpochMs: STARTED_AT,
+      startedMonotonicMs: STARTED_MONOTONIC,
     };
 
-    expect(appendTrainingSessionSample(draft, first, "serial")).toBe(true);
-    expect(appendTrainingSessionSample(draft, first, "serial")).toBe(false);
-    expect(draft.samples).toEqual([
+    expect(() => createTrainingSessionDraft({
+      ...baseOptions,
+      workstationId: "machine-name",
+      build: BUILD,
+    })).toThrow("workstationId 必须是 UUID");
+    expect(() => createTrainingSessionDraft({
+      ...baseOptions,
+      workstationId: WORKSTATION_ID,
+      build: "<script>alert(1)</script>",
+    })).toThrow("build 必须是可信的公开构建标识");
+  });
+
+  it("records typed manual markers with monotonic elapsed and local wall-clock timestamps", () => {
+    const draft = createDraft();
+
+    const marker = appendTrainingSessionMarker(draft, {
+      id: "marker-1",
+      kind: "crash",
+      wallClockEpochMs: STARTED_AT + 1_250,
+      monotonicMs: STARTED_MONOTONIC + 1_250.4567,
+    });
+
+    expect(marker).toMatchObject({ id: "marker-1", kind: "crash", elapsedMs: 1_250.457 });
+    expect(marker.wallClockAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
+    expect(draft.markers).toEqual([marker]);
+  });
+
+  it("persists normalized notes and repeatable export metadata without mutating the source session", () => {
+    const session = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const noted = withTrainingSessionNotes(session, "  第一轮\r\n压弯过早  ");
+    const firstExport = markTrainingSessionExported(noted, STARTED_AT + 61_000);
+    const secondExport = markTrainingSessionExported(firstExport, STARTED_AT + 62_000);
+
+    expect(session.notes).toBeNull();
+    expect(noted.notes).toBe("第一轮\n压弯过早");
+    expect(firstExport).toMatchObject({ exportCount: 1, exportedAt: new Date(STARTED_AT + 61_000).toISOString() });
+    expect(secondExport).toMatchObject({ exportCount: 2, exportedAt: new Date(STARTED_AT + 62_000).toISOString() });
+    expect(parseTrainingSession(serializeTrainingSession(secondExport))).toEqual(secondExport);
+  });
+
+  it("rejects inconsistent exportedAt and exportCount self-reporting", () => {
+    const current = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const raw = JSON.parse(serializeTrainingSession(current)) as Record<string, unknown>;
+
+    expect(() => parseTrainingSession({ ...raw, exportedAt: null, exportCount: 1 })).toThrow("exportedAt 与 exportCount 不一致");
+    expect(() => parseTrainingSession({
+      ...raw,
+      exportedAt: new Date(STARTED_AT + 61_000).toISOString(),
+      exportCount: 0,
+    })).toThrow("exportedAt 与 exportCount 不一致");
+  });
+
+  it("keeps technical validity separate from the 80 percent attempt candidate", () => {
+    const valid = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    expect(valid.validity).toEqual({ valid: true, reasons: [] });
+    expect(assessTrainingAttemptCandidate(valid)).toEqual({ candidate: false, reasons: ["missing_notes"] });
+
+    const reviewed = withTrainingSessionNotes(valid, "压弯过早，下轮延后入弯");
+    expect(reviewed.validity).toEqual(valid.validity);
+    expect(assessTrainingAttemptCandidate(reviewed)).toEqual({ candidate: true, reasons: [] });
+
+    const invalidReviewed = withTrainingSessionNotes(
+      finishTrainingSession(createDraft("demo"), STARTED_AT + 1_000, STARTED_MONOTONIC + 1_000),
+      "演示记录复盘",
+    );
+    expect(assessTrainingAttemptCandidate(invalidReviewed)).toEqual({ candidate: false, reasons: ["technically_invalid"] });
+  });
+
+  it("reports mixed, short, duplicate, non-monotonic, anonymous and interrupted records", () => {
+    const draft = createDraft("serial", "   ");
+    addSample(draft, 1);
+    addSample(draft, 2, "demo");
+    draft.samples.push({ ...draft.samples[1], elapsedMs: draft.samples[0].elapsedMs });
+    const session = finishTrainingSession(draft, STARTED_AT + 1_000, STARTED_MONOTONIC + 1_000, { interrupted: true });
+
+    expect(session.validity).toEqual({
+      valid: false,
+      reasons: [
+        "source_not_ground_rc",
+        "mixed_sources",
+        "too_short",
+        "too_few_unique_samples",
+        "non_monotonic",
+        "no_athlete_code",
+        "interrupted",
+      ],
+    });
+  });
+
+  it("recovers a persisted draft as an interrupted session", () => {
+    const draft = createDraft();
+    addSample(draft, 1);
+    const recovered = recoverInterruptedTrainingSession(draft);
+
+    expect(recovered.interrupted).toBe(true);
+    expect(recovered.interruptionReason).toBe("page_closed");
+    expect(recovered.durationMs).toBe(200);
+    expect(recovered.endedAt).toBe(new Date(STARTED_AT + 200).toISOString());
+    expect(recovered.validity.reasons).toContain("interrupted");
+  });
+
+  it("keeps old schema v2 drafts readable when workstation metadata did not exist", () => {
+    const currentDraft = createDraft();
+    const legacyDraft = { ...currentDraft } as Record<string, unknown>;
+    delete legacyDraft.workstationId;
+    delete legacyDraft.build;
+
+    expect(parseTrainingSessionDraft(legacyDraft)).toMatchObject({
+      schemaVersion: 2,
+      workstationId: null,
+      build: null,
+    });
+  });
+
+  it("records ground RX loss as the explicit interruption and invalidity reason", () => {
+    const session = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+      { interruptionReason: "rx_link_lost" },
+    );
+
+    expect(session).toMatchObject({
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+      validity: { valid: false, reasons: ["rx_link_lost"] },
+    });
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("upgrades a manual stop when RX loss wins the same termination race", () => {
+    const manualStop = resolveTrainingSessionTermination(null, {
+      interrupted: false,
+      interruptionReason: null,
+    });
+    const rxLoss = resolveTrainingSessionTermination(manualStop, {
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+    });
+    const lateManualStop = resolveTrainingSessionTermination(rxLoss, {
+      interrupted: false,
+      interruptionReason: null,
+    });
+    const manuallyFinished = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
+    );
+    const upgraded = withTrainingSessionTermination(manuallyFinished, lateManualStop);
+
+    expect(lateManualStop).toEqual({ interrupted: true, interruptionReason: "rx_link_lost" });
+    expect(upgraded).toMatchObject({
+      interrupted: true,
+      interruptionReason: "rx_link_lost",
+      validity: { valid: false },
+    });
+    expect(upgraded.validity.reasons).toContain("rx_link_lost");
+  });
+
+  it("persists a channel change as an interrupted schema v2 session", () => {
+    const channelChange = resolveTrainingSessionTermination(null, {
+      interrupted: true,
+      interruptionReason: "channel_changed",
+    });
+    const laterTelemetryEffect = resolveTrainingSessionTermination(channelChange, {
+      interrupted: true,
+      interruptionReason: "telemetry_unavailable",
+    });
+    const session = finishTrainingSession(
+      createValidSessionDraft(),
+      STARTED_AT + 60_000,
+      STARTED_MONOTONIC + 60_000,
       {
+        interrupted: laterTelemetryEffect.interrupted,
+        ...(laterTelemetryEffect.interruptionReason
+          ? { interruptionReason: laterTelemetryEffect.interruptionReason }
+          : {}),
+      },
+    );
+
+    expect(laterTelemetryEffect).toEqual({ interrupted: true, interruptionReason: "channel_changed" });
+    expect(session).toMatchObject({
+      interrupted: true,
+      interruptionReason: "channel_changed",
+      validity: { valid: false },
+    });
+    expect(session.validity.reasons).toContain("interrupted");
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("keeps existing schema v2 sessions without interruptionReason readable", () => {
+    const session = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const storedBeforeLinkIntegrity = { ...session } as Partial<typeof session>;
+    delete storedBeforeLinkIntegrity.interruptionReason;
+
+    expect(parseTrainingSession(storedBeforeLinkIntegrity).interruptionReason).toBeNull();
+  });
+
+  it("migrates exported schema v1 sessions and derives the four legacy RC channels", () => {
+    const migrated = parseTrainingSession({
+      schemaVersion: 1,
+      id: "legacy-session",
+      startedAt: new Date(STARTED_AT).toISOString(),
+      endedAt: new Date(STARTED_AT + 1_000).toISOString(),
+      durationMs: 1_000,
+      initialSource: "ground_rc",
+      samples: [{
         elapsedMs: 100,
         sequence: 1,
         source: "ground_rc",
         rc: {
           rollStickPercent: 20,
-          pitchStickPercent: 0,
+          pitchStickPercent: -10,
           yawStickPercent: 0,
           throttleStickPercent: 60,
           throttleUs: 1600,
         },
-        groundBridge: {
-          mspRssiPercent: 92,
-          voltage: 5,
-        },
-      },
-    ]);
+        groundBridge: { mspRssiPercent: null, voltage: null },
+      }],
+    });
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 2,
+      migratedFromSchemaVersion: 1,
+      workstationId: null,
+      build: null,
+      athleteCode: null,
+      markers: [],
+      sampleCount: 1,
+    });
+    expect(migrated.samples[0].channelsUs).toEqual([1600, 1450, 1500, 1600]);
+    expect(migrated.validity.reasons).toContain("no_athlete_code");
+    expect(migrated).not.toHaveProperty("captureQuality");
+    expect(migrated).not.toHaveProperty("captureContext");
+    expect(parseTrainingSession(serializeTrainingSession(migrated))).toEqual(migrated);
   });
 
-  it("finalizes source, timing and sample-rate metadata", () => {
-    const draft = createTrainingSessionDraft("session-12345678", "demo", 1_700_000_000_000, 1_000);
-    appendTrainingSessionSample(draft, { ...EMPTY_TELEMETRY, monotonicTimestampMs: 1_100, sequence: 1 }, "demo");
-    appendTrainingSessionSample(draft, { ...EMPTY_TELEMETRY, monotonicTimestampMs: 1_150, sequence: 2 }, "demo");
+  it("keeps existing schema v2 records readable when additive metadata is absent", () => {
+    const current = finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+    const legacyV2 = JSON.parse(serializeTrainingSession(current)) as Record<string, unknown>;
+    delete legacyV2.workstationId;
+    delete legacyV2.build;
 
-    const session = finishTrainingSession(draft, 1_700_000_001_000, 2_000);
-    expect(session).toMatchObject({
-      schemaVersion: 1,
-      durationMs: 1000,
-      dataSources: ["demo"],
-      sampleCount: 2,
-      estimatedRcSampleRateHz: 20,
-      video: { recorded: false, synchronized: false },
-      timing: { clock: "performance.now", videoOffsetCalibrated: false },
+    const parsed = parseTrainingSession(legacyV2);
+    expect(parsed).toMatchObject({
+      schemaVersion: 2,
+      workstationId: null,
+      build: null,
+      id: current.id,
+      validity: current.validity,
     });
-    expect(JSON.parse(serializeTrainingSession(session)).sampleCount).toBe(2);
-    expect(trainingSessionFilename(session)).toBe("fpv-session-2023-11-14T22-13-20Z-12345678.json");
+
+    expect(parseTrainingSession({
+      ...legacyV2,
+      workstationId: "old-local-machine-label",
+      build: "old debug build",
+    })).toMatchObject({ workstationId: null, build: null, id: current.id });
+  });
+});
+
+describe("training capture and successful video receipt extensions", () => {
+  const receipt = {
+    filename: "训练录像.webm",
+    mimeType: "video/webm;codecs=vp9",
+    bytes: 12_345,
+    startedAtEpochMs: STARTED_AT + 500,
+    finishedAtEpochMs: STARTED_AT + 60_500,
+  };
+
+  function finishedSession() {
+    return finishTrainingSession(createValidSessionDraft(), STARTED_AT + 60_000, STARTED_MONOTONIC + 60_000);
+  }
+
+  it("adds actual stored sample quality without changing the established validity contract", () => {
+    const session = finishedSession();
+    expect(session.validity).toEqual({ valid: true, reasons: [] });
+    expect(session.captureQuality).toMatchObject({
+      targetPollHz: 100, sampleCount: 300, positiveIntervalCount: 299,
+      intervalStatsMs: { median: 200, p95: 200, p99: 200, max: 200 },
+      usablePeriods: [], rfPacketLossMeasured: false,
+    });
+    expect(session.captureQuality!.gaps).toHaveLength(299);
+    expect(session.captureContext?.timestamp.clock).toBe("performance.now");
+    expect(parseTrainingSession(serializeTrainingSession(session))).toEqual(session);
+  });
+
+  it("preserves absent capture facts in old schema v2 records", () => {
+    const raw: Record<string, unknown> = { ...finishedSession() };
+    delete raw.captureQuality;
+    delete raw.captureContext;
+    delete raw.video;
+    const parsed = parseTrainingSession(raw);
+    expect(parsed).not.toHaveProperty("captureQuality");
+    expect(parsed).not.toHaveProperty("captureContext");
+    expect(parsed.video).toEqual({ recorded: false, synchronized: false });
+    expect(parseTrainingSession(serializeTrainingSession(parsed))).toEqual(parsed);
+  });
+
+  it("rejects present but invalid optional capture extensions", () => {
+    const session = finishedSession();
+    for (const raw of [
+      { ...session, captureQuality: null },
+      { ...session, captureContext: null },
+      { ...session, captureQuality: { ...session.captureQuality, version: 2 } },
+      { ...session, captureContext: { ...session.captureContext, version: 2 } },
+      { ...session, samples: session.samples.slice(1) },
+    ]) expect(() => parseTrainingSession(raw)).toThrow(/captureQuality|captureContext/);
+  });
+
+  it("attaches a successful receipt immutably and preserves raw data and quality", () => {
+    const session = finishedSession();
+    const recorded = withTrainingSessionVideoReceipt(session, receipt, "sticks");
+    expect(session.video).toEqual({ recorded: false, synchronized: false });
+    expect(recorded.samples).toBe(session.samples);
+    expect(recorded.captureQuality).toBe(session.captureQuality);
+    expect(recorded.video).toEqual({
+      ...receipt, recorded: true, synchronized: false, receiptVersion: 1,
+      receiptEvidence: "write_and_close_resolved", overlay: "sticks", overlayTiming: "latest_available_host_sample",
+    });
+    expect(parseTrainingSession(serializeTrainingSession(recorded))).toEqual(recorded);
+    expect(withTrainingSessionVideoReceipt(session, receipt).video).toMatchObject({ overlay: "none", overlayTiming: "none" });
+  });
+
+  it.each([
+    { bytes: 0 }, { bytes: -1 }, { bytes: 1.5 }, { bytes: Number.MAX_SAFE_INTEGER + 1 },
+    { filename: "../recording.webm" }, { filename: " record.webm" }, { filename: "a\n.webm" },
+    { mimeType: "text/html" }, { mimeType: "video/webm\n" },
+    { startedAtEpochMs: -1 }, { finishedAtEpochMs: STARTED_AT }, { finishedAtEpochMs: Number.NaN },
+  ])("rejects incomplete or invalid file receipts: %o", (invalid) => {
+    expect(() => withTrainingSessionVideoReceipt(finishedSession(), { ...receipt, ...invalid }, "sticks")).toThrow("video");
+  });
+
+  it("rejects unsupported or misleading imported video claims", () => {
+    const session = withTrainingSessionVideoReceipt(finishedSession(), receipt, "sticks");
+    for (const video of [
+      null,
+      { ...session.video, synchronized: true },
+      { ...session.video, receiptVersion: 2 },
+      { ...session.video, receiptEvidence: "started" },
+      { ...session.video, recorded: false },
+      { ...session.video, overlay: "unknown" },
+      { ...session.video, overlayTiming: "calibrated" },
+      { ...session.video, constructor: "unsupported" },
+    ]) expect(() => parseTrainingSession({ ...session, video })).toThrow(/video|收据/);
+  });
+
+  it("allows lightweight summaries to produce filenames and assess notes", () => {
+    const session = finishedSession();
+    const { startedAt, id, initialSource, athleteCode, validity, notes } = session;
+    expect(trainingSessionFilename({ startedAt, id, initialSource, athleteCode })).toBe(trainingSessionFilename(session));
+    expect(assessTrainingAttemptCandidate({ validity, notes })).toEqual(assessTrainingAttemptCandidate(session));
   });
 });
