@@ -1753,7 +1753,7 @@ export function FlightDashboard() {
               <b>Session / 视频本地保存文件夹</b>
               <small>{exportDirectoryCopy}</small>
               {trainingSession.exportDirectoryName
-                ? <small>再次自动导出同一 Session 会覆盖该文件夹内的同名 JSON。</small>
+                ? <small>已有文件会保留；重复导出自动生成 -v2、-v3，训练记录中的导出也使用此文件夹。</small>
                 : null}
             </span>
             <span className="session-export-directory-actions">

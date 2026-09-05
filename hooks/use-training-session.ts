@@ -83,6 +83,7 @@ export interface TrainingSessionExportReceipt {
   session: TrainingSession;
   method: "download" | "folder";
   bytes: number;
+  filename?: string;
   exportedAtEpochMs: number;
 }
 
@@ -313,29 +314,30 @@ export function useTrainingSession({
   const exportStoredSessionToDirectory = useCallback(async (
     session: TrainingSession,
     store: TrainingSessionStore,
-  ) => {
+  ): Promise<{ confirmed: boolean; reason: string | null; filename?: string; localStateSaved: boolean }> => {
     const handle = directoryHandleRef.current;
     if (!handle) {
-      return { confirmed: false, reason: "尚未选择自动保存文件夹" };
+      return { confirmed: false, reason: "尚未选择自动保存文件夹", localStateSaved: true };
     }
 
     const permission = await getTrainingSessionDirectoryPermission(handle);
     if (permission !== "granted") {
       setExportDirectoryState("permission_required");
-      return { confirmed: false, reason: "自动保存文件夹需要重新授权" };
+      return { confirmed: false, reason: "自动保存文件夹需要重新授权", localStateSaved: true };
     }
 
     const exportedAtEpochMs = Date.now();
     const exportedSession = markTrainingSessionExported(session, exportedAtEpochMs);
-    let bytes: number;
+    let receipt: { bytes: number; filename: string };
     try {
-      bytes = await saveTrainingSessionToDirectory(exportedSession, handle);
+      receipt = await saveTrainingSessionToDirectory(exportedSession, handle);
     } catch (exportError) {
       const permissionAfterFailure = await getTrainingSessionDirectoryPermission(handle);
       setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
       return {
         confirmed: false,
         reason: `自动保存文件夹写入失败：${storageErrorMessage(exportError)}`,
+        localStateSaved: true,
       };
     }
 
@@ -344,10 +346,11 @@ export function useTrainingSession({
       receiptId: createTrainingSessionExportReceiptId(exportedSession.id, exportedAtEpochMs),
       session: exportedSession,
       method: "folder",
-      bytes,
+      bytes: receipt.bytes,
+      filename: receipt.filename,
       exportedAtEpochMs,
     });
-    setExportNotice(`已确认 JSON 写入“${handle.name}”；文件关闭完成。再次导出同一 Session 会覆盖同名 JSON。`);
+    setExportNotice(`已保存“${receipt.filename}”到“${handle.name}”，写入与关闭已完成；已有文件保留。`);
     setExportWarning(null);
 
     try {
@@ -356,8 +359,9 @@ export function useTrainingSession({
       setStorageError(null);
     } catch (saveError) {
       setStorageError(`JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+      return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: false };
     }
-    return { confirmed: true, reason: null };
+    return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: true };
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -887,6 +891,22 @@ export function useTrainingSession({
     }
     sessionMutationIdsRef.current.add(targetSessionId);
     try {
+      if (directoryHandleRef.current) {
+        const session = await loadSession(targetSessionId);
+        if (!session) throw new Error("记录样本无法完整读取，请检查本机存储或归档文件");
+        const snapshot = notesOverride === undefined ? session : withTrainingSessionNotes(session, notesOverride);
+        const result = await exportStoredSessionToDirectory(snapshot, store);
+        if (!result.confirmed) {
+          const message = `${result.reason}；已有文件与本机记录保留。`;
+          setExportNotice(null);
+          setExportWarning(message);
+          return { status: "failed", message, localStateSaved: result.localStateSaved };
+        }
+        const message = result.localStateSaved
+          ? `已保存“${result.filename}”；已有文件保留。`
+          : `已保存“${result.filename}”，但本机导出状态尚未保存。`;
+        return { status: "confirmed", message, localStateSaved: result.localStateSaved };
+      }
       const picker = getBrowserTrainingSessionSaveFilePicker();
       // Open while the click still has browser activation; reading a long record can take time.
       const selectedFile = picker?.({ suggestedName: trainingSessionFilename(summary), types: [{ description: "FPVHelper 训练记录", accept: { "application/json": [".json"] } }] });
@@ -902,7 +922,7 @@ export function useTrainingSession({
     } finally {
       sessionMutationIdsRef.current.delete(targetSessionId);
     }
-  }, [exportStoredSession, loadSession]);
+  }, [exportStoredSession, exportStoredSessionToDirectory, loadSession]);
 
   return {
     isRecording,
