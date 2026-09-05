@@ -53,6 +53,13 @@ describe("useTrainingSession start guard", () => {
     })).toBe(true);
   });
 
+  it("blocks new recording while old storage is available for read-only migration fallback", () => {
+    expect(canStartTrainingSession({
+      ...READY_TO_START,
+      storageIntegrity: { ...READY_TO_START.storageIntegrity, migrationWarning: "空间不足，旧记录仍可读取" },
+    })).toBe(false);
+  });
+
   it("still blocks actual storage failures", () => {
     expect(canStartTrainingSession({
       storageReady: true,

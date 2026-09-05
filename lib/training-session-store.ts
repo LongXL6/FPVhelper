@@ -48,6 +48,7 @@ export interface TrainingSessionStorageIntegrity {
   readableSessionCount: number;
   quarantinedDraftCount: number;
   quarantinedSessionCount: number;
+  migrationWarning?: string;
 }
 
 export const EMPTY_TRAINING_SESSION_STORAGE_INTEGRITY: TrainingSessionStorageIntegrity = {
@@ -202,8 +203,8 @@ async function migrateLegacyRecords(database: IDBDatabase) {
   });
 }
 
-async function readIndexes(database: IDBDatabase, kind: IndexName) {
-  return inTransaction(database, [kind, SAMPLE_CHUNKS], "readwrite", async (transaction) => {
+async function readIndexes(database: IDBDatabase, kind: IndexName, readOnly = false, knownQuarantined = new Set<string>()) {
+  return inTransaction(database, [kind, SAMPLE_CHUNKS], readOnly ? "readonly" : "readwrite", async (transaction) => {
     const records: StoredRecord[] = [];
     let quarantined = 0;
     const rawRecords: unknown[] = await requestResult(transaction.objectStore(kind).getAll());
@@ -211,23 +212,28 @@ async function readIndexes(database: IDBDatabase, kind: IndexName) {
       if (isRecord(raw) && raw.status === "deleted") continue;
       if (isRecord(raw) && raw.status === "quarantined") { quarantined += 1; continue; }
       try {
+        if (isRecord(raw) && knownQuarantined.has(`${kind}/${raw.id}`)) throw new Error("训练记录已隔离");
         const record = readManifest(raw, kind);
         await checkChunkKeys(transaction, record);
         records.push(record);
       } catch {
         quarantined += 1;
-        if (isRecord(raw) && typeof raw.id === "string") quarantine(transaction, kind, raw.id, raw);
+        if (isRecord(raw) && typeof raw.id === "string") {
+          knownQuarantined.add(`${kind}/${raw.id}`);
+          if (!readOnly) quarantine(transaction, kind, raw.id, raw);
+        }
       }
     }
     return { records, quarantined };
   });
 }
 
-async function readRecord(database: IDBDatabase, kind: IndexName, id: string) {
-  return inTransaction(database, [kind, SAMPLE_CHUNKS], "readwrite", async (transaction) => {
+async function readRecord(database: IDBDatabase, kind: IndexName, id: string, readOnly = false, knownQuarantined = new Set<string>()) {
+  return inTransaction(database, [kind, SAMPLE_CHUNKS], readOnly ? "readonly" : "readwrite", async (transaction) => {
     const raw: unknown = await requestResult(transaction.objectStore(kind).get(id));
     if (raw === undefined || (isRecord(raw) && (raw.status === "deleted" || raw.status === "quarantined"))) return null;
     try {
+      if (knownQuarantined.has(`${kind}/${id}`)) throw new Error("训练记录已隔离");
       const record = readManifest(raw, kind);
       await checkChunkKeys(transaction, record);
       const samples: TrainingSessionSample[] = [];
@@ -243,9 +249,46 @@ async function readRecord(database: IDBDatabase, kind: IndexName, id: string) {
         ? parseTrainingSessionDraft({ ...record.metadata, samples })
         : parseTrainingSession({ ...record.metadata, samples });
     } catch {
-      quarantine(transaction, kind, id, raw);
+      knownQuarantined.add(`${kind}/${id}`);
+      if (!readOnly) quarantine(transaction, kind, id, raw);
       return null;
     }
+  });
+}
+
+async function readUnmigratedLegacy(database: IDBDatabase, kind: IndexName, detailId?: string) {
+  return inTransaction(database, ALL_STORES, "readonly", async (transaction) => {
+    const legacy = transaction.objectStore(kind === SESSION_INDEX ? SESSIONS_STORE : DRAFTS_STORE);
+    const index = transaction.objectStore(kind);
+    const [legacyKeys, indexedKeys] = await Promise.all([
+      detailId === undefined ? requestResult(legacy.getAllKeys()) : requestResult(legacy.getKey(detailId)).then((key) => key === undefined ? [] : [key]),
+      detailId === undefined ? requestResult(index.getAllKeys()) : requestResult(index.getKey(detailId)).then((key) => key === undefined ? [] : [key]),
+    ]);
+    const known = new Set(indexedKeys);
+    const summaries: RecordSummary[] = [];
+    let detail: TrainingSession | TrainingSessionDraft | null = null;
+    let quarantined = 0;
+    for (const key of legacyKeys) {
+      // A current index (including deleted/quarantined) always wins over the old backup.
+      if (known.has(key)) continue;
+      const id = String(key);
+      if (kind === DRAFT_INDEX && (
+        await requestResult(transaction.objectStore(SESSION_INDEX).getKey(id)) !== undefined
+        || await requestResult(transaction.objectStore(SESSIONS_STORE).getKey(id)) !== undefined
+      )) { quarantined += 1; continue; }
+      if ((await requestResult(transaction.objectStore(SAMPLE_CHUNKS).index("id").getAllKeys(id))).length > 0) {
+        quarantined += 1;
+        continue;
+      }
+      const raw: unknown = await requestResult(legacy.get(key));
+      try {
+        const parsed = kind === SESSION_INDEX ? parseTrainingSession(raw) : parseTrainingSessionDraft(raw);
+        if (parsed.id !== id) throw new Error("训练记录 ID 不一致");
+        summaries.push(metadataOf(parsed));
+        if (detailId !== undefined) detail = parsed;
+      } catch { quarantined += 1; }
+    }
+    return { summaries, detail, quarantined };
   });
 }
 
@@ -272,6 +315,8 @@ export function createTrainingSessionStore(
   let closing = false;
   let queue: Promise<unknown> = Promise.resolve();
   let migrated = false;
+  let migrationWarning: string | null = null;
+  const knownQuarantined = new Set<string>();
   const databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
     let failed = false;
     const request = indexedDbFactory.open(databaseName, DATABASE_VERSION);
@@ -296,19 +341,44 @@ export function createTrainingSessionStore(
   });
   void databasePromise.catch(() => undefined);
 
-  function run<T>(operation: (database: IDBDatabase) => Promise<T>, refreshLegacy = false): Promise<T> {
+  function run<T>(operation: (database: IDBDatabase) => Promise<T>, readOperation = false): Promise<T> {
     if (closing || closed) return Promise.reject(new Error("训练记录数据库已关闭"));
     const pending = queue.then(async () => {
       const database = await databasePromise;
       if (closed) throw new Error("训练记录数据库已关闭，请重新打开页面");
-      if (!migrated || refreshLegacy) {
-        await migrateLegacyRecords(database);
-        migrated = true;
+      if (!migrated || readOperation) {
+        try {
+          await migrateLegacyRecords(database);
+          migrated = true;
+          migrationWarning = null;
+        } catch (error) {
+          migrated = false;
+          const reason = error instanceof Error ? error.message : "本机存储暂不可写";
+          migrationWarning = `训练记录分块迁移未完成，历史记录仍可只读查看和导出，写入暂不可用：${reason}`;
+          if (!readOperation) throw new Error(migrationWarning, { cause: error });
+        }
       }
       return operation(database);
     });
     queue = pending.catch(() => undefined);
     return pending;
+  }
+
+  async function availableIndexes(database: IDBDatabase, kind: IndexName) {
+    const indexed = await readIndexes(database, kind, migrationWarning !== null, knownQuarantined);
+    const legacy = migrationWarning ? await readUnmigratedLegacy(database, kind) : null;
+    return {
+      records: [
+        ...indexed.records.map(({ id, metadata }) => ({ id, metadata })),
+        ...(legacy?.summaries.map((metadata) => ({ id: metadata.id, metadata })) ?? []),
+      ],
+      quarantined: indexed.quarantined + (legacy?.quarantined ?? 0),
+    };
+  }
+
+  async function availableRecord(database: IDBDatabase, kind: IndexName, id: string) {
+    const indexed = await readRecord(database, kind, id, migrationWarning !== null, knownQuarantined);
+    return indexed ?? (migrationWarning ? (await readUnmigratedLegacy(database, kind, id)).detail : null);
   }
 
   function saveCompleted(input: TrainingSession, removeDraft: boolean) {
@@ -344,10 +414,10 @@ export function createTrainingSessionStore(
 
   return {
     getActiveDraft: () => run(async (database) => {
-      const { records } = await readIndexes(database, DRAFT_INDEX);
+      const { records } = await availableIndexes(database, DRAFT_INDEX);
       records.sort((left, right) => right.metadata.startedAt.localeCompare(left.metadata.startedAt));
       for (const record of records) {
-        const draft = await readRecord(database, DRAFT_INDEX, record.id);
+        const draft = await availableRecord(database, DRAFT_INDEX, record.id);
         if (draft) return draft as TrainingSessionDraft;
       }
       return null;
@@ -399,41 +469,42 @@ export function createTrainingSessionStore(
       });
     }),
 
-    getSession: (id) => run(async (database) => await readRecord(database, SESSION_INDEX, id) as TrainingSession | null, true),
+    getSession: (id) => run(async (database) => await availableRecord(database, SESSION_INDEX, id) as TrainingSession | null, true),
 
     listSessionSummaries: () => run(async (database) => {
-      const { records } = await readIndexes(database, SESSION_INDEX);
+      const { records } = await availableIndexes(database, SESSION_INDEX);
       return records.map((record) => record.metadata as TrainingSessionSummary)
         .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
     }, true),
 
     listSessions: (limit) => run(async (database) => {
-      const { records } = await readIndexes(database, SESSION_INDEX);
+      const { records } = await availableIndexes(database, SESSION_INDEX);
       const sorted = records.sort((left, right) => right.metadata.startedAt.localeCompare(left.metadata.startedAt));
       const sessions: TrainingSession[] = [];
       const requestedLimit = limit === undefined ? Infinity : Math.max(0, Math.trunc(limit) || 0);
       for (const record of sorted) {
         if (sessions.length >= requestedLimit) break;
-        const session = await readRecord(database, SESSION_INDEX, record.id);
+        const session = await availableRecord(database, SESSION_INDEX, record.id);
         if (session) sessions.push(session as TrainingSession);
       }
       return sessions;
     }, true),
 
-    countSessions: () => run(async (database) => (await readIndexes(database, SESSION_INDEX)).records.length, true),
+    countSessions: () => run(async (database) => (await availableIndexes(database, SESSION_INDEX)).records.length, true),
 
-    countUnexportedValidSessions: () => run(async (database) => (await readIndexes(database, SESSION_INDEX)).records
+    countUnexportedValidSessions: () => run(async (database) => (await availableIndexes(database, SESSION_INDEX)).records
       .filter((record) => (record.metadata as TrainingSessionSummary).validity.valid
         && (record.metadata as TrainingSessionSummary).exportedAt === null).length, true),
 
     getStorageIntegrity: () => run(async (database) => {
-      const drafts = await readIndexes(database, DRAFT_INDEX);
-      const sessions = await readIndexes(database, SESSION_INDEX);
+      const drafts = await availableIndexes(database, DRAFT_INDEX);
+      const sessions = await availableIndexes(database, SESSION_INDEX);
       return {
         readableDraftCount: drafts.records.length,
         readableSessionCount: sessions.records.length,
         quarantinedDraftCount: drafts.quarantined,
         quarantinedSessionCount: sessions.quarantined,
+        ...(migrationWarning ? { migrationWarning } : {}),
       };
     }, true),
 

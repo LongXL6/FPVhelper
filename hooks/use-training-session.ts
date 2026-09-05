@@ -701,6 +701,7 @@ export function useTrainingSession({
       ...(termination.interruptionReason ? { interruptionReason: termination.interruptionReason } : {}),
     });
     pendingSessionRef.current = session;
+    setHasPendingSave(true);
     setLastSession(session);
     setElapsedMs(session.durationMs);
     setSampleCount(session.sampleCount);

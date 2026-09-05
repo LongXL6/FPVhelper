@@ -1,4 +1,27 @@
-import { expect, test, type FakeSerialMetrics } from "./fixtures/fpv-hardware";
+import type { Page } from "@playwright/test";
+import { expect, readStoredTrainingRecords, test, type FakeSerialMetrics } from "./fixtures/fpv-hardware";
+
+async function openInputSettings(page: Page) {
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "飞行工作台", exact: true }).click();
+  const settings = page.locator(".video-setup-details");
+  if (!await settings.evaluate((element) => (element as HTMLDetailsElement).open)) {
+    await settings.locator("summary").click();
+  }
+}
+
+async function expectSavedSession(page: Page, athleteCode: string) {
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "训练记录", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".session-detail-header")).toContainText(athleteCode);
+  await expect(page.locator(".session-detail-header")).toContainText("已保存到本机");
+}
+
+async function expectStickInputs(page: Page, { roll, pitch, yaw, throttle }: { roll: number; pitch: number; yaw: number; throttle: number }) {
+  const axis = (value: number) => value > 0 ? `+${value}` : String(value);
+  const fields = page.locator(".telemetry-rail .stick-field");
+  await expect(fields.nth(0)).toHaveAttribute("aria-label", `左摇杆 · GROUND_RC，YAW ${axis(yaw * 10)}，THR ${axis(throttle * 20 - 1000)}；归一化行程 −1000 至 +1000，中心 0`);
+  await expect(fields.nth(1)).toHaveAttribute("aria-label", `右摇杆 · GROUND_RC，ROLL ${axis(roll * 10)}，PITCH ${axis(pitch * 10)}；归一化行程 −1000 至 +1000，中心 0`);
+  await expect(page.locator(".gauge-grid--primary")).toContainText(`${throttle}%`);
+}
 
 interface StoredSession {
   schemaVersion: number;
@@ -48,6 +71,7 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   await page.goto("/");
   const onboarding = page.getByRole("dialog", { name: "首次使用检查" });
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
+  await openInputSettings(page);
 
   await page.getByRole("button", { name: "输入布局：四分屏" }).click();
   const firstPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 1" });
@@ -58,7 +82,7 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
     .getByRole("button", { name: "选手取景：完整画面" })
     .click();
   await secondPilot.click();
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-02");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("PILOT-02");
   const secondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
   await secondBinding.getByRole("slider", { name: "裁切画面宽度" }).fill("40");
   await secondBinding.getByRole("slider", { name: "裁切画面高度" }).fill("40");
@@ -97,8 +121,9 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   }).toEqual({ sourceReady: true, exactCropWidth: true, exactCropHeight: true });
 
   await page.reload();
+  await openInputSettings(page);
   await expect(page.locator(".video-viewport-tabs").getByRole("button", { name: "PILOT-02" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("textbox", { name: "选手姓名或代号" })).toHaveValue("PILOT-02");
+  await expect(page.getByRole("textbox", { name: "当前训练选手代号" })).toHaveValue("PILOT-02");
   const restoredSecondBinding = page.getByRole("region", { name: "PILOT-02 画面绑定" });
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("55");
   await expect(restoredSecondBinding.getByRole("slider", { name: "裁切上边界" })).toHaveValue("5");
@@ -113,6 +138,7 @@ test("pilot video binding switches between full input and a persisted custom cro
   await page.goto("/");
   const onboarding = page.getByRole("dialog", { name: "首次使用检查" });
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
+  await openInputSettings(page);
 
   const binding = page.getByRole("region", { name: "选手 1 画面绑定" });
   await expect(binding.getByRole("button", { name: "选手取景：完整画面" })).toHaveAttribute("aria-pressed", "true");
@@ -189,6 +215,7 @@ test("pilot video binding switches between full input and a persisted custom cro
   });
 
   await page.reload();
+  await openInputSettings(page);
   const restoredBinding = page.getByRole("region", { name: "选手 1 画面绑定" });
   await expect(restoredBinding.getByRole("button", { name: "选手取景：裁切区域" })).toHaveAttribute("aria-pressed", "true");
   await expect(restoredBinding.getByRole("slider", { name: "裁切左边界" })).toHaveValue("10");
@@ -202,6 +229,7 @@ test("pilot video binding switches between full input and a persisted custom cro
 
 test("independent video inputs open together and keep one active telemetry viewport", async ({ page }) => {
   await page.goto("/");
+  await openInputSettings(page);
   await page.getByRole("button", { name: "+ 独立输入" }).click();
 
   await page.getByRole("textbox", { name: "输入名称" }).fill("练习区接收机");
@@ -224,10 +252,12 @@ test("independent video inputs open together and keep one active telemetry viewp
   })).toBe(true);
 
   await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-2");
-  await expect(page.locator(".video-viewport .hud-top-left")).toHaveCount(1);
+  await expect(page.locator(".video-viewport .video-stick-overlay--orange")).toHaveCount(1);
+  await expect(page.locator(".video-viewport .video-stick-overlay--blue")).toHaveCount(1);
   await page.locator('.video-viewport[data-source-id="video-source-1"] .video-viewport-select').click();
   await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-1");
-  await expect(page.locator(".video-viewport.is-active .hud-top-left")).toHaveCount(1);
+  await expect(page.locator(".video-viewport.is-active .video-stick-overlay--orange")).toHaveCount(1);
+  await expect(page.locator(".video-viewport.is-active .video-stick-overlay--blue")).toHaveCount(1);
 
   await page.getByRole("button", { name: "断开画面", exact: true }).click();
   await expect(page.getByText("1/2 路 UVC 在线")).toBeVisible();
@@ -278,13 +308,14 @@ test("active pilot full and cropped video record to the authorized local folder"
   });
   await page.reload();
 
-  await expect(page.getByRole("checkbox", { name: "同时录制当前选手视频" })).toBeChecked();
+  await page.locator(".recording-options > summary").click();
+  await expect(page.getByRole("checkbox", { name: "录制视频与摇杆叠层" })).toBeChecked();
   await expect(page.getByText(/本地保存目录：/)).toBeVisible();
   await page.getByRole("button", { name: "打开画面" }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("VIDEO-01");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("VIDEO-01");
 
   const recordButton = page.getByRole("button", { name: "● 开始记录" });
   await expect(recordButton).toBeEnabled();
@@ -294,6 +325,8 @@ test("active pilot full and cropped video record to the authorized local folder"
   await page.getByRole("button", { name: "■ 结束记录" }).click();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
 
+  await expectSavedSession(page, "VIDEO-01");
+  await openInputSettings(page);
   const binding = page.getByRole("region", { name: "VIDEO-01 画面绑定" });
   await binding.getByRole("button", { name: "选手取景：裁切区域" }).click();
   await binding.getByRole("slider", { name: "裁切画面宽度" }).fill("50");
@@ -308,6 +341,7 @@ test("active pilot full and cropped video record to the authorized local folder"
   await page.getByRole("button", { name: "■ 结束记录" }).click();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
 
+  await expectSavedSession(page, "VIDEO-01");
   const recordings = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];
@@ -322,6 +356,27 @@ test("active pilot full and cropped video record to the authorized local folder"
   expect(recordings.some((recording) => /-VIDEO-01-.*-full\.webm$/.test(recording.name))).toBe(true);
   expect(recordings.some((recording) => /-VIDEO-01-.*-crop\.webm$/.test(recording.name))).toBe(true);
   expect(recordings.every((recording) => recording.size > 0)).toBe(true);
+  const saved = await readStoredTrainingRecords(page);
+  expect(saved.sessions).toHaveLength(2);
+  const exportedSessions = await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const exported = [];
+    for await (const [name, handle] of root.entries()) {
+      if (handle.kind !== "file" || !name.endsWith(".json")) continue;
+      exported.push(JSON.parse(await (await (handle as FileSystemFileHandle).getFile()).text()));
+    }
+    return exported;
+  });
+  expect(exportedSessions).toHaveLength(2);
+  for (const session of saved.sessions) {
+    expect(session.video).toMatchObject({ recorded: true, synchronized: false, overlay: "sticks" });
+    if (!session.video.recorded) throw new Error(`Missing confirmed video receipt for ${session.id}`);
+    expect(recordings).toContainEqual({ name: session.video.filename, size: session.video.bytes });
+    const exported = exportedSessions.find((candidate) => candidate.id === session.id);
+    expect(exported?.video).toEqual(session.video);
+    expect(exported?.samples).toHaveLength(session.sampleCount);
+  }
+  await openInputSettings(page);
 
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -351,12 +406,18 @@ test("active pilot full and cropped video record to the authorized local folder"
   const stopButton = page.getByRole("button", { name: "■ 结束记录" });
   await expect(stopButton).toBeEnabled();
   await stopButton.click();
-  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存记录…" })).toBeDisabled();
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("FINALIZING");
+  expect((await readStoredTrainingRecords(page)).sessions).toHaveLength(2);
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoClose?: () => void }).__releaseDelayedVideoClose?.();
   });
   await expect(page.getByTestId("local-video-recording-status")).toContainText("VIDEO ERROR");
-  await expect(page.getByTestId("local-video-recording-status")).toContainText("视频源已中断");
+  await expect(page.getByTestId("local-video-recording-status")).toContainText(/视频.*(?:中断|断开)/);
+  await expectSavedSession(page, "VIDEO-01");
+  const afterFailure = (await readStoredTrainingRecords(page)).sessions;
+  expect(afterFailure).toHaveLength(3);
+  expect(afterFailure.filter((session) => !session.video.recorded)).toHaveLength(1);
 });
 
 test("a delayed video file open cannot start after its Training Session has ended", async ({ page }) => {
@@ -399,7 +460,7 @@ test("a delayed video file open cannot start after its Training Session has ende
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("RACE-01");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("RACE-01");
 
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -410,33 +471,56 @@ test("a delayed video file open cannot start after its Training Session has ende
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile = release;
+    const media = window as Window & { __videoRecorderStartCalls?: number; __videoFileOpenPending?: boolean };
+    media.__videoRecorderStartCalls = 0;
+    const recorderStart = MediaRecorder.prototype.start;
+    MediaRecorder.prototype.start = function (...args) {
+      media.__videoRecorderStartCalls! += 1;
+      return recorderStart.apply(this, args);
+    };
     prototype.getFileHandle = async function (...args) {
-      await gate;
+      if (args[0].endsWith(".webm")) {
+        media.__videoFileOpenPending = true;
+        await gate;
+      }
       return getFileHandle.apply(this, args);
     };
   });
 
   await page.getByRole("button", { name: "● 开始记录" }).click();
   await expect(page.getByRole("heading", { name: "正在记录 RACE-01" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as Window & { __videoFileOpenPending?: boolean }).__videoFileOpenPending)).toBe(true);
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+  await expectSavedSession(page, "RACE-01");
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile?.();
   });
-  await expect(page.getByTestId("local-video-recording-status")).toContainText("未启动孤立录像");
-  await expect(page.getByTestId("local-video-recording-status")).toContainText("VIDEO ERROR");
+  await expect.poll(() => page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const files: Array<{ name: string; size: number }> = [];
+    for await (const [name, handle] of root.entries()) {
+      if (name.endsWith(".webm") && handle.kind === "file") files.push({ name, size: (await (handle as FileSystemFileHandle).getFile()).size });
+    }
+    return files;
+  })).toHaveLength(1);
+  expect(await page.evaluate(() => (window as Window & { __videoRecorderStartCalls?: number }).__videoRecorderStartCalls)).toBe(0);
+  const stopped = (await readStoredTrainingRecords(page)).sessions;
+  expect(stopped).toHaveLength(1);
+  expect(stopped[0].video.recorded).toBe(false);
+  await expect(page.getByTestId("local-video-recording-status")).not.toContainText("SAVED");
 });
 
 test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ page }) => {
   await page.route("**/api/events", (route) => route.abort("blockedbyclient"));
   await page.goto("/");
+  await openInputSettings(page);
   await page.getByRole("button", { name: "+ 独立输入" }).click();
 
   const firstViewport = page.locator('.video-viewport[data-source-id="video-source-1"]');
   const secondViewport = page.locator('.video-viewport[data-source-id="video-source-2"]');
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-02");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("PILOT-02");
   await firstViewport.locator(".video-viewport-select").click();
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("PILOT-01");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("PILOT-01");
 
   await firstViewport.getByRole("button", { name: "连接 PILOT-01 桥接飞控" }).click();
   await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-source", "serial");
@@ -465,17 +549,11 @@ test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ pag
     expect(analogCount).toBeLessThanOrEqual(1);
   }
   await expect(page.locator(".video-viewport.is-active")).toHaveAttribute("data-source-id", "video-source-2");
-  await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK -20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK +20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("YAW STICK -10");
-  await expect(page.locator(".throttle-ladder")).toContainText("75%");
+  await expectStickInputs(page, { roll: -20, pitch: 20, yaw: -10, throttle: 75 });
   await expect(firstViewport.locator(".pilot-mini-telemetry")).toContainText("THR 25%");
 
   await firstViewport.locator(".video-viewport-select").click();
-  await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK +20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK -20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("YAW STICK +10");
-  await expect(page.locator(".throttle-ladder")).toContainText("25%");
+  await expectStickInputs(page, { roll: 20, pitch: -20, yaw: 10, throttle: 25 });
 
   const recordButton = page.getByRole("button", { name: "● 开始记录" });
   await expect(recordButton).toBeEnabled();
@@ -485,7 +563,8 @@ test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ pag
   const uniqueSampleCount = page.locator(".session-stats span").filter({ hasText: "独立样本" }).locator("b");
   await expect.poll(async () => Number((await uniqueSampleCount.textContent()) ?? "0")).toBeGreaterThanOrEqual(3);
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
+  await expectSavedSession(page, "PILOT-01");
+  await openInputSettings(page);
 
   await secondViewport.locator(".video-viewport-select").click();
   await expect(recordButton).toBeEnabled();
@@ -493,26 +572,16 @@ test("two pilot bridges keep MSP_RC streams and Sessions isolated", async ({ pag
   await expect(page.getByRole("heading", { name: "正在记录 PILOT-02" })).toBeVisible();
   await expect.poll(async () => Number((await uniqueSampleCount.textContent()) ?? "0")).toBeGreaterThanOrEqual(3);
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expect(page.locator(".today-records-card")).toContainText("共 2 条");
+  await expectSavedSession(page, "PILOT-02");
+  await expect(page.locator(".session-list-item")).toHaveCount(2);
 
-  const sessions = await page.evaluate(async () => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("fpvhelper-training", 1);
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error));
-    });
-    const transaction = database.transaction("sessions", "readonly");
-    const request = transaction.objectStore("sessions").getAll();
-    return await new Promise<Array<{ athleteCode: string; samples: Array<{ channelsUs: number[] }> }>>((resolve, reject) => {
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error));
-    });
-  });
+  const { sessions } = await readStoredTrainingRecords(page);
   const pilotOne = sessions.find((session) => session.athleteCode === "PILOT-01");
   const pilotTwo = sessions.find((session) => session.athleteCode === "PILOT-02");
   expect(pilotOne?.samples[0]?.channelsUs.slice(0, 4)).toEqual([1_600, 1_400, 1_550, 1_250]);
   expect(pilotTwo?.samples[0]?.channelsUs.slice(0, 4)).toEqual([1_400, 1_600, 1_450, 1_750]);
 
+  await openInputSettings(page);
   const secondResponsesBefore = await page.evaluate(() => window.__fpvFakeSerialPorts[1].rcResponses);
   await page.evaluate(() => window.__fpvFakeSerialControl.disconnectPort(0));
   await expect(firstViewport.locator(".pilot-viewport-telemetry")).toHaveAttribute("data-telemetry-connection", "error");
@@ -531,13 +600,15 @@ test("fake media and read-only MSP bridge persist a local training session", asy
 
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "飞行操控台" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^飞行工作台/ })).toBeVisible();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "工作站设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "本机统计 · 关闭" })).toBeVisible();
   await expect(page.getByText("当前域名仅用于内部验证，不采集统计事件。")).toBeVisible();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "飞行工作台", exact: true }).click();
 
   await page.getByRole("button", { name: "打开画面" }).click();
   await expect(page.getByText(/HDMI 画面在线/)).toBeVisible();
-  await expect.poll(() => page.locator("video").evaluate((video) => {
+  await expect.poll(() => page.locator(".video-viewport video").evaluate((video) => {
     const element = video as HTMLVideoElement;
     return element.srcObject instanceof MediaStream && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
   })).toBe(true);
@@ -548,14 +619,11 @@ test("fake media and read-only MSP bridge persist a local training session", asy
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
   await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
-  await expect(page.locator(".hud-bottom-left")).toContainText("ROLL STICK +20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("PITCH STICK -20");
-  await expect(page.locator(".hud-bottom-left")).toContainText("YAW STICK +10");
-  await expect(page.locator(".throttle-ladder")).toContainText("25%");
+  await expectStickInputs(page, { roll: 20, pitch: -20, yaw: 10, throttle: 25 });
   await expect(page.locator(".gauge-grid--primary")).toContainText("1250 μs · GROUND_RC / MSP_RC");
-  await expect(page.locator(".hud-top-right")).toContainText("5.0 V");
 
   await page.getByText("采集桥诊断", { exact: true }).click();
+  await expect(page.locator(".bridge-card")).toContainText("地面桥电压：5.0 V");
   await expect(page.getByText("遥控链路：遥控链路正常。Bridge FC 在线不等于遥控器在线。")).toBeVisible();
   await expect(page.locator(".bridge-card .card-heading")).toContainText("RX OK");
   await expect(page.getByText(/解析质量：良好 · 有效帧/)).toBeVisible();
@@ -577,7 +645,7 @@ test("fake media and read-only MSP bridge persist a local training session", asy
     closeRejectedWhileLocked: 1,
   });
 
-  await page.getByRole("textbox", { name: "选手姓名或代号" }).fill("E2E-07");
+  await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("E2E-07");
   await expect(recordButton).toBeEnabled();
   await expect(recordButton).toHaveAttribute("title", "已满足开始条件");
   await recordButton.click();
@@ -588,35 +656,11 @@ test("fake media and read-only MSP bridge persist a local training session", asy
   await expect.poll(async () => Number((await uniqueSampleCount.textContent()) ?? "0")).toBeGreaterThanOrEqual(3);
 
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expect(page.getByRole("heading", { name: "最近记录已保存在本机" })).toBeVisible();
-  await expect(page.getByRole("article", { name: /训练 Session：E2E-07/ })).toBeVisible();
-  await expect(page.locator(".today-records-card")).toContainText("共 1 条");
+  await expectSavedSession(page, "E2E-07");
+  await expect(page.getByRole("article", { name: /E2E-07/ })).toBeVisible();
+  await expect(page.locator(".session-list-item")).toHaveCount(1);
 
-  const stored = await page.evaluate(async () => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("fpvhelper-training", 1);
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error));
-    });
-    const transaction = database.transaction(["drafts", "sessions"], "readonly");
-    const draftsRequest = transaction.objectStore("drafts").getAll();
-    const sessionsRequest = transaction.objectStore("sessions").getAll();
-    const requestResult = <T,>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
-      request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error));
-    });
-    const [drafts, sessions] = await Promise.all([
-      requestResult(draftsRequest),
-      requestResult(sessionsRequest),
-    ]);
-    await new Promise<void>((resolve, reject) => {
-      transaction.addEventListener("complete", () => resolve());
-      transaction.addEventListener("abort", () => reject(transaction.error));
-      transaction.addEventListener("error", () => reject(transaction.error));
-    });
-    database.close();
-    return { drafts, sessions };
-  }) as { drafts: unknown[]; sessions: StoredSession[] };
+  const stored = await readStoredTrainingRecords(page) as { drafts: unknown[]; sessions: StoredSession[] };
 
   expect(stored.drafts).toEqual([]);
   expect(stored.sessions).toHaveLength(1);
@@ -646,6 +690,7 @@ test("fake media and read-only MSP bridge persist a local training session", asy
   });
   expect(completedSession.samples.at(-1)?.groundBridge.mspRssiPercent).toBeCloseTo((900 / 1_023) * 100, 5);
 
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "飞行工作台", exact: true }).click();
   await page.evaluate(() => window.__fpvFakeSerialControl.holdNextWrite());
   await expect.poll(() => page.evaluate(() => ({
     pendingReads: window.__fpvFakeSerial.pendingReads,

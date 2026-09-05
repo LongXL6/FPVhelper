@@ -14,6 +14,18 @@ describe("TrainingStorageIntegrityNotice", () => {
     expect(markup).toBe("");
   });
 
+  it("keeps read-only migration access distinct from unavailable or deleted data", () => {
+    const markup = renderToStaticMarkup(<TrainingStorageIntegrityNotice integrity={{
+      readableDraftCount: 0, readableSessionCount: 2, quarantinedDraftCount: 1, quarantinedSessionCount: 0,
+      migrationWarning: "升级存储时空间不足。",
+    }} />);
+    expect(markup).toContain("本机记录暂以只读方式打开");
+    expect(markup).toContain("升级存储时空间不足");
+    expect(markup).toContain("现有可读记录可以查看和导出");
+    expect(markup).toContain("新录制与本机修改暂不可用");
+    expect(markup).not.toContain("新训练仍可使用");
+  });
+
   it("states the quarantine count, usable boundary, and raw-record retention", () => {
     const markup = renderToStaticMarkup(<TrainingStorageIntegrityNotice integrity={{
       readableDraftCount: 1,

@@ -9,6 +9,8 @@ import {
   markTrainingSessionExported,
   recoverInterruptedTrainingSession,
   withTrainingSessionNotes,
+  parseTrainingSession,
+  serializeTrainingSession,
   type TrainingSessionDraft,
 } from "./training-session";
 
@@ -490,5 +492,124 @@ describe("IndexedDB training session store", () => {
     await expect(reader.countSessions()).rejects.toThrow("已关闭");
     newer.close();
     await reader.close();
+  });
+
+  it("keeps legacy history readable and exportable when migration runs out of quota, then retries after recovery", async () => {
+    const factory = new IDBFactory();
+    const opening = factory.open("legacy-quota-fallback", 1);
+    opening.addEventListener("upgradeneeded", () => {
+      opening.result.createObjectStore("drafts", { keyPath: "id" });
+      opening.result.createObjectStore("sessions", { keyPath: "id" });
+    });
+    const original = await requestValue(opening);
+    const draft = createDraft("recoverable-draft");
+    const sessionDraft = createDraft("valid-history");
+    appendSamples(sessionDraft, 600);
+    const session = finishTrainingSession(sessionDraft, 1_700_000_060_000, 61_000);
+    const corrupt = { id: "bad-history", schemaVersion: 999, original: "unchanged" };
+    const conflictingDraft = createDraft(corrupt.id);
+    await putRawRecord(original, "drafts", draft);
+    await putRawRecord(original, "drafts", conflictingDraft);
+    await putRawRecord(original, "sessions", session);
+    await putRawRecord(original, "sessions", corrupt);
+    original.close();
+
+    const originalAdd = IDBObjectStore.prototype.add;
+    let attemptedChunks = 0;
+    const add = vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (this: IDBObjectStore, value, key) {
+      if (this.name === "sampleChunks" && ++attemptedChunks % 2 === 0) {
+        throw new DOMException("Storage full", "QuotaExceededError");
+      }
+      return originalAdd.call(this, value, key);
+    });
+    const store = createTrainingSessionStore(factory, "legacy-quota-fallback");
+    try {
+      for (let retry = 0; retry < 2; retry += 1) {
+        expect((await store.listSessionSummaries()).map((item) => item.id)).toEqual([session.id]);
+        expect((await store.listSessionSummaries())[0]).not.toHaveProperty("samples");
+        const exportable = await store.getSession(session.id);
+        expect(exportable).toEqual(session);
+        expect(parseTrainingSession(serializeTrainingSession(exportable!))).toEqual(session);
+        expect(await store.listSessions()).toEqual([session]);
+        expect(await store.getActiveDraft()).toEqual(draft);
+        expect(await store.getSession(corrupt.id)).toBeNull();
+        expect(await store.countSessions()).toBe(1);
+        expect(await store.countUnexportedValidSessions()).toBe(1);
+        expect(await store.getStorageIntegrity()).toEqual({
+          readableDraftCount: 1, readableSessionCount: 1,
+          quarantinedDraftCount: 1, quarantinedSessionCount: 1,
+          migrationWarning: expect.stringContaining("分块迁移未完成"),
+        });
+      }
+      await expect(store.saveDraft(createDraft("new-draft"))).rejects.toThrow("写入暂不可用");
+      await expect(store.saveSession(withTrainingSessionNotes(session, "must not overwrite"))).rejects.toThrow("写入暂不可用");
+      const database = await openDatabase(factory, "legacy-quota-fallback");
+      const transaction = database.transaction(["sampleChunks", "sessionIndex"], "readonly");
+      expect(await requestValue(transaction.objectStore("sampleChunks").count())).toBe(0);
+      expect(await requestValue(transaction.objectStore("sessionIndex").count())).toBe(0);
+      await transactionDone(transaction);
+      expect(await storedValue(database, "sessions", session.id)).toEqual(session);
+      expect(await storedValue(database, "sessions", corrupt.id)).toEqual(corrupt);
+      expect(await storedValue(database, "drafts", draft.id)).toEqual(draft);
+      expect(await storedValue(database, "drafts", corrupt.id)).toEqual(conflictingDraft);
+
+      add.mockRestore();
+      expect((await store.listSessionSummaries()).map((item) => item.id)).toEqual([session.id]);
+      expect(await store.getStorageIntegrity()).toEqual({
+        readableDraftCount: 1, readableSessionCount: 1, quarantinedDraftCount: 1, quarantinedSessionCount: 1,
+      });
+      expect(await store.getSession(session.id)).toEqual(session);
+      expect(await storedValue(database, "sessionIndex", session.id)).toMatchObject({ status: "ready", sampleCount: 601 });
+      await store.saveSession(withTrainingSessionNotes(session, "capacity recovered"));
+      expect((await store.getSession(session.id))?.notes).toBe("capacity recovered");
+      expect(await storedValue(database, "sessions", session.id)).toEqual(session);
+      database.close();
+    } finally {
+      add.mockRestore();
+      await store.close();
+    }
+  });
+
+  it("keeps current chunked records authoritative during read-only fallback, including corrupt blocks", async () => {
+    const factory = new IDBFactory();
+    const store = createTrainingSessionStore(factory, "mixed-quota-fallback");
+    const session = finishTrainingSession(createDraft("existing"), 1_700_000_001_000, 2_000);
+    const current = withTrainingSessionNotes(session, "current chunked metadata");
+    await store.saveSession(current);
+    const database = await openDatabase(factory, "mixed-quota-fallback");
+    const legacy = finishTrainingSession(createDraft("new-legacy"), 1_700_000_001_000, 2_000);
+    await putRawRecord(database, "sessions", session);
+    await putRawRecord(database, "sessions", legacy);
+    const originalAdd = IDBObjectStore.prototype.add;
+    const add = vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (this: IDBObjectStore, value, key) {
+      if (this.name === "sampleChunks") throw new DOMException("Storage full", "QuotaExceededError");
+      return originalAdd.call(this, value, key);
+    });
+    try {
+      expect(await store.getSession(session.id)).toEqual(current);
+      expect((await store.listSessionSummaries()).map((item) => item.id).sort()).toEqual(["existing", "new-legacy"]);
+      const corruptedChunk = { id: session.id, index: 0, samples: [{ ...session.samples[0], elapsedMs: 999 }] };
+      await putRawRecord(database, "sampleChunks", corruptedChunk);
+      expect(await store.getSession(session.id)).toBeNull();
+      expect((await store.listSessionSummaries()).map((item) => item.id)).toEqual([legacy.id]);
+      expect(await store.getStorageIntegrity()).toMatchObject({
+        readableSessionCount: 1, quarantinedSessionCount: 1, migrationWarning: expect.any(String),
+      });
+      // Quarantine can be tracked without another write while the database is full.
+      expect(await storedValue(database, "sessionIndex", session.id)).toMatchObject({ status: "ready" });
+      expect(await storedValue(database, "sampleChunks", [session.id, 0])).toEqual(corruptedChunk);
+      expect(await storedValue(database, "sessions", session.id)).toEqual(session);
+      add.mockRestore();
+      expect(await store.getStorageIntegrity()).toEqual({
+        readableDraftCount: 0, readableSessionCount: 1, quarantinedDraftCount: 0, quarantinedSessionCount: 1,
+      });
+      expect(await storedValue(database, "sessionIndex", session.id)).toMatchObject({ status: "quarantined" });
+      expect(await store.getSession(session.id)).toBeNull();
+      expect(await store.getSession(legacy.id)).toEqual(legacy);
+    } finally {
+      add.mockRestore();
+      database.close();
+      await store.close();
+    }
   });
 });

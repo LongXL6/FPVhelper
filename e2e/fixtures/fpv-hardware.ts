@@ -1,4 +1,50 @@
-import { test as base } from "@playwright/test";
+import { test as base, type Page } from "@playwright/test";
+import type { TrainingSession, TrainingSessionDraft, TrainingSessionSample } from "../../lib/training-session";
+
+export async function readStoredTrainingRecords(page: Page) {
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fpvhelper-training");
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const transaction = database.transaction(["drafts", "sessions", "draftIndex", "sessionIndex", "sampleChunks"], "readonly");
+    const done = new Promise<void>((resolve, reject) => {
+      transaction.addEventListener("complete", () => resolve());
+      transaction.addEventListener("abort", () => reject(transaction.error));
+      transaction.addEventListener("error", () => reject(transaction.error));
+    });
+    const read = <T,>(store: string) => new Promise<T[]>((resolve, reject) => {
+      const request = transaction.objectStore(store).getAll();
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    type Manifest<T> = { id: string; status: string; metadata: Omit<T, "samples">; sampleCount: number; chunks: Array<{ start: number; count: number }> };
+    const [legacyDrafts, legacySessions, draftIndex, sessionIndex, chunks] = await Promise.all([
+      read<TrainingSessionDraft>("drafts"), read<TrainingSession>("sessions"),
+      read<Manifest<TrainingSessionDraft>>("draftIndex"), read<Manifest<TrainingSession>>("sessionIndex"),
+      read<{ id: string; index: number; samples: TrainingSessionSample[] }>("sampleChunks"),
+    ]);
+    await done;
+    database.close();
+    const restore = <T extends TrainingSession | TrainingSessionDraft>(manifests: Manifest<T>[], legacy: T[]): T[] => {
+      const records = manifests.filter((manifest) => manifest.status === "ready").map((manifest) => {
+        const samples: TrainingSessionSample[] = [];
+        manifest.chunks.forEach((descriptor, index) => {
+          const chunk = chunks.find((candidate) => candidate.id === manifest.id && candidate.index === index);
+          if (!chunk || descriptor.start !== samples.length || chunk.samples.length !== descriptor.count) {
+            throw new Error(`Missing or incomplete persisted sample chunk: ${manifest.id}/${index}`);
+          }
+          samples.push(...chunk.samples);
+        });
+        if (samples.length !== manifest.sampleCount) throw new Error(`Persisted sample count mismatch: ${manifest.id}`);
+        return { ...manifest.metadata, samples } as T;
+      });
+      return [...records, ...legacy.filter((record) => !manifests.some((manifest) => manifest.id === record.id))];
+    };
+    return { drafts: restore(draftIndex, legacyDrafts), sessions: restore(sessionIndex, legacySessions) };
+  });
+}
 
 export interface FakeSerialMetrics {
   requestPortCalls: number;
@@ -93,7 +139,7 @@ export const test = base.extend<{ fakeHardware: void }>({
         `fpvh_ingest_${"a".repeat(43)}`,
       );
       window.localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
-      window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+      if (!window.localStorage.getItem("fpvhelper.training-preferences.v1")) window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
         autoExport: false,
         recordPilotVideo: false,
         showStickOverlays: true,

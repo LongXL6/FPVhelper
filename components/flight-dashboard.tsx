@@ -660,17 +660,19 @@ export function FlightDashboard() {
     ? tabStartBlockReason
     : !trainingSession.storageReady
       ? "正在准备浏览器本地存储"
-      : trainingSession.storageError
-        ? "本地存储异常，暂不能开始"
-        : !normalizeAthleteCode(athleteCode)
-          ? "先填写选手代号"
-          : !bridgeIsLive
-            ? "连接桥接飞控，等待遥控输入就绪"
-            : linkState === "lost"
-              ? "遥控链路已丢失，不能开始记录"
-              : linkState === "unknown"
-                ? "等待飞控确认遥控链路"
-                : localVideoStartBlockReason ?? "已满足开始条件";
+      : trainingSession.storageIntegrity.migrationWarning
+        ? "存储升级尚未完成，旧记录仍可查看和导出"
+        : trainingSession.storageError
+          ? "本地存储异常，暂不能开始"
+          : !normalizeAthleteCode(athleteCode)
+            ? "先填写选手代号"
+            : !bridgeIsLive
+              ? "连接桥接飞控，等待遥控输入就绪"
+              : linkState === "lost"
+                ? "遥控链路已丢失，不能开始记录"
+                : linkState === "unknown"
+                  ? "等待飞控确认遥控链路"
+                  : localVideoStartBlockReason ?? "已满足开始条件";
   const canStartDashboardRecording = trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
   const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
     ? `本地保存目录：${trainingSession.exportDirectoryName}`

@@ -113,6 +113,30 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it("keeps migration-limited history exportable while new recording stays disabled", async () => {
+    await act(async () => renderer!.unmount());
+    vi.mocked(store.getStorageIntegrity).mockResolvedValue({
+      readableDraftCount: 0, readableSessionCount: records.size, quarantinedDraftCount: 0, quarantinedSessionCount: 0,
+      migrationWarning: "存储升级空间不足，暂以只读方式打开旧记录。",
+    });
+    saveSession.mockRejectedValue(new DOMException("quota", "QuotaExceededError"));
+    const write = vi.fn(async (_blob: Blob) => { void _blob; });
+    const close = vi.fn(async () => undefined);
+    vi.mocked(exportModule.getBrowserTrainingSessionSaveFilePicker).mockReturnValue(async () => ({ createWritable: async () => ({ write, close }) }));
+    await act(async () => { renderer = create(<Harness />); });
+    expect(controller.storageReady).toBe(true);
+    expect(controller.storageIntegrity.migrationWarning).toContain("只读");
+    expect(controller.allSessions).toHaveLength(2);
+    expect(controller.canStart).toBe(false);
+    let result: TrainingSessionExportResult | undefined;
+    await act(async () => { result = await controller.exportSession("older"); });
+    expect(close).toHaveBeenCalledOnce();
+    expect(JSON.parse(await write.mock.calls[0][0].text())).toMatchObject({ id: "older" });
+    expect(result).toMatchObject({ status: "confirmed", localStateSaved: false });
+    expect(records.get("older")!.exportCount).toBe(3);
+    expect(controller.allSessions).toHaveLength(2);
+  });
+
   it("loads lightweight history and opens the picker before reading the selected full record", async () => {
     expect(store.listSessions).not.toHaveBeenCalled();
     expect(controller.allSessions[0]).not.toHaveProperty("samples");
@@ -139,6 +163,10 @@ describe("training library session actions", () => {
     await act(async () => { stopped = controller.stopRecording(); });
     expect(controller.isRecording).toBe(false);
     expect(controller.isFinishing).toBe(true);
+    expect(controller.hasPendingSave).toBe(true);
+    const closingDuringVideo = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(closingDuringVideo);
+    expect(closingDuringVideo.defaultPrevented).toBe(true);
     expect(store.completeSession).not.toHaveBeenCalled();
     act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 2, monotonicTimestampMs: 2_010 }, "serial"));
     expect(controller.sampleCount).toBe(1);
@@ -148,6 +176,10 @@ describe("training library session actions", () => {
     });
     expect(records.get(sessionId!)?.video).toMatchObject({ recorded: true, synchronized: false, overlay: "sticks", filename: "recording.webm" });
     expect(controller.isFinishing).toBe(false);
+    expect(controller.hasPendingSave).toBe(false);
+    const closingAfterSave = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(closingAfterSave);
+    expect(closingAfterSave.defaultPrevented).toBe(false);
   });
 
   it("coalesces slow one-second checkpoints and reports only confirmed samples", async () => {

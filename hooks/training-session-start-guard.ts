@@ -19,6 +19,7 @@ interface TrainingSessionStartState {
 export function canStartTrainingSession({
   storageReady,
   storageError,
+  storageIntegrity,
   hasPendingSave,
   isRecording,
   isStarting,
@@ -30,6 +31,7 @@ export function canStartTrainingSession({
 }: TrainingSessionStartState) {
   return storageReady &&
     storageError === null &&
+    !storageIntegrity.migrationWarning &&
     !hasPendingSave &&
     !isRecording &&
     !isStarting &&
