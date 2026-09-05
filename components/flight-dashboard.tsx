@@ -1100,6 +1100,7 @@ export function FlightDashboard() {
               <Icon name={item.icon} /><span>{item.label}</span>{item.id === "records" && trainingSession.allSessions.length > 0 ? <small>{trainingSession.allSessions.length}</small> : null}
             </button>
           ))}
+          <a className="workspace-nav-item" href="/vision-lab" target="_blank" rel="noopener noreferrer" aria-label="打开视觉实验台（新标签页）"><Icon name="camera" /><span>视觉实验台</span><small>实验</small></a>
         </nav>
         <div className="workspace-nav-footer"><Icon name="shield" /><p>留在本机，专注飞行<small>实时画面与训练记录本机处理</small></p><span>LongXL <small>Made for pilots.</small></span></div>
       </aside>
