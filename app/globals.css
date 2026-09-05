@@ -1397,6 +1397,22 @@ input[type="date"], input[type="number"] { color-scheme: light; }
 .workspace-shell .brand-lockup h1 { font-size: 17px; letter-spacing: -.2px; }
 .workspace-shell .brand-lockup p { font-size: 9px; }
 .workspace-shell .top-actions { flex-wrap: wrap; }
+.recording-mode-control { display: grid; gap: 4px; }
+.recording-mode-control > span { color: var(--muted); font: 500 10px/1.2 var(--body); }
+.recording-mode-control select { max-width: 100%; min-height: 36px; padding: 6px 28px 6px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; font: 500 12px/1.5 var(--body); }
+.recording-mode-control select:disabled { opacity: .6; }
+.recording-readiness { display: grid; gap: 14px; margin: 18px 0; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.recording-readiness__summary { display: grid; gap: 5px; }
+.recording-readiness__summary b { color: var(--ink); font: 500 14px/1.5 var(--body); }
+.recording-readiness__summary span { color: var(--muted); font: 400 12px/1.7 var(--body); }
+.recording-readiness__steps { display: flex; flex-wrap: wrap; gap: 10px; }
+.recording-readiness__step { display: grid; flex: 1 1 180px; gap: 5px; min-width: 0; padding: 11px 13px; text-align: left; background: #f8fafb; border: 1px solid var(--line); border-radius: 7px; cursor: pointer; }
+.recording-readiness__step span { color: var(--muted); font: 400 11px/1.5 var(--body); }
+.recording-readiness__step b { color: var(--accent); font: 500 12px/1.5 var(--body); }
+.recording-readiness__step:disabled { cursor: default; }
+.recording-readiness__step[data-ready="true"] { background: #f3f8f5; border-color: #d7e7dd; }
+.recording-readiness__step[data-ready="true"] b, .recording-readiness__result[data-ready="true"] { color: #39765d; }
+.recording-readiness__result { margin: 0; color: var(--muted); font: 400 11px/1.6 var(--body); }
 .workspace-shell .session-strip { flex-wrap: wrap; gap: 15px; border: 0; }
 .workspace-shell .session-strip .session-meta { display: grid; }
 .session-meta { font-size: 9px; font-weight: 500; letter-spacing: .04em; }

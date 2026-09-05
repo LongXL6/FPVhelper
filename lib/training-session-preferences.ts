@@ -15,7 +15,7 @@ interface PreferenceStorage {
 export const TRAINING_SESSION_PREFERENCES_KEY = "fpvhelper.training-preferences.v1";
 export const DEFAULT_TRAINING_SESSION_PREFERENCES: TrainingSessionPreferences = {
   autoExport: false,
-  recordPilotVideo: false,
+  recordPilotVideo: true,
   showStickOverlays: true,
   stickOverlayMode: "trail",
 };
@@ -39,6 +39,7 @@ export function loadTrainingSessionPreferences(storage: PreferenceStorage): {
     if (
       !isPreferenceRecord(parsed) ||
       typeof parsed.autoExport !== "boolean" ||
+      ("recordPilotVideo" in parsed && typeof parsed.recordPilotVideo !== "boolean") ||
       typeof parsed.showStickOverlays !== "boolean" ||
       (parsed.stickOverlayMode !== "trail" && parsed.stickOverlayMode !== "simple")
     ) {
@@ -47,7 +48,9 @@ export function loadTrainingSessionPreferences(storage: PreferenceStorage): {
     return {
       preferences: {
         autoExport: parsed.autoExport,
-        recordPilotVideo: typeof parsed.recordPilotVideo === "boolean" ? parsed.recordPilotVideo : false,
+        recordPilotVideo: typeof parsed.recordPilotVideo === "boolean"
+          ? parsed.recordPilotVideo
+          : DEFAULT_TRAINING_SESSION_PREFERENCES.recordPilotVideo,
         showStickOverlays: parsed.showStickOverlays,
         stickOverlayMode: parsed.stickOverlayMode,
       },
