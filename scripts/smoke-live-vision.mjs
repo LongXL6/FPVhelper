@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { chromium, expect } from "@playwright/test";
 
 const argument = process.argv[2];
@@ -13,19 +14,27 @@ const directory = fileURLToPath(new URL("../output/playwright/live-vision-smoke/
 await mkdir(directory, { recursive: true });
 const output = (name) => `${directory}${name}`;
 const safeURL = (value) => { const url = new URL(value); return `${url.origin}${url.pathname}`; };
-const browser = await chromium.launch({ args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
+const browser = await chromium.launch({ ...(process.env.FPV_VISION_SMOKE_BROWSER === "chromium" ? { channel: "chromium" } : {}), args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, permissions: ["camera"] });
 const page = await context.newPage();
 const requests = [];
 const failures = [];
 const errors = [];
+const nonBlocking = [];
 context.on("request", (request) => {
   if (/^https?:/.test(request.url())) requests.push({ url: safeURL(request.url()), method: request.method(), postBytes: request.postDataBuffer()?.byteLength ?? 0 });
 });
 context.on("requestfailed", (request) => failures.push({ url: safeURL(request.url()), failure: request.failure()?.errorText }));
 context.on("response", (response) => { if (response.status() >= 400) failures.push({ url: safeURL(response.url()), status: response.status() }); });
 page.on("pageerror", (error) => errors.push(error.message));
-page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+page.on("console", (message) => {
+  if (message.type() !== "error") return;
+  const location = message.location().url;
+  // Full Chromium requests an optional favicon outside the page request events.
+  if (location === `${baseURL}/favicon.ico` && message.text().includes("404")) nonBlocking.push({ url: location, message: message.text() });
+  else if (message.text().includes("[W:onnxruntime:") && message.text().includes("VerifyEachNodeIsAssignedToAnEp]")) nonBlocking.push({ url: location, message: message.text() });
+  else errors.push(`${message.text()} (${location})`);
+});
 await page.addInitScript(() => {
   localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
   window.__liveVisionQA = { cameraRequests: 0, tracks: [], workers: [], requests: [], replies: [] };
@@ -78,7 +87,7 @@ try {
   const baselineCameraRequests = await page.evaluate(() => window.__liveVisionQA.cameraRequests);
   if (baselineCameraRequests < 1 || requests.some((request) => new URL(request.url).origin !== baseURL)) throw new Error("Unexpected preparation network or camera state");
   checkFailures();
-  console.log(JSON.stringify({ stage: "prepared", source: "Chromium synthetic camera; real shared stream, real model Worker/WASM; no FPV accuracy claim", baseURL }));
+  console.log(JSON.stringify({ stage: "prepared", source: "Chromium synthetic camera; real shared stream, real model Worker with automatic GPU / WASM selection; no FPV accuracy claim", baseURL }));
   await start.click();
   const deadline = Date.now() + 230_000;
   let complete = false;
@@ -108,8 +117,12 @@ try {
   if (modelWorkers.length !== 1 || modelWorkers.some((worker) => !worker.terminated)) throw new Error("Live model worker was not released");
   const manifest = captured.replies.find((reply) => reply.type === "ready")?.manifest;
   const inference = captured.replies.filter((reply) => reply.type === "result").map((reply) => reply.result);
-  if (manifest?.id !== "Xenova/dinov2-small" || manifest?.backend !== "wasm" || inference.length < 8
-    || inference.some((result) => !Number.isFinite(result.inferenceMs) || result.inferenceMs <= 0)) throw new Error("Expected real live WASM model results");
+  if (manifest?.id !== "Xenova/dinov2-small" || !["wasm", "webgpu"].includes(manifest?.backend) || inference.length < 8
+    || inference.some((result) => !Number.isFinite(result.inferenceMs) || result.inferenceMs <= 0)) throw new Error("Expected real live model results");
+  if (process.env.FPV_VISION_SMOKE_EXPECT_BACKEND && manifest.backend !== process.env.FPV_VISION_SMOKE_EXPECT_BACKEND) throw new Error(`Expected ${process.env.FPV_VISION_SMOKE_EXPECT_BACKEND}, got ${manifest.backend}`);
+  if (inference.some((result) => !result.diagnostics || result.diagnostics.modelMs <= 0 || !result.diagnostics.bestMatch)) throw new Error("Missing real per-frame model diagnostics");
+  await expect(panel.getByTestId("live-analysis-fps")).not.toHaveText("—");
+  await expect(panel.locator('canvas[aria-label="最近分析画面"]')).toHaveJSProperty("width", 448);
   const downloadPromise = page.waitForEvent("download");
   await panel.getByRole("region", { name: "实时圈速与记录", exact: true }).getByRole("button", { name: "JSON", exact: true }).click();
   const download = await downloadPromise;
@@ -118,6 +131,7 @@ try {
   const run = JSON.parse(await readFile(output("live-run.json"), "utf8"));
   if (run.kind !== "fpvhelper-live-vision" || run.state !== "stopped" || run.clock.kind !== "host_presentation_estimate"
     || run.observations.length < 8 || run.reviews.length !== 0 || "video" in run) throw new Error("Live result identity, clock or candidate review boundary is invalid");
+  if (run.pipelineVersion !== "reference-motion-v2" || run.settings.sampleFps !== 30 || run.model.backend !== manifest.backend || run.model.weightsSha256 !== manifest.weightsSha256) throw new Error("Model provenance or high-rate settings mismatch");
   if (run.observations.some((observation, index) => observation.timeMs < 0 || (index && observation.timeMs <= run.observations[index - 1].timeMs))) throw new Error("Non-monotonic live source timestamps");
   const savedRun = await page.evaluate((id) => new Promise((resolve, reject) => {
     const open = indexedDB.open("fpvhelper-live-vision", 1);
@@ -130,10 +144,17 @@ try {
       tx.onabort = () => { db.close(); reject(tx.error); };
     };
   }), run.id);
-  if (JSON.stringify(savedRun) !== JSON.stringify(run)) throw new Error("Export and persisted live run differ");
+  if (!isDeepStrictEqual(savedRun, run)) throw new Error("Export and persisted live run differ");
   checkFailures();
-  await panel.screenshot({ path: output("browser-real-live-model.png") });
-  const report = { source: "Synthetic camera; actual shared stream and real fixed model; no FPV accuracy or physical timing claim", manifest, captured, run, external: requests.filter((request) => new URL(request.url).origin !== baseURL), failures, errors };
+  const preview = panel.locator('canvas[aria-label="最近分析画面"]');
+  await preview.scrollIntoViewIfNeeded();
+  const painted = await preview.evaluate((canvas) => {
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return pixels.some((value, index) => index % 4 === 3 && value > 0);
+  });
+  if (!painted) throw new Error("Diagnostic preview has no painted pixels after stop and export");
+  await panel.getByRole("region", { name: "本机识别诊断", exact: true }).screenshot({ path: output("browser-real-live-model.png") });
+  const report = { source: "Synthetic camera; actual shared stream and real fixed model; no FPV accuracy or physical timing claim", manifest, captured, run, external: requests.filter((request) => new URL(request.url).origin !== baseURL), failures, errors, nonBlocking };
   await writeFile(output("browser-report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ stage: "passed", frames: run.observations.length, pendingCandidates: run.candidates.length, cameraRequests: captured.cameraRequests, tracksRetained: captured.tracks.length, output: output("browser-report.json") }));
 } catch (error) {

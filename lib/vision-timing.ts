@@ -65,54 +65,133 @@ interface Track {
   firstMs: number;
   lastMs: number;
   initialArea: number;
+  currentArea: number;
   count: number;
   peak: VisionModelCandidate & { timeMs: number };
 }
 
+export type VisionTrackerRejection = "insufficient_observations" | "insufficient_growth" | "cooldown" | "observation_gap" | "matched_gap";
+
+export interface VisionTrackerDiagnostics {
+  readonly status: "idle" | "tracking" | "waiting_exit" | "proposed" | "rejected";
+  readonly observations: number;
+  readonly matchedObservations: number;
+  readonly noMatchObservations: number;
+  readonly proposals: number;
+  readonly trackObservations: number;
+  readonly initialArea: number | null;
+  readonly peakArea: number | null;
+  readonly currentArea: number | null;
+  readonly growthRatio: number | null;
+  readonly lastMatchMs: number | null;
+  readonly requiredObservations: number;
+  readonly requiredGrowthRatio: number;
+  readonly shrinkRatio: number;
+  readonly cooldownMs: number;
+  readonly maxObservationGapMs: number;
+  readonly exitDelayMs: number;
+  readonly lastRejection: VisionTrackerRejection | null;
+  readonly rejectionCounts: Readonly<Record<VisionTrackerRejection, number>>;
+}
+
 /** Reference motion only proposes review points; it never confirms a physical gate crossing. */
-export function createVisionCandidateTracker({ sampleFps, idFactory }: { sampleFps: number; idFactory: () => string }) {
+export function createVisionCandidateTracker({ sampleFps, idFactory, maxObservationGapMs, exitDelayMs }: {
+  sampleFps: number;
+  idFactory: () => string;
+  maxObservationGapMs?: number;
+  exitDelayMs?: number;
+}) {
   const stepMs = 1000 / sampleFps;
+  const maxGap = maxObservationGapMs ?? stepMs * 2.5;
+  const exitDelay = exitDelayMs ?? stepMs * 1.5;
+  if (![sampleFps, maxGap, exitDelay].every((value) => Number.isFinite(value) && value > 0)) throw new Error("跟踪采样率与时间窗口必须为有限正数");
+  const requiredObservations = 3;
+  const requiredGrowthRatio = 1.3;
+  const shrinkRatio = 0.55;
+  const cooldownMs = 1500;
+  const increment = (value: number) => Math.min(Number.MAX_SAFE_INTEGER, value + 1);
   let track: Track | null = null;
   let lastMs = -Infinity;
   let lastProposal = -Infinity;
+  let status: VisionTrackerDiagnostics["status"] = "idle";
+  let observations = 0;
+  let matchedObservations = 0;
+  let noMatchObservations = 0;
+  let proposals = 0;
+  let lastRejection: VisionTrackerRejection | null = null;
+  const rejectionCounts: Record<VisionTrackerRejection, number> = {
+    insufficient_observations: 0, insufficient_growth: 0, cooldown: 0, observation_gap: 0, matched_gap: 0,
+  };
+  function reject(reason: VisionTrackerRejection) {
+    lastRejection = reason;
+    rejectionCounts[reason] = increment(rejectionCounts[reason]);
+    status = "rejected";
+    track = null;
+  }
+  function begin(timeMs: number, best: VisionModelCandidate) {
+    const area = best.box.width * best.box.height;
+    track = { firstMs: timeMs, lastMs: timeMs, initialArea: area, currentArea: area, count: 1, peak: { ...best, timeMs } };
+    status = "tracking";
+  }
   function finish(reason: string): VisionCandidate[] {
     const current = track;
     track = null;
-    if (!current || current.count < 3 || current.peak.box.width * current.peak.box.height < current.initialArea * 1.3
-      || current.peak.timeMs - lastProposal < 1500) return [];
+    if (!current) return [];
+    const rejection = current.count < requiredObservations ? "insufficient_observations"
+      : current.peak.box.width * current.peak.box.height < current.initialArea * requiredGrowthRatio ? "insufficient_growth"
+        : current.peak.timeMs - lastProposal < cooldownMs ? "cooldown" : null;
+    if (rejection) { reject(rejection); return []; }
     lastProposal = current.peak.timeMs;
+    proposals = increment(proposals);
+    status = "proposed";
     return [{ id: idFactory(), timeMs: current.peak.timeMs, startMs: current.firstMs, endMs: current.lastMs,
       similarity: current.peak.similarity, box: current.peak.box, reason }];
   }
   return {
     push(timeMs: number, candidates: VisionModelCandidate[]): VisionCandidate[] {
       if (!Number.isFinite(timeMs) || timeMs < 0 || timeMs <= lastMs) throw new Error("录像观察时间必须严格递增");
-      if (timeMs - lastMs > stepMs * 2.5) track = null;
+      observations = increment(observations);
+      if (track && timeMs - lastMs > maxGap) reject("observation_gap");
       lastMs = timeMs;
       const best = candidates[0];
-      if (!best) return track && timeMs - track.lastMs >= stepMs * 1.5
-        ? finish("相似目标接近后离开画面；请确认是否过门并调整时刻") : [];
-      const area = best.box.width * best.box.height;
-      if (!track) {
-        track = { firstMs: timeMs, lastMs: timeMs, initialArea: area, count: 1, peak: { ...best, timeMs } };
-        return [];
+      if (!best) {
+        noMatchObservations = increment(noMatchObservations);
+        if (!track) return [];
+        status = "waiting_exit";
+        return timeMs - track.lastMs >= exitDelay
+          ? finish("相似目标接近后离开画面；请确认是否过门并调整时刻") : [];
       }
-      if (timeMs - track.lastMs > stepMs * 2.5) {
-        track = null;
+      matchedObservations = increment(matchedObservations);
+      const area = best.box.width * best.box.height;
+      if (track && timeMs - track.lastMs > maxGap) reject("matched_gap");
+      if (!track) {
+        begin(timeMs, best);
         return [];
       }
       const peakArea = track.peak.box.width * track.peak.box.height;
-      if (area < peakArea * 0.55 && track.count >= 3) {
+      if (area < peakArea * shrinkRatio && track.count >= requiredObservations) {
         const found = finish("相似目标由近变远；请排除绕门、反向和转身");
-        track = { firstMs: timeMs, lastMs: timeMs, initialArea: area, count: 1, peak: { ...best, timeMs } };
+        begin(timeMs, best);
         return found;
       }
       track.lastMs = timeMs;
-      track.count += 1;
+      track.currentArea = area;
+      track.count = increment(track.count);
+      status = "tracking";
       if (area > peakArea || (area === peakArea && best.similarity > track.peak.similarity)) track.peak = { ...best, timeMs };
       return [];
     },
     finish: () => finish("片段结束前相似目标曾接近；穿越尚未确认"),
+    getDiagnostics(): VisionTrackerDiagnostics {
+      const peakArea = track ? track.peak.box.width * track.peak.box.height : null;
+      return Object.freeze({ status, observations, matchedObservations, noMatchObservations, proposals,
+        trackObservations: track?.count ?? 0, initialArea: track?.initialArea ?? null, peakArea,
+        currentArea: track?.currentArea ?? null, growthRatio: track && track.initialArea > 0 ? peakArea! / track.initialArea : null,
+        lastMatchMs: track?.lastMs ?? null, requiredObservations, requiredGrowthRatio, shrinkRatio, cooldownMs,
+        maxObservationGapMs: maxGap, exitDelayMs: exitDelay, lastRejection,
+        rejectionCounts: Object.freeze({ ...rejectionCounts }),
+      });
+    },
   };
 }
 

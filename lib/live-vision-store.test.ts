@@ -28,7 +28,20 @@ describe("live vision schema and clocks", () => {
     expect(run.source.trainingSessionId).toBeNull();
     expect(run.clock.trainingSynchronized).toBe(false);
   });
+  it("round trips a full 30 FPS run beyond the old 3601 frame cap", () => {
+    const run = fixture();
+    run.pipelineVersion = "reference-motion-v2";
+    run.settings = { ...run.settings, sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150 };
+    run.observations = Array.from({ length: 54000 }, (_, i) => ({ timeMs: (i + 1) * 1000 / 30, hostObservedAtMs: 100 + (i + 1) * 1000 / 30, method: "current_time_poll", callback: null, inferenceMs: 20 }));
+    run.elapsedMs = run.analyzedUntilMs = run.observations.at(-1)!.timeMs;
+    run.candidates = [];
+    expect(parseLiveVisionRun(run)).toEqual(run);
+    run.observations.push(...run.observations.slice(0, 2));
+    expect(() => parseLiveVisionRun(run)).toThrow("observations");
+  });
+
   it.each([
+    ["array pipeline version", (run: LiveVisionRun) => { Object.assign(run, { pipelineVersion: ["reference-motion-v2"] }); }],
     ["offline kind", (run: LiveVisionRun) => { Object.assign(run, { kind: "offline" }); }],
     ["invented recording metadata", (run: LiveVisionRun) => { Object.assign(run, { video: { sha256: "a".repeat(64) } }); }],
     ["physical timestamp claim", (run: LiveVisionRun) => { Object.assign(run.clock, { physicalCaptureTimeKnown: true }); }],

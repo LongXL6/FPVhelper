@@ -3,6 +3,8 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useLiveVision } from "../hooks/use-live-vision";
 import type { LiveVisionController, LiveVisionOptions } from "../lib/live-vision-types";
+import type { LiveVisionDiagnostics } from "../lib/live-vision-diagnostics";
+import { createVisionCandidateTracker } from "../lib/vision-timing";
 import { LiveGatePanel } from "./live-gate-panel";
 import type { LiveGateSummaryData } from "./live-gate-summary";
 
@@ -17,6 +19,17 @@ const initialOptions: LiveVisionOptions = {
   stream: null, sourceId: "source-1", pilotChannelId: "pilot-1", pilotName: "PILOT-A",
   crop: { x: 0, y: 0, width: 1, height: 1 }, profileId: null, trainingSessionId: null,
 };
+function diagnosticsFixture(): LiveVisionDiagnostics {
+  const tracker = createVisionCandidateTracker({ sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150, idFactory: () => "candidate" });
+  tracker.push(1000, []);
+  return {
+    runId: "run", backend: "wasm", fallbackReason: "测试设备不支持 WebGPU", targetFps: 30, threshold: 0.65,
+    inputFps: 29.8, analysisFps: 3.2, inferenceP50Ms: 278, inferenceP95Ms: 310,
+    counters: { presented: 80, analyzed: 8, busy: 64, throttled: 8, duplicate: 0, unreported: 0 },
+    lastSample: { timeMs: 1000, captureMs: 1, roundTripMs: 280, inferenceMs: 278, preprocessMs: 2, modelMs: 270, matchingMs: 6,
+      bestMatch: { box: { x: 0.2, y: 0.2, width: 0.3, height: 0.3 }, similarity: 0.43 }, acceptedMatches: 0, tracker: tracker.getDiagnostics() },
+  };
+}
 
 function textOf(instance: ReactTestInstance): string {
   return instance.children.map((child) => typeof child === "string" ? child : textOf(child)).join("");
@@ -44,6 +57,7 @@ beforeEach(() => {
   live = {
     state: "idle", isActive: false, canStart: true, hasUnsavedChanges: false, backupAwaitingConfirmation: false, elapsedMs: 0,
     progress: { analyzedFrames: 0, inferenceMs: null, message: "等待开始" },
+    diagnostics: null, attachDiagnosticCanvas: vi.fn(), exportDiagnostics: vi.fn(async () => undefined),
     error: null, notice: null, profile: null, profiles: [], run: null, events: [], laps: [], savedRuns: [],
     start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined),
     getCurrentTimeMs: vi.fn(() => 0),
@@ -66,6 +80,57 @@ afterEach(async () => {
 });
 
 describe("live gate panel interaction boundaries", () => {
+  it("changes only the requested analysis ceiling before a run and locks it during monitoring", async () => {
+    await renderPanel();
+    expect(vi.mocked(useLiveVision).mock.calls.at(-1)?.[0].sampleFps).toBe(30);
+    const selector = () => renderer!.root.findByProps({ "aria-label": "实时分析上限" });
+    await act(async () => { selector().props.onChange({ target: { value: "15" } }); });
+    expect(vi.mocked(useLiveVision).mock.calls.at(-1)?.[0].sampleFps).toBe(15);
+    live = { ...live, state: "monitoring", isActive: true };
+    await renderPanel({ ...initialOptions, crop: { ...initialOptions.crop } });
+    expect(selector().props.disabled).toBe(true);
+    await act(async () => { selector().props.onChange({ target: { value: "30" } }); });
+    expect(vi.mocked(useLiveVision).mock.calls.at(-1)?.[0].sampleFps).toBe(15);
+  });
+
+  it("shows actual throughput, a below-threshold score and the analyzer canvas independently of the target", async () => {
+    live = { ...live, diagnostics: diagnosticsFixture(), state: "monitoring", isActive: true };
+    await renderPanel();
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-input-fps" }))).toBe("29.8");
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-analysis-fps" }))).toBe("3.2");
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-best-similarity" }))).toBe("0.430");
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-matching-status" }))).toContain("低于阈值");
+    const canvas = {} as HTMLCanvasElement;
+    renderer!.root.findByProps({ "aria-label": "最近分析画面" }).props.ref(canvas);
+    expect(live.attachDiagnosticCanvas).toHaveBeenLastCalledWith(canvas);
+    expect(textOf(renderer!.root)).toContain("后端回退：测试设备不支持 WebGPU");
+    expect(textOf(renderer!.root)).not.toContain("43%");
+    await act(async () => { button("导出本机诊断 JSON").props.onClick(); });
+    expect(live.exportDiagnostics).toHaveBeenCalledOnce();
+    expect(live.stop).not.toHaveBeenCalled();
+  });
+
+  it("explains an insufficient track instead of equating zero crossings with zero matching", async () => {
+    const tracker = createVisionCandidateTracker({ sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150, idFactory: () => "candidate" });
+    tracker.push(0, [{ box: { x: 0, y: 0, width: 0.2, height: 0.2 }, similarity: 0.8 }]);
+    tracker.push(278, [{ box: { x: 0, y: 0, width: 0.4, height: 0.4 }, similarity: 0.8 }]);
+    tracker.push(556, []);
+    const diagnostics = diagnosticsFixture();
+    diagnostics.lastSample = { ...diagnostics.lastSample!, timeMs: 556, tracker: tracker.getDiagnostics() };
+    live = { ...live, diagnostics };
+    await renderPanel();
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-matching-status" }))).toContain("匹配帧数不足");
+    expect(metric("匹配 / 分析帧")).toBe("2 / 3");
+    expect(metric("待确认穿越")).toBe("0");
+  });
+
+  it("leaves unavailable diagnostics blank and does not enable an empty export", async () => {
+    await renderPanel();
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-analysis-fps" }))).toBe("—");
+    expect(textOf(renderer!.root.findByProps({ "data-testid": "live-best-similarity" }))).toBe("—");
+    expect(button("导出本机诊断 JSON").props.disabled).toBe(true);
+  });
+
   it("can cancel model preparation while the start promise is still pending", async () => {
     let finishStart!: () => void;
     const pendingStart = new Promise<void>((resolve) => { finishStart = resolve; });

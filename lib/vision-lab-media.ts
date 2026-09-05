@@ -85,12 +85,12 @@ export async function seekVisionVideo(video: HTMLVideoElement, timeMs: number, s
   });
 }
 
-export function visionFrameCanvas(source: HTMLVideoElement | ImageBitmap, rect: VisionRect) {
+export function visionFrameCanvas(source: HTMLVideoElement | ImageBitmap, rect: VisionRect, maxDimension = 1280) {
   const width = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
   const height = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
   if (width <= 0 || height <= 0) throw new Error("没有可读取的画面");
   const canvas = document.createElement("canvas");
-  const scale = Math.min(1, 1280 / Math.max(width * rect.width, height * rect.height));
+  const scale = Math.min(1, maxDimension / Math.max(width * rect.width, height * rect.height));
   canvas.width = Math.max(1, Math.round(width * rect.width * scale));
   canvas.height = Math.max(1, Math.round(height * rect.height * scale));
   const context = canvas.getContext("2d");

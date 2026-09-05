@@ -20,7 +20,26 @@ export const VISION_MODEL_MANIFEST = Object.freeze({
   featureDimensions: 384,
 });
 
-export type VisionModelManifest = typeof VISION_MODEL_MANIFEST;
+export const VISION_WEBGPU_MODEL_MANIFEST = Object.freeze({
+  ...VISION_MODEL_MANIFEST,
+  weightPath: "onnx/model_fp16.onnx",
+  weightBytes: 44_427_534,
+  weightsSha256: "4e9ea6fe106e2225e28ee3c1c3d53b5b92aa4af62142f6ed6b66b6a92213cf04",
+  device: "webgpu" as const,
+  backend: "webgpu" as const,
+  dtype: "fp16" as const,
+});
+
+export type VisionModelManifest = Readonly<(typeof VISION_MODEL_MANIFEST | typeof VISION_WEBGPU_MODEL_MANIFEST) & { fallbackReason?: string }>;
+export interface VisionModelLoadOptions { devicePreference?: "auto" | "wasm" }
+
+export function isVisionModelManifest(value: unknown): value is VisionModelManifest {
+  if (!value || typeof value !== "object") return false;
+  const manifest = value as Record<string, unknown>;
+  const expected = manifest.backend === "webgpu" ? VISION_WEBGPU_MODEL_MANIFEST : VISION_MODEL_MANIFEST;
+  return Object.entries(expected).every(([key, expectedValue]) => manifest[key] === expectedValue)
+    && (manifest.fallbackReason === undefined || (typeof manifest.fallbackReason === "string" && manifest.fallbackReason.trim().length > 0 && manifest.fallbackReason.length <= 500));
+}
 
 export interface VisionModelBox {
   x: number;
@@ -41,6 +60,13 @@ export interface VisionModelFrameResult {
   inferenceMs: number;
   modelId: string;
   modelRevision: string;
+  diagnostics?: {
+    preprocessMs: number;
+    modelMs: number;
+    matchingMs: number;
+    /** Best observed window before the cosine threshold; not an accepted crossing. */
+    bestMatch: VisionModelCandidate | null;
+  };
 }
 
 export interface VisionModelProgress {
@@ -57,7 +83,7 @@ export interface VisionModelContext {
 }
 
 export type VisionModelRequest = (
-  | { requestId: number; type: "load" }
+  | { requestId: number; type: "load"; options?: VisionModelLoadOptions }
   | { requestId: number; type: "reference"; image: ImageBitmap }
   | { requestId: number; type: "analyze"; image: ImageBitmap; frameTimeMs: number; threshold: number }
 ) & { context: VisionModelContext };

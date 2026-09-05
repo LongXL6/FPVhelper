@@ -2,21 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LiveVisionController, LiveVisionObservation, LiveVisionOptions, LiveVisionRun } from "@/lib/live-vision-types";
-import { LIVE_VISION_MAX_DURATION_MS, LIVE_VISION_SAMPLE_FPS } from "@/lib/live-vision-types";
+import { LIVE_VISION_MAX_DURATION_MS, LIVE_VISION_SAMPLE_FPS, LIVE_VISION_MAX_OBSERVATION_GAP_MS, LIVE_VISION_EXIT_DELAY_MS, LIVE_VISION_MAX_JSON_BYTES } from "@/lib/live-vision-types";
 import { getLiveVisionRun, listLiveVisionRuns, liveVisionExportFilename, liveVisionLapsCsv, parseLiveVisionRun, saveLiveVisionRun, validateLiveVisionRect } from "@/lib/live-vision-store";
 import { getVisionProfile, listVisionProfiles, parseVisionProfile, saveVisionProfile } from "@/lib/vision-lab-store";
 import { downloadVisionText, hashVisionFile, visionCanvasBlob, visionFrameCanvas } from "@/lib/vision-lab-media";
 import { createVisionModelClient } from "@/lib/vision-model-client";
-import { VISION_MODEL_MANIFEST } from "@/lib/vision-model";
+import { createLiveVisionDiagnostics } from "@/lib/live-vision-diagnostics";
 import { createVisionCandidateTracker, deriveVisionLaps, resolveVisionEvents } from "@/lib/vision-timing";
 import type { VisionGateProfile } from "@/lib/vision-lab-types";
 
 const FRAME_STALL_MS = 2500;
-const STEP_MS = 1000 / LIVE_VISION_SAMPLE_FPS;
+const CHECKPOINT_MS = 5000;
+const DISPLAY_MS = 250;
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "实时视觉操作失败";
 const newId = () => crypto.randomUUID();
 const finiteOrNull = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-const identityOf = (input: LiveVisionOptions) => JSON.stringify([input.sourceId, input.pilotChannelId, input.pilotName, input.crop.x, input.crop.y, input.crop.width, input.crop.height, input.profileId, input.trainingSessionId ?? null, input.similarityThreshold ?? 0.65]);
+const identityOf = (input: LiveVisionOptions) => JSON.stringify([input.sourceId, input.pilotChannelId, input.pilotName, input.crop.x, input.crop.y, input.crop.width, input.crop.height, input.profileId, input.trainingSessionId ?? null, input.similarityThreshold ?? 0.65, input.sampleFps ?? LIVE_VISION_SAMPLE_FPS]);
 
 function releaseBorrowedVideo(video: HTMLVideoElement) {
   video.pause();
@@ -66,6 +67,10 @@ interface ActiveRun {
   lastFreshAt: number;
   lastPresentedFrames: number | null;
   lastMediaTime: number | null;
+  startedAt: number;
+  diagnostics: ReturnType<typeof createLiveVisionDiagnostics> | null;
+  lastCheckpointAt: number;
+  checkpointPending: boolean;
   cleanups: Array<() => void>;
 }
 
@@ -77,12 +82,17 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
   const [savedRuns, setSavedRuns] = useState<LiveVisionController["savedRuns"]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [progress, setProgress] = useState<LiveVisionController["progress"]>({ analyzedFrames: 0, inferenceMs: null, message: "选择计时门后可开始，模型候选须人工复核" });
+  const [diagnostics, setDiagnostics] = useState<LiveVisionController["diagnostics"]>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [protectedSnapshot, setProtectedSnapshot] = useState<LiveVisionRun | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<LiveVisionRun | null>(null);
   const [exportedSnapshot, setExportedSnapshot] = useState<LiveVisionRun | null>(null);
   const mounted = useRef(true);
+  const diagnosticsRef = useRef<ReturnType<typeof createLiveVisionDiagnostics> | null>(null);
+  const diagnosticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastPublishedAt = useRef(-Infinity);
+  const attachDiagnosticCanvas = useCallback((canvas: HTMLCanvasElement | null) => { diagnosticCanvasRef.current = canvas; }, []);
   const generation = useRef(0);
   const optionsRef = useRef(options);
   const activeRef = useRef<ActiveRun | null>(null);
@@ -94,9 +104,14 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
   const protectedRef = useRef<LiveVisionRun | null>(null);
   const exportedRef = useRef<LiveVisionRun | null>(null);
 
-  const publish = useCallback((next: LiveVisionRun) => {
+  const publish = useCallback((next: LiveVisionRun, immediate = true) => {
     runRef.current = next;
-    if (mounted.current) { setRun(next); setElapsedMs(next.elapsedMs); }
+    if (mounted.current && (immediate || performance.now() - lastPublishedAt.current >= DISPLAY_MS)) {
+      lastPublishedAt.current = performance.now();
+      setRun(next); setElapsedMs(next.elapsedMs);
+      const collector = diagnosticsRef.current;
+      if (collector) setDiagnostics(collector.snapshot(performance.now()));
+    }
   }, []);
   const refreshRuns = useCallback(async () => {
     const values = await listLiveVisionRuns();
@@ -111,7 +126,7 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
   }, [refreshRuns]);
   const getCurrentTimeMs = useCallback(() => {
     const current = runRef.current;
-    if (!current) return 0;
+    if (!current) return activeRef.current ? Math.min(LIVE_VISION_MAX_DURATION_MS, performance.now() - activeRef.current.startedAt) : 0;
     return activeRef.current?.id === current.id
       ? Math.min(LIVE_VISION_MAX_DURATION_MS, Math.max(current.elapsedMs, performance.now() - current.clock.startedAtPerformanceMs))
       : current.elapsedMs;
@@ -131,10 +146,14 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     dispose(runtime);
     if (mounted.current) { setState(outcome === "failed" ? "error" : outcome); if (outcome === "failed") setError(reason); }
     const current = runRef.current;
-    if (!current || current.id !== runtime.id) return;
+    if (!current || current.id !== runtime.id) {
+      if (mounted.current) { setElapsedMs(elapsed); setProgress({ analyzedFrames: 0, inferenceMs: null, message: `${reason}；模型准备未完成，没有分析记录` }); }
+      return;
+    }
     const tail = elapsed > current.analyzedUntilMs ? [{ startMs: current.analyzedUntilMs, endMs: elapsed, reason }] : [];
     const stopped: LiveVisionRun = { ...current, state: outcome, endedAtEpochMs: Date.now(), elapsedMs: elapsed, stopReason: reason, candidates: [...current.candidates, ...runtime.tracker.finish()], gaps: [...current.gaps, ...tail] };
     publish(stopped);
+    if (mounted.current) setProgress({ analyzedFrames: stopped.observations.length, inferenceMs: stopped.observations.at(-1)?.inferenceMs ?? null, message: reason });
     try {
       await persist(stopped, true);
       if (mounted.current && token === generation.current && runRef.current === stopped) setNotice(`${reason}。本轮候选和复核历史已保存在本机；不会自动恢复`);
@@ -186,29 +205,60 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
 
   const processFrame = useCallback(async (runtime: ActiveRun, observedAt: number, callback: LiveVisionObservation["callback"]) => {
     const current = runRef.current;
-    if (!current || current.id !== runtime.id || runtime.processing || runtime.phase !== "monitoring" || !runtime.video || !runtime.client || observedAt - runtime.lastInferenceAt < STEP_MS) return;
+    if (!current || current.id !== runtime.id || runtime.phase !== "monitoring" || !runtime.video || !runtime.client) return;
+    if (runtime.processing) { runtime.diagnostics?.increment("busy"); return; }
+    if (observedAt - runtime.lastInferenceAt < 1000 / current.settings.sampleFps) { runtime.diagnostics?.increment("throttled"); return; }
     runtime.processing = true; runtime.lastInferenceAt = observedAt;
     let canvas: HTMLCanvasElement | null = null;
     try {
       const timeMs = observedAt - current.clock.startedAtPerformanceMs;
       if (timeMs > LIVE_VISION_MAX_DURATION_MS) { await finish("stopped", "本轮已达 30 分钟上限，请明确开始下一轮"); return; }
-      canvas = visionFrameCanvas(runtime.video, current.source.crop);
+      // The model consumes 224 pixels; avoid transferring full capture-card frames on every inference.
+      canvas = visionFrameCanvas(runtime.video, current.source.crop, 448);
       const bitmap = await createImageBitmap(canvas);
-      canvas.width = 0; canvas.height = 0; canvas = null;
+      if (activeRef.current !== runtime) { bitmap.close(); return; }
+      const captureMs = performance.now() - observedAt;
       const result = await runtime.client.analyze(bitmap, timeMs, current.settings.similarityThreshold);
       if (activeRef.current !== runtime || runtime.token !== generation.current) return;
       if (result.frameTimeMs !== timeMs || result.modelId !== current.model.id || result.modelRevision !== current.model.revision || !Number.isFinite(result.inferenceMs)) throw new Error("模型返回了不匹配的实时观察");
       const latest = runRef.current!;
-      const delayed = latest.observations.length > 0 && timeMs - latest.analyzedUntilMs > STEP_MS * 2.5;
+      const candidates = runtime.tracker.push(timeMs, result.candidates);
+      const metrics = {
+        captureMs, roundTripMs: performance.now() - observedAt, preprocessMs: result.diagnostics?.preprocessMs ?? null,
+        modelMs: result.diagnostics?.modelMs ?? null, matchingMs: result.diagnostics?.matchingMs ?? null,
+        bestMatch: result.diagnostics?.bestMatch ?? null, acceptedMatches: result.candidates.length,
+      };
+      runtime.diagnostics?.complete({ ...metrics, timeMs, inferenceMs: result.inferenceMs, tracker: runtime.tracker.getDiagnostics() }, performance.now());
+      const delayed = latest.observations.length > 0 && timeMs - latest.analyzedUntilMs >= LIVE_VISION_MAX_OBSERVATION_GAP_MS;
       const next: LiveVisionRun = {
         ...latest, elapsedMs: Math.max(timeMs, getCurrentTimeMs()), analyzedUntilMs: timeMs,
-        observations: [...latest.observations, { timeMs, hostObservedAtMs: observedAt, method: callback ? "video_frame_callback" : "current_time_poll", callback, inferenceMs: result.inferenceMs }],
-        candidates: [...latest.candidates, ...runtime.tracker.push(timeMs, result.candidates)],
+        observations: [...latest.observations, { timeMs, hostObservedAtMs: observedAt, method: callback ? "video_frame_callback" : "current_time_poll", callback, inferenceMs: result.inferenceMs, diagnostics: metrics }],
+        candidates: [...latest.candidates, ...candidates],
         gaps: delayed ? [...latest.gaps, { startMs: latest.analyzedUntilMs, endMs: timeMs, reason: "本机推理未及时覆盖这一观察区间" }] : latest.gaps,
       };
-      publish(next);
-      if (mounted.current) setProgress({ analyzedFrames: next.observations.length, inferenceMs: result.inferenceMs, message: "本地实时观察；相似目标只进入待复核列表" });
-      if (next.observations.length % 10 === 0) await persist(next);
+      const displayDue = performance.now() - lastPublishedAt.current >= DISPLAY_MS || next.observations.length === 1 || candidates.length > 0;
+      publish(next, displayDue);
+      if (mounted.current && displayDue) {
+        setProgress({ analyzedFrames: next.observations.length, inferenceMs: result.inferenceMs, message: "本地实时观察；相似目标只进入待复核列表" });
+        const preview = diagnosticCanvasRef.current;
+        const context = preview?.getContext("2d");
+        if (preview && context) {
+          preview.width = canvas.width; preview.height = canvas.height;
+          context.drawImage(canvas, 0, 0);
+          const match = metrics.bestMatch;
+          if (match) {
+            context.strokeStyle = match.similarity >= current.settings.similarityThreshold ? "#4ade80" : "#fbbf24";
+            context.lineWidth = 2;
+            context.strokeRect(match.box.x * preview.width, match.box.y * preview.height, match.box.width * preview.width, match.box.height * preview.height);
+          }
+        }
+      }
+      if (!runtime.checkpointPending && performance.now() - runtime.lastCheckpointAt >= CHECKPOINT_MS) {
+        runtime.lastCheckpointAt = performance.now(); runtime.checkpointPending = true;
+        void persist(next).catch((failure: unknown) => {
+          if (activeRef.current === runtime) void finish("failed", messageOf(failure)).catch(() => undefined);
+        }).finally(() => { runtime.checkpointPending = false; });
+      }
     } catch (failure) {
       if (activeRef.current === runtime && runtime.token === generation.current) await finish("failed", messageOf(failure)).catch(() => undefined);
     } finally {
@@ -225,18 +275,21 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
       const presentedFrames = metadata ? finiteOrNull(metadata.presentedFrames) : null;
       const mediaTime = metadata ? finiteOrNull(metadata.mediaTime) : finiteOrNull(video.currentTime);
       if (metadata && presentedFrames !== null && runtime.lastPresentedFrames !== null && presentedFrames <= runtime.lastPresentedFrames) {
+        runtime.diagnostics?.increment("duplicate");
         if (presentedFrames < runtime.lastPresentedFrames) interrupt("视频帧序号回退，来源连续性无法确认");
         return;
       }
-      if (!metadata && mediaTime === runtime.lastMediaTime) return;
+      if (!metadata && mediaTime === runtime.lastMediaTime) { runtime.diagnostics?.increment("duplicate"); return; }
       if (mediaTime !== null && runtime.lastMediaTime !== null && mediaTime + 0.001 < runtime.lastMediaTime) { interrupt("视频时钟回退，来源连续性无法确认"); return; }
       const current = runRef.current;
       if (runtime.phase === "monitoring" && metadata && presentedFrames !== null && runtime.lastPresentedFrames !== null && presentedFrames > runtime.lastPresentedFrames + 1 && current?.id === runtime.id) {
+        runtime.diagnostics?.increment("unreported", presentedFrames - runtime.lastPresentedFrames - 1);
         if (current.gaps.length >= 4990) { interrupt("视频缺口过多，本轮已停止，请检查采集稳定性"); return; }
         const startMs = Math.max(0, runtime.lastFreshAt - current.clock.startedAtPerformanceMs);
         const endMs = Math.min(LIVE_VISION_MAX_DURATION_MS, now - current.clock.startedAtPerformanceMs);
-        if (endMs > startMs) publish({ ...current, elapsedMs: Math.max(current.elapsedMs, endMs), gaps: [...current.gaps, { startMs, endMs, reason: "浏览器未连续报告视频呈现帧" }] });
+        if (endMs > startMs) publish({ ...current, elapsedMs: Math.max(current.elapsedMs, endMs), gaps: [...current.gaps, { startMs, endMs, reason: "浏览器未连续报告视频呈现帧" }] }, false);
       }
+      runtime.diagnostics?.observe(now);
       runtime.lastFreshAt = now; runtime.lastPresentedFrames = presentedFrames; runtime.lastMediaTime = mediaTime;
       if (video.videoWidth !== current?.source.width || video.videoHeight !== current?.source.height) { interrupt("视频尺寸改变，原裁切与来源快照已失效"); return; }
       const callback = metadata ? { mediaTimeSeconds: mediaTime, presentedFrames, presentationTimeMs: finiteOrNull(metadata.presentationTime), expectedDisplayTimeMs: finiteOrNull(metadata.expectedDisplayTime) } : null;
@@ -252,14 +305,14 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
       callbackId = video.requestVideoFrameCallback(next);
       runtime.cleanups.push(() => video.cancelVideoFrameCallback(callbackId));
     } else {
-      const timer = setInterval(() => observe(null), 100);
+      const timer = setInterval(() => observe(null), 1000 / LIVE_VISION_SAMPLE_FPS);
       runtime.cleanups.push(() => clearInterval(timer));
     }
     const watchdog = setInterval(() => {
       if (activeRef.current !== runtime) return;
       if (performance.now() - runtime.lastFreshAt > FRAME_STALL_MS) { interrupt("超过 2.5 秒没有新视频帧，实时观察已中断"); return; }
       const elapsed = getCurrentTimeMs();
-      if (mounted.current) setElapsedMs(elapsed);
+      if (mounted.current) { setElapsedMs(elapsed); if (runtime.diagnostics) setDiagnostics(runtime.diagnostics.snapshot(performance.now())); }
       if (elapsed >= LIVE_VISION_MAX_DURATION_MS) void finish("stopped", "本轮已达 30 分钟上限，请明确开始下一轮").catch(() => undefined);
     }, 500);
     runtime.cleanups.push(() => clearInterval(watchdog));
@@ -277,8 +330,15 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     const crop = validateLiveVisionRect(input.crop);
     const threshold = input.similarityThreshold ?? 0.65;
     if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error("相似度阈值无效");
-    const runtime: ActiveRun = { id: newId(), token: ++generation.current, identity: identityOf(input), stream, abort: new AbortController(), video: null, client: null, tracker: createVisionCandidateTracker({ sampleFps: LIVE_VISION_SAMPLE_FPS, idFactory: newId }), phase: "loading", processing: false, lastInferenceAt: -Infinity, lastFreshAt: performance.now(), lastPresentedFrames: null, lastMediaTime: null, cleanups: [] };
+    const sampleFps = input.sampleFps ?? LIVE_VISION_SAMPLE_FPS;
+    if (!Number.isInteger(sampleFps) || sampleFps < 1 || sampleFps > 30) throw new Error("分析目标须在 1–30 FPS 之间");
+    const runtime: ActiveRun = { id: newId(), token: ++generation.current, identity: identityOf(input), stream, abort: new AbortController(), video: null, client: null, tracker: createVisionCandidateTracker({ sampleFps, idFactory: newId, maxObservationGapMs: LIVE_VISION_MAX_OBSERVATION_GAP_MS, exitDelayMs: LIVE_VISION_EXIT_DELAY_MS }), phase: "loading", processing: false, lastInferenceAt: -Infinity, lastFreshAt: performance.now(), lastPresentedFrames: null, lastMediaTime: null, startedAt: performance.now(), diagnostics: null, lastCheckpointAt: performance.now(), checkpointPending: false, cleanups: [] };
     activeRef.current = runtime;
+    runRef.current = null; setRun(null); diagnosticsRef.current = null; setDiagnostics(null);
+    lastPublishedAt.current = -Infinity;
+    const preview = diagnosticCanvasRef.current;
+    if (preview) { preview.width = 0; preview.height = 0; }
+    setProgress({ analyzedFrames: 0, inferenceMs: null, message: "正在选择本地 GPU / CPU 引擎；准备期间尚未分析画面" });
     setState("loading"); setError(null); setNotice(null); setElapsedMs(0);
     const visibility = () => { if (document.visibilityState === "hidden") interrupt("页面转入后台，后续画面无法连续观察"); };
     const ended = () => interrupt("视频源已断开或停止提供画面");
@@ -289,24 +349,27 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
       if (activeRef.current !== runtime) { releaseBorrowedVideo(video); return; }
       runtime.video = video;
       const { image, ...metadata } = selected;
-      const started = performance.now();
-      const initial: LiveVisionRun = {
-        schemaVersion: 1, kind: "fpvhelper-live-vision", pipelineVersion: "reference-motion-v1", provenance: "local", id: runtime.id, createdAt: new Date().toISOString(),
-        source: { sourceId: input.sourceId, pilotChannelId: input.pilotChannelId, pilotName: input.pilotName.trim(), streamId: stream.id, videoTrackId: track.id, width: video.videoWidth, height: video.videoHeight, crop: { ...crop }, trainingSessionId: input.trainingSessionId ?? null },
-        profile: { ...metadata, rect: { ...metadata.rect } }, model: { id: VISION_MODEL_MANIFEST.id, revision: VISION_MODEL_MANIFEST.revision, weightsSha256: VISION_MODEL_MANIFEST.weightsSha256, backend: VISION_MODEL_MANIFEST.backend },
-        clock: { kind: "host_presentation_estimate", timeOriginEpochMs: performance.timeOrigin, startedAtPerformanceMs: started, startedAtEpochMs: Date.now(), physicalCaptureTimeKnown: false, trainingSynchronized: false },
-        settings: { sampleFps: 2, similarityThreshold: threshold, maxDurationMs: LIVE_VISION_MAX_DURATION_MS }, state: "starting", endedAtEpochMs: null, elapsedMs: 0, analyzedUntilMs: 0, stopReason: null, observations: [], candidates: [], reviews: [], gaps: [],
-      };
-      publish(initial); runtime.lastFreshAt = started; watchFrames(runtime);
-      await persist(initial, true);
-      if (activeRef.current !== runtime) return;
+      const started = runtime.startedAt;
+      const startedAtEpochMs = Date.now() - (performance.now() - started);
       let lastProgressAt = -Infinity;
       runtime.client = createVisionModelClient({ context: { runId: runtime.id, generation: runtime.token }, onProgress: (update) => {
         if (activeRef.current !== runtime || performance.now() - lastProgressAt < 250) return;
         lastProgressAt = performance.now();
         setProgress({ analyzedFrames: 0, inferenceMs: null, message: `加载本地模型 ${update.file ?? ""}${Number.isFinite(update.progress) ? ` · ${Math.round(update.progress!)}%` : ""}` });
       } });
-      await runtime.client.load();
+      const manifest = await runtime.client.load({ devicePreference: "auto" });
+      if (activeRef.current !== runtime) return;
+      runtime.diagnostics = createLiveVisionDiagnostics({ runId: runtime.id, backend: manifest.backend, fallbackReason: manifest.fallbackReason ?? null, targetFps: sampleFps, threshold });
+      diagnosticsRef.current = runtime.diagnostics;
+      const initial: LiveVisionRun = {
+        schemaVersion: 1, kind: "fpvhelper-live-vision", pipelineVersion: "reference-motion-v2", provenance: "local", id: runtime.id, createdAt: new Date().toISOString(),
+        source: { sourceId: input.sourceId, pilotChannelId: input.pilotChannelId, pilotName: input.pilotName.trim(), streamId: stream.id, videoTrackId: track.id, width: video.videoWidth, height: video.videoHeight, crop: { ...crop }, trainingSessionId: input.trainingSessionId ?? null },
+        profile: { ...metadata, rect: { ...metadata.rect } }, model: { id: manifest.id, revision: manifest.revision, weightsSha256: manifest.weightsSha256, backend: manifest.backend },
+        clock: { kind: "host_presentation_estimate", timeOriginEpochMs: performance.timeOrigin, startedAtPerformanceMs: started, startedAtEpochMs, physicalCaptureTimeKnown: false, trainingSynchronized: false },
+        settings: { sampleFps, similarityThreshold: threshold, maxDurationMs: LIVE_VISION_MAX_DURATION_MS, maxObservationGapMs: LIVE_VISION_MAX_OBSERVATION_GAP_MS, exitDelayMs: LIVE_VISION_EXIT_DELAY_MS }, state: "starting", endedAtEpochMs: null, elapsedMs: 0, analyzedUntilMs: 0, stopReason: null, observations: [], candidates: [], reviews: [], gaps: [],
+      };
+      publish(initial); runtime.lastFreshAt = performance.now(); watchFrames(runtime);
+      await persist(initial, true);
       if (activeRef.current !== runtime) return;
       const bitmap = await createImageBitmap(image);
       let canvas: HTMLCanvasElement | null = null;
@@ -318,8 +381,8 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
       const elapsed = getCurrentTimeMs();
       const latest = runRef.current!;
       publish({ ...latest, state: "monitoring", elapsedMs: elapsed, gaps: elapsed > 0 ? [...latest.gaps, { startMs: 0, endMs: elapsed, reason: "模型与参考图准备期间未进行实时分析" }] : latest.gaps });
-      runtime.phase = "monitoring";
-      setState("monitoring"); setProgress({ analyzedFrames: 0, inferenceMs: null, message: "每秒最多分析 2 个新画面；待复核候选不会自动计圈" });
+      runtime.phase = "monitoring"; runtime.lastCheckpointAt = performance.now();
+      setState("monitoring"); setProgress({ analyzedFrames: 0, inferenceMs: null, message: `目标上限 ${sampleFps} FPS，按本机速度处理新画面；候选须人工复核` });
     } catch (failure) {
       if (activeRef.current !== runtime || runtime.token !== generation.current) return;
       await finish("failed", messageOf(failure)).catch(() => undefined);
@@ -349,6 +412,9 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
       ...saved, state: "interrupted", stopReason: "上次页面退出，之后画面与结束时刻未知；不会自动恢复",
       gaps: saved.elapsedMs > saved.analyzedUntilMs ? [...saved.gaps, { startMs: saved.analyzedUntilMs, endMs: saved.elapsedMs, reason: "恢复检查点中尚未分析的已知尾段" }] : saved.gaps,
     } : saved;
+    diagnosticsRef.current = null; setDiagnostics(null);
+    const preview = diagnosticCanvasRef.current;
+    if (preview) { preview.width = 0; preview.height = 0; }
     publish(restored);
     if (restored === saved) { protectedRef.current = restored; setProtectedSnapshot(restored); setSavedSnapshot(restored); }
     setState(restored.state === "failed" ? "error" : restored.state === "interrupted" ? "interrupted" : "stopped");
@@ -357,8 +423,15 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
   };
 
   return {
-    state, isActive: state === "loading" || state === "monitoring", hasUnsavedChanges: Boolean(run && savedSnapshot !== run), backupAwaitingConfirmation: Boolean(run && exportedSnapshot === run && protectedSnapshot !== run), canStart: !["loading", "monitoring"].includes(state) && (!run || protectedSnapshot === run) && Boolean(options.stream?.getVideoTracks()[0]?.readyState === "live" && options.sourceId && options.pilotChannelId && options.pilotName.trim() && profile?.id === options.profileId), elapsedMs, progress, error, notice, profile, profiles, run,
+    state, isActive: state === "loading" || state === "monitoring", hasUnsavedChanges: Boolean(run && savedSnapshot !== run), backupAwaitingConfirmation: Boolean(run && exportedSnapshot === run && protectedSnapshot !== run), canStart: !["loading", "monitoring"].includes(state) && (!run || protectedSnapshot === run) && Boolean(options.stream?.getVideoTracks()[0]?.readyState === "live" && options.sourceId && options.pilotChannelId && options.pilotName.trim() && profile?.id === options.profileId), elapsedMs, progress, diagnostics, attachDiagnosticCanvas, error, notice, profile, profiles, run,
     events: run ? resolveVisionEvents(run) : [], laps: run ? deriveVisionLaps(run) : [], savedRuns, start, stop: () => finish("stopped", "用户停止了实时分析"), getCurrentTimeMs,
+    exportDiagnostics: () => operation(async () => {
+      const collector = diagnosticsRef.current;
+      if (!collector) throw new Error("当前没有本轮诊断；历史 JSON 的 observations 保留逐帧指标");
+      const value = collector.export(performance.now());
+      downloadVisionText(JSON.stringify(value), `fpv-vision-diagnostics-${value.diagnostics.runId}-${newId()}.json`, "application/json");
+      if (mounted.current) setNotice("已发起本机诊断下载，包含最近 120 次分析与累计计数，不包含图像；完整逐帧指标在本轮 JSON 中");
+    }),
     acknowledgeBackup: () => {
       requireIdle(); const current = runRef.current;
       if (!current || exportedRef.current !== current) throw new Error("请先导出当前 JSON，并确认浏览器已完成下载");
@@ -394,12 +467,12 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     exportRun: (format) => operation(async () => {
       const current = runRef.current; if (!current) throw new Error("没有可导出的实时记录");
       const filename = liveVisionExportFilename(current.id, format, newId());
-      downloadVisionText(format === "json" ? JSON.stringify(current, null, 2) : liveVisionLapsCsv(current), filename, format === "json" ? "application/json" : "text/csv;charset=utf-8");
+      downloadVisionText(format === "json" ? JSON.stringify(current) : liveVisionLapsCsv(current), filename, format === "json" ? "application/json" : "text/csv;charset=utf-8");
       if (format === "json" && runRef.current === current) { exportedRef.current = current; if (mounted.current) setExportedSnapshot(current); }
       if (mounted.current) setNotice(`已发起下载：${filename}。请在浏览器确认；时间来自主机观察估计，未与训练录像同步`);
     }),
     importRun: (file) => operation(async () => {
-      requireIdle(); requireProtected(); if (file.size > 20 * 1024 ** 2) throw new Error("实时记录 JSON 不能超过 20 MB");
+      requireIdle(); requireProtected(); if (file.size > LIVE_VISION_MAX_JSON_BYTES) throw new Error("实时记录 JSON 不能超过 64 MB");
       const imported = parseLiveVisionRun(JSON.parse(await file.text()));
       const next = { ...imported, id: newId(), provenance: "imported" as const };
       await persist(next, true); await restore(next);

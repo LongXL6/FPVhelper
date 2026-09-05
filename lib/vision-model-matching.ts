@@ -129,13 +129,14 @@ function overlap(a: VisionModelBox, b: VisionModelBox) {
   return intersection / (a.width * a.height + b.width * b.height - intersection);
 }
 
-export function findVisionModelCandidates(reference: VisionReferenceFeatures, grid: VisionPatchGrid, threshold = 0.55): VisionModelCandidate[] {
+export function matchVisionModel(reference: VisionReferenceFeatures, grid: VisionPatchGrid, threshold = 0.55): { candidates: VisionModelCandidate[]; bestMatch: VisionModelCandidate | null } {
   validateGrid(grid);
   if (!Number.isFinite(threshold) || threshold < -1 || threshold > 1) throw new Error("相似度阈值必须在 -1 至 1");
   if (reference.dimensions !== grid.dimensions || reference.cells.length !== TEMPLATE_CELLS.length || reference.cells.some((cell) => cell.length !== grid.dimensions) || !Number.isFinite(reference.aspectRatio) || reference.aspectRatio <= 0) throw new Error("参考特征与当前模型不兼容");
   const bounds = contentBounds(grid);
   const integral = buildIntegral(grid);
   const candidates: VisionModelCandidate[] = [];
+  let bestMatch: VisionModelCandidate | null = null;
   for (let height = 3; height <= bounds.bottom - bounds.top; height += 1) {
     const widths = new Set([0.75, 1, 1.25].map((aspect) => Math.round(height * reference.aspectRatio * aspect)));
     for (const width of widths) {
@@ -148,7 +149,11 @@ export function findVisionModelCandidates(reference: VisionReferenceFeatures, gr
           for (let d = 0; d < grid.dimensions; d += 1) similarity += descriptor[d] * reference.cells[index][d];
         }
         similarity = Math.max(-1, Math.min(1, similarity / TEMPLATE_CELLS.length));
-        if (similarity >= threshold) candidates.push({ box: toImageBox(grid, x, y, width, height), similarity });
+        if (similarity >= threshold || !bestMatch || similarity >= bestMatch.similarity) {
+          const candidate = { box: toImageBox(grid, x, y, width, height), similarity };
+          if (!bestMatch || similarity > bestMatch.similarity || (similarity === bestMatch.similarity && candidate.box.width * candidate.box.height > bestMatch.box.width * bestMatch.box.height)) bestMatch = candidate;
+          if (similarity >= threshold) candidates.push(candidate);
+        }
       }
     }
   }
@@ -158,5 +163,9 @@ export function findVisionModelCandidates(reference: VisionReferenceFeatures, gr
     if (selected.every((previous) => overlap(previous.box, candidate.box) <= 0.35)) selected.push(candidate);
     if (selected.length === 3) break;
   }
-  return selected;
+  return { candidates: selected, bestMatch };
+}
+
+export function findVisionModelCandidates(reference: VisionReferenceFeatures, grid: VisionPatchGrid, threshold = 0.55): VisionModelCandidate[] {
+  return matchVisionModel(reference, grid, threshold).candidates;
 }
