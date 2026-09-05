@@ -1,12 +1,13 @@
 "use client";
 
-import { memo, useEffect, useId, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { Icon } from "@/components/ui/icon";
 import { VisionReferenceSelection } from "@/components/vision-reference-selection";
 import type { LiveGateSummaryData } from "@/components/live-gate-summary";
 import { useLiveVision } from "@/hooks/use-live-vision";
 import { LIVE_VISION_SAMPLE_FPS, type LiveVisionController, type LiveVisionOptions } from "@/lib/live-vision-types";
 import type { VisionRect, VisionResolvedEvent } from "@/lib/vision-lab-types";
+import type { VisionTrackerRejection } from "@/lib/vision-timing";
 import styles from "./live-gate-panel.module.css";
 
 interface LiveGatePanelProps extends LiveVisionOptions {
@@ -32,6 +33,80 @@ function dateText(value: string) {
   return Number.isNaN(date.getTime()) ? "未记录日期" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 function messageFor(error: unknown) { return error instanceof Error ? error.message : "操作未完成，请重试"; }
+
+const trackerRejections: Record<VisionTrackerRejection, string> = {
+  insufficient_observations: "匹配帧数不足", insufficient_growth: "目标面积增长不足",
+  cooldown: "仍在候选冷却期", observation_gap: "分析观测间隔过长", matched_gap: "有效匹配间隔过长",
+};
+function diagnosticStatus(live: LiveVisionController) {
+  const sample = live.diagnostics?.lastSample;
+  if (!sample) return "等待第一帧分析结果";
+  const tracker = sample.tracker;
+  if (tracker.status === "rejected" && tracker.lastRejection) return `${trackerRejections[tracker.lastRejection]}，本次未形成穿越候选`;
+  if (tracker.status === "proposed") return "已形成穿越候选，等待人工确认";
+  if (tracker.status === "waiting_exit") return "匹配暂时离开画面，等待离场确认";
+  if (sample.acceptedMatches === 0) return sample.bestMatch ? "本帧最佳匹配低于阈值，尚未进入穿越跟踪" : "本帧没有可用匹配框";
+  if (tracker.trackObservations < tracker.requiredObservations) return `已匹配 ${tracker.trackObservations} 帧，至少需要 ${tracker.requiredObservations} 帧`;
+  if ((tracker.growthRatio ?? 0) < tracker.requiredGrowthRatio) return `已匹配 ${tracker.trackObservations} 帧，目标面积增长仍不足 ${Math.round((tracker.requiredGrowthRatio - 1) * 100)}%`;
+  return "接近条件已满足，等待目标离场或明显缩小";
+}
+function diagnosticNumber(value: number | null | undefined, decimals = 1) {
+  return value === null || value === undefined || !Number.isFinite(value) ? "—" : value.toFixed(decimals);
+}
+
+function LiveGateDiagnostics({ live, disabled, perform }: {
+  live: LiveVisionController;
+  disabled: boolean;
+  perform: (action: () => Promise<void>) => Promise<void>;
+}) {
+  const diagnostics = live.diagnostics;
+  const sample = diagnostics?.lastSample;
+  const tracker = sample?.tracker;
+  const attachCanvas = live.attachDiagnosticCanvas;
+  const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => { attachCanvas(canvas); }, [attachCanvas]);
+  return <section className={styles.diagnostics} aria-label="本机识别诊断">
+    <div className={styles.diagnosticSummary}>
+      <div><span>输入呈现 fps</span><b data-testid="live-input-fps">{diagnosticNumber(diagnostics?.inputFps)}</b></div>
+      <div><span>实际分析 fps</span><b data-testid="live-analysis-fps">{diagnosticNumber(diagnostics?.analysisFps)}</b></div>
+      <div><span>分析上限 fps</span><b>{diagnostics?.targetFps ?? "—"}</b></div>
+      <div><span>计算后端</span><b>{diagnostics?.backend ?? "尚未加载"}</b></div>
+    </div>
+    <p className={styles.diagnosticStatus} data-testid="live-matching-status">{diagnosticStatus(live)}</p>
+    {diagnostics?.fallbackReason ? <p className={styles.hint}>后端回退：{diagnostics.fallbackReason}</p> : null}
+    <details className={styles.diagnosticDetails} open>
+      <summary>查看匹配画面与分析原因</summary>
+      <div className={styles.diagnosticGrid}>
+        <div>
+          <div className={styles.diagnosticPreview}>
+            <canvas ref={canvasRef} aria-label="最近分析画面" />
+            {!sample ? <span>开始后显示实际送入模型的取景</span> : null}
+          </div>
+          <p className={styles.hint}>最近分析画面 · 黄框低于阈值，绿框达到阈值；匹配框不代表已穿越。</p>
+        </div>
+        <div>
+          <dl className={styles.diagnosticMetrics}>
+            <div><dt>最佳余弦相似度</dt><dd data-testid="live-best-similarity">{diagnosticNumber(sample?.bestMatch?.similarity, 3)}</dd></div>
+            <div><dt>匹配阈值</dt><dd>{diagnosticNumber(diagnostics?.threshold, 3)}</dd></div>
+            <div><dt>匹配 / 分析帧</dt><dd>{tracker ? `${tracker.matchedObservations} / ${tracker.observations}` : "—"}</dd></div>
+            <div><dt>当前跟踪帧</dt><dd>{tracker ? `${tracker.trackObservations} / 至少 ${tracker.requiredObservations}` : "—"}</dd></div>
+            <div><dt>峰值 / 初始面积</dt><dd>{tracker ? `${diagnosticNumber(tracker.growthRatio, 2)} / 需 ${tracker.requiredGrowthRatio.toFixed(2)}` : "—"}</dd></div>
+            <div><dt>推理 P50 / P95</dt><dd>{diagnosticNumber(diagnostics?.inferenceP50Ms, 0)} / {diagnosticNumber(diagnostics?.inferenceP95Ms, 0)} ms</dd></div>
+          </dl>
+          <p className={styles.hint}>相似度是余弦分数，并非识别概率。静止看见门但缺少接近、离场过程时，不会自动记为穿越。</p>
+        </div>
+      </div>
+      <div className={styles.diagnosticFoot}>
+        <div>
+          {sample ? <p className={styles.hint}>最近一帧：取景 {diagnosticNumber(sample.captureMs, 0)} ms · Worker 往返 {diagnosticNumber(sample.roundTripMs, 0)} ms · 预处理 {diagnosticNumber(sample.preprocessMs, 0)} ms · 模型 {diagnosticNumber(sample.modelMs, 0)} ms · 匹配 {diagnosticNumber(sample.matchingMs, 0)} ms</p> : null}
+          {diagnostics ? <p className={styles.hint}>未分析呈现帧：忙碌 {diagnostics.counters.busy} · 节流 {diagnostics.counters.throttled} · 重复 {diagnostics.counters.duplicate} · 回调未报告 {diagnostics.counters.unreported}。上限只限制请求，实际速度以完成分析为准。</p> : null}
+          {tracker ? <p className={styles.hint}>跟踪结束原因：{Object.entries(tracker.rejectionCounts).map(([reason, count]) => `${trackerRejections[reason as VisionTrackerRejection]} ${count}`).join(" · ")}。</p> : null}
+        </div>
+        <button className={styles.button} type="button" disabled={disabled || !diagnostics} onClick={() => void perform(live.exportDiagnostics)}>导出本机诊断 JSON</button>
+      </div>
+      <p className={styles.hint}>诊断 JSON 包含最近最多 120 次分析元数据，不包含图片，不上传画面。</p>
+    </details>
+  </section>;
+}
 
 function GateReferenceSetup({ live, pilotChannelId, disabled, canCapture, onProfileChange, perform }: {
   live: LiveVisionController;
@@ -132,7 +207,8 @@ function LiveEventReview({ event, durationMs, disabled, onReview }: {
 }
 
 export const LiveGatePanel = memo(function LiveGatePanel({ configurationLocked = false, startBlockReason = null, sourceLabel = "当前视频输入", onProfileChange, onSummaryChange, ...options }: LiveGatePanelProps) {
-  const live = useLiveVision(options);
+  const [sampleFps, setSampleFps] = useState(options.sampleFps === 15 ? 15 : LIVE_VISION_SAMPLE_FPS);
+  const live = useLiveVision({ ...options, sampleFps });
   const readinessId = useId();
   const [actionPending, setActionPending] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -216,7 +292,11 @@ export const LiveGatePanel = memo(function LiveGatePanel({ configurationLocked =
         <button className={styles.button} type="button" disabled={locked} onClick={() => void perform(live.refreshProfiles)}>刷新档案</button>
         <button className={styles.button} type="button" disabled={locked || configurationLocked || !options.pilotChannelId} onClick={() => profileFileRef.current?.click()}>导入档案</button>
       </div>
-      <p className={styles.modelNote}>首次开始会下载约 24.5 MB 模型与运行库，仅在本机分析画面。{LIVE_VISION_SAMPLE_FPS} 帧/秒目标 · 约 500 ms 取样步长，不代表精确计时。</p>
+      <label className={styles.rateField}><span>分析上限</span><select aria-label="实时分析上限" value={sampleFps} disabled={locked} onChange={(event) => {
+        const value = Number(event.target.value);
+        if (!locked && (value === 15 || value === 30)) setSampleFps(value);
+      }}><option value={15}>15 fps</option><option value={30}>30 fps</option></select></label>
+      <p className={styles.modelNote}>首次按后端下载模型与运行库：WebGPU 约 44.4 MB，WASM 约 24.5 MB，仅在本机分析画面。优先处理新帧，实际 fps 取决于本机性能，不代表精确计时。</p>
     </div>
     <GateReferenceSetup key={`${options.sourceId}:${options.pilotChannelId}:${JSON.stringify(options.crop)}`} live={live} pilotChannelId={options.pilotChannelId} canCapture={Boolean(options.stream)} disabled={locked || configurationLocked} onProfileChange={onProfileChange} perform={perform} />
 
@@ -229,6 +309,7 @@ export const LiveGatePanel = memo(function LiveGatePanel({ configurationLocked =
       <dl><div><dt>已复核圈数</dt><dd>{reviewedLaps.length}</dd></div><div><dt>最快已复核</dt><dd>{fastest === null ? "—" : clockText(fastest)}</dd></div><div><dt>上一已复核圈</dt><dd>{lastLap ? clockText(lastLap.durationMs) : "—"}</dd></div><div><dt>待确认穿越</dt><dd>{pendingCount}</dd></div></dl>
     </div>
     <div className={styles.runtime}><span>本轮经过 <b data-testid="live-gate-elapsed">{clockText(live.elapsedMs)}</b></span><span>已分析 {live.progress.analyzedFrames} 帧{live.progress.inferenceMs === null ? "" : ` · 最近推理 ${Math.round(live.progress.inferenceMs)} ms`}</span><span>{live.progress.message}</span></div>
+    <LiveGateDiagnostics live={live} disabled={actionPending || stopping} perform={perform} />
     <p className={styles.hint}>模型结果需要人工确认。使用主机呈现时间估计，尚未校准物理穿越时刻与打杆数据；单门不验证完整赛道。</p>
     <p className={styles.hint}>{options.trainingSessionId ? "已关联正在录制的训练；结束训练也会结束本轮过门计时。" : "需要同时保存视频与打杆数据：先点击顶部「开始记录」，再开始过门计时。"}</p>
 

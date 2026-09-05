@@ -1,4 +1,4 @@
-import type { VisionModelContext, VisionModelFrameResult, VisionModelManifest, VisionModelProgress, VisionModelRequest, VisionModelResponse } from "./vision-model";
+import { isVisionModelManifest, type VisionModelContext, type VisionModelFrameResult, type VisionModelLoadOptions, type VisionModelManifest, type VisionModelProgress, type VisionModelRequest, type VisionModelResponse } from "./vision-model";
 
 type ModelWorker = Pick<Worker, "addEventListener" | "removeEventListener" | "postMessage" | "terminate">;
 type ResponsePayload = VisionModelManifest | { width: number; height: number } | VisionModelFrameResult;
@@ -41,7 +41,10 @@ export function createVisionModelClient({ context, onProgress, workerFactory }: 
     clearTimeout(current.timeout);
     pending = null;
     if (response.type === "error") current.reject(new Error(response.message));
-    else if (response.type === "ready" && current.type === "load") current.resolve(response.manifest);
+    else if (response.type === "ready" && current.type === "load") {
+      if (!isVisionModelManifest(response.manifest)) current.reject(new Error("本地模型返回了无效的运行来源信息"));
+      else current.resolve(Object.freeze({ ...response.manifest }));
+    }
     else if (response.type === "reference" && current.type === "reference") current.resolve({ width: response.width, height: response.height });
     else if (response.type === "result" && current.type === "analyze") current.resolve(response.result);
     else current.reject(new Error("本地模型返回了不匹配的结果"));
@@ -73,7 +76,7 @@ export function createVisionModelClient({ context, onProgress, workerFactory }: 
   }
 
   return {
-    load: () => request<VisionModelManifest>({ type: "load" }),
+    load: (options?: VisionModelLoadOptions) => request<VisionModelManifest>({ type: "load", ...(options ? { options } : {}) }),
     /** The client owns and closes the supplied bitmap, including rejected requests. */
     setReference: (image: ImageBitmap) => request<{ width: number; height: number }>({ type: "reference", image }),
     analyze: (image: ImageBitmap, frameTimeMs: number, threshold = 0.55) => request<VisionModelFrameResult>({ type: "analyze", image, frameTimeMs, threshold }),

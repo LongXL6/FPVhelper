@@ -1,10 +1,10 @@
 import type { LiveVisionObservation, LiveVisionRun, LiveVisionRunSummary } from "./live-vision-types";
-import { LIVE_VISION_MAX_DURATION_MS } from "./live-vision-types";
+import { LIVE_VISION_MAX_DURATION_MS, LIVE_VISION_MAX_JSON_BYTES } from "./live-vision-types";
 import type { VisionRect, VisionReview } from "./vision-lab-types";
 import { deriveVisionLaps } from "./vision-timing";
 
 const DATABASE = "fpvhelper-live-vision";
-const MAX_JSON_BYTES = 20 * 1024 ** 2;
+const MAX_JSON_BYTES = LIVE_VISION_MAX_JSON_BYTES;
 function invalid(field: string): never { throw new Error(`实时视觉记录无效：${field}`); }
 function object(value: unknown, field: string, keys: string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key))) invalid(field);
@@ -55,9 +55,10 @@ export function validateLiveVisionRect(value: unknown): VisionRect {
 export function parseLiveVisionRun(value: unknown): LiveVisionRun {
   let json: string | undefined;
   try { json = JSON.stringify(value); } catch { invalid("JSON 格式"); }
-  if (!json || json.length > MAX_JSON_BYTES || new TextEncoder().encode(json).byteLength > MAX_JSON_BYTES) invalid("JSON 超过 20 MB");
+  if (!json || json.length > MAX_JSON_BYTES || new TextEncoder().encode(json).byteLength > MAX_JSON_BYTES) invalid("JSON 超过 64 MB");
   const raw = object(value, "run", ["schemaVersion", "kind", "pipelineVersion", "provenance", "id", "createdAt", "source", "profile", "model", "clock", "settings", "state", "endedAtEpochMs", "elapsedMs", "analyzedUntilMs", "stopReason", "observations", "candidates", "reviews", "gaps"]);
-  if (raw.schemaVersion !== 1 || raw.kind !== "fpvhelper-live-vision" || raw.pipelineVersion !== "reference-motion-v1") invalid("实时记录类型或版本");
+  if (raw.schemaVersion !== 1 || raw.kind !== "fpvhelper-live-vision") invalid("实时记录类型或版本");
+  const pipelineVersion = choice(raw.pipelineVersion, "pipelineVersion", ["reference-motion-v1", "reference-motion-v2"]);
   const source = object(raw.source, "source", ["sourceId", "pilotChannelId", "pilotName", "streamId", "videoTrackId", "width", "height", "crop", "trainingSessionId"]);
   const profile = object(raw.profile, "profile", ["schemaVersion", "id", "revision", "name", "imageSha256", "rect", "createdAt"]);
   if (profile.schemaVersion !== 1) invalid("profile.schemaVersion");
@@ -65,14 +66,19 @@ export function parseLiveVisionRun(value: unknown): LiveVisionRun {
   const clock = object(raw.clock, "clock", ["kind", "timeOriginEpochMs", "startedAtPerformanceMs", "startedAtEpochMs", "physicalCaptureTimeKnown", "trainingSynchronized"]);
   if (clock.kind !== "host_presentation_estimate" || clock.physicalCaptureTimeKnown !== false || clock.trainingSynchronized !== false) invalid("时钟不能宣称曝光时间或同步");
   const startedAtPerformanceMs = number(clock.startedAtPerformanceMs, "clock.startedAtPerformanceMs");
-  const settings = object(raw.settings, "settings", ["sampleFps", "similarityThreshold", "maxDurationMs"]);
-  if (settings.sampleFps !== 2 || settings.maxDurationMs !== LIVE_VISION_MAX_DURATION_MS) invalid("实时采样设置");
+  const settings = object(raw.settings, "settings", ["sampleFps", "similarityThreshold", "maxDurationMs", "maxObservationGapMs", "exitDelayMs"]);
+  const sampleFps = integer(settings.sampleFps, "settings.sampleFps", 1, 30);
+  const timing = pipelineVersion === "reference-motion-v2" ? {
+    maxObservationGapMs: number(settings.maxObservationGapMs, "settings.maxObservationGapMs", 250, 2500),
+    exitDelayMs: number(settings.exitDelayMs, "settings.exitDelayMs", 50, 1500),
+  } : {};
+  if (settings.maxDurationMs !== LIVE_VISION_MAX_DURATION_MS || (pipelineVersion === "reference-motion-v1" && (sampleFps !== 2 || settings.maxObservationGapMs !== undefined || settings.exitDelayMs !== undefined))) invalid("实时采样设置");
   const elapsedMs = number(raw.elapsedMs, "elapsedMs", 0, LIVE_VISION_MAX_DURATION_MS);
   const analyzedUntilMs = number(raw.analyzedUntilMs, "analyzedUntilMs", 0, elapsedMs);
   const time = (value: unknown, field: string) => number(value, field, 0, elapsedMs);
   let previous = -1;
-  const observations: LiveVisionObservation[] = array(raw.observations, "observations", 3601).map((value) => {
-    const entry = object(value, "observation", ["timeMs", "hostObservedAtMs", "method", "callback", "inferenceMs"]);
+  const observations: LiveVisionObservation[] = array(raw.observations, "observations", Math.ceil(sampleFps * LIVE_VISION_MAX_DURATION_MS / 1000) + 1).map((value) => {
+    const entry = object(value, "observation", ["timeMs", "hostObservedAtMs", "method", "callback", "inferenceMs", "diagnostics"]);
     const timeMs = time(entry.timeMs, "observation.timeMs");
     const hostObservedAtMs = number(entry.hostObservedAtMs, "observation.hostObservedAtMs", startedAtPerformanceMs);
     if (timeMs <= previous || timeMs > analyzedUntilMs || Math.abs(hostObservedAtMs - startedAtPerformanceMs - timeMs) > 0.01) invalid("观察时间必须递增并对应主机时钟");
@@ -81,7 +87,13 @@ export function parseLiveVisionRun(value: unknown): LiveVisionRun {
     const optionalNumber = (value: unknown, field: string) => value === null ? null : number(value, field);
     const method = choice(entry.method, "observation.method", ["video_frame_callback", "current_time_poll"]);
     if ((method === "current_time_poll") !== (callback === null)) invalid("视频回调元数据来源");
-    return { timeMs, hostObservedAtMs, method, callback: callback ? {
+    let diagnostics: LiveVisionObservation["diagnostics"];
+    if (entry.diagnostics !== undefined) {
+      const metrics = object(entry.diagnostics, "observation.diagnostics", ["captureMs", "roundTripMs", "preprocessMs", "modelMs", "matchingMs", "bestMatch", "acceptedMatches"]);
+      const match = metrics.bestMatch === null ? null : object(metrics.bestMatch, "bestMatch", ["similarity", "box"]);
+      diagnostics = { captureMs: number(metrics.captureMs, "captureMs"), roundTripMs: number(metrics.roundTripMs, "roundTripMs"), preprocessMs: optionalNumber(metrics.preprocessMs, "preprocessMs"), modelMs: optionalNumber(metrics.modelMs, "modelMs"), matchingMs: optionalNumber(metrics.matchingMs, "matchingMs"), bestMatch: match ? { similarity: number(match.similarity, "similarity", -1, 1), box: validateLiveVisionRect(match.box) } : null, acceptedMatches: integer(metrics.acceptedMatches, "acceptedMatches", 0, 1000) };
+    }
+    return { timeMs, hostObservedAtMs, method, ...(diagnostics ? { diagnostics } : {}), callback: callback ? {
       mediaTimeSeconds: optionalNumber(callback.mediaTimeSeconds, "callback.mediaTimeSeconds"),
       presentedFrames: callback.presentedFrames === null ? null : integer(callback.presentedFrames, "callback.presentedFrames"),
       presentationTimeMs: optionalNumber(callback.presentationTimeMs, "callback.presentationTimeMs"),
@@ -121,12 +133,12 @@ export function parseLiveVisionRun(value: unknown): LiveVisionRun {
   if ((state === "starting" || state === "monitoring") && (endedAtEpochMs !== null || stopReason !== null)) invalid("运行中不能带结束声明");
   if (!["starting", "monitoring"].includes(state) && !stopReason) invalid("结束记录须说明原因");
   return {
-    schemaVersion: 1, kind: "fpvhelper-live-vision", pipelineVersion: "reference-motion-v1", provenance: choice(raw.provenance, "provenance", ["local", "imported"]), id: identifier(raw.id, "id"), createdAt: date(raw.createdAt, "createdAt"),
+    schemaVersion: 1, kind: "fpvhelper-live-vision", pipelineVersion, provenance: choice(raw.provenance, "provenance", ["local", "imported"]), id: identifier(raw.id, "id"), createdAt: date(raw.createdAt, "createdAt"),
     source: { sourceId: identifier(source.sourceId, "source.sourceId"), pilotChannelId: identifier(source.pilotChannelId, "source.pilotChannelId"), pilotName: text(source.pilotName, "source.pilotName", 120), streamId: identifier(source.streamId, "source.streamId"), videoTrackId: identifier(source.videoTrackId, "source.videoTrackId"), width: integer(source.width, "source.width", 1, 32768), height: integer(source.height, "source.height", 1, 32768), crop: validateLiveVisionRect(source.crop), trainingSessionId: source.trainingSessionId === null ? null : identifier(source.trainingSessionId, "source.trainingSessionId") },
     profile: { schemaVersion: 1, id: identifier(profile.id, "profile.id"), revision: integer(profile.revision, "profile.revision", 1), name: text(profile.name, "profile.name", 120), imageSha256: hash(profile.imageSha256, "profile.imageSha256"), rect: validateLiveVisionRect(profile.rect), createdAt: date(profile.createdAt, "profile.createdAt") },
     model: { id: text(model.id, "model.id", 200), revision: text(model.revision, "model.revision", 160), weightsSha256: hash(model.weightsSha256, "model.weightsSha256"), backend: text(model.backend, "model.backend", 80) },
     clock: { kind: "host_presentation_estimate", timeOriginEpochMs: number(clock.timeOriginEpochMs, "clock.timeOriginEpochMs"), startedAtPerformanceMs, startedAtEpochMs: number(clock.startedAtEpochMs, "clock.startedAtEpochMs"), physicalCaptureTimeKnown: false, trainingSynchronized: false },
-    settings: { sampleFps: 2, similarityThreshold: number(settings.similarityThreshold, "settings.similarityThreshold", 0, 1), maxDurationMs: LIVE_VISION_MAX_DURATION_MS },
+    settings: { sampleFps, ...timing, similarityThreshold: number(settings.similarityThreshold, "settings.similarityThreshold", 0, 1), maxDurationMs: LIVE_VISION_MAX_DURATION_MS },
     state, endedAtEpochMs, elapsedMs, analyzedUntilMs, stopReason, observations, candidates, reviews, gaps,
   };
 }

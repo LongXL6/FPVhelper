@@ -58,7 +58,7 @@ import {
   downloadLocalDiagnosticBundle,
   type LocalDiagnosticTransition,
 } from "@/lib/local-diagnostics";
-import { clamp } from "@/lib/telemetry";
+import { clamp, type ConnectionState } from "@/lib/telemetry";
 import {
   stickOverlayPairIsDefault,
   type StickOverlayPairLayout,
@@ -126,6 +126,26 @@ const statusCopy = {
   stale: "数据已停滞",
   error: "需要检查",
 } as const;
+
+export function dashboardEscapeAction(
+  event: Pick<KeyboardEvent, "defaultPrevented" | "isComposing" | "target">,
+  context: {
+    document: Pick<Document, "fullscreenElement" | "querySelector">;
+    coachMode: boolean;
+    controlsLocked: boolean;
+    connection: ConnectionState;
+  },
+): "exit_coach" | "cancel_pending_connection" | null {
+  if (event.defaultPrevented || event.isComposing || isWorkstationInteractiveTarget(event.target) || context.document.fullscreenElement) return null;
+  const target = event.target as { closest?: (selector: string) => unknown } | null;
+  if (target?.closest?.('dialog, [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [popover]')
+    || context.document.querySelector('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')) return null;
+  try {
+    if (context.document.querySelector(":popover-open")) return null;
+  } catch { /* Older browsers do not support native popovers. */ }
+  if (context.coachMode) return "exit_coach";
+  return !context.controlsLocked && context.connection === "connecting" ? "cancel_pending_connection" : null;
+}
 
 function videoSourceDisplayName(sources: readonly VideoSourceConfig[], source: VideoSourceConfig) {
   const index = sources.findIndex((candidate) => candidate.id === source.id);
@@ -967,7 +987,7 @@ export function FlightDashboard() {
           ? "需要俱乐部管理员在本机一次性安装工作站令牌。"
       : "只发送白名单内的假名化运行事件；视频、原始 RC、代号与备注不会上传。";
 
-  const executeWorkstationShortcut = useEffectEvent((shortcut: ReturnType<typeof classifyWorkstationShortcut>) => {
+  const executeWorkstationShortcut = useEffectEvent((shortcut: ReturnType<typeof classifyWorkstationShortcut>, event?: KeyboardEvent) => {
     if (!shortcut) return;
     if (shortcut === "toggle_fullscreen") {
       void toggleCoachMode();
@@ -997,11 +1017,12 @@ export function FlightDashboard() {
         .finally(() => {
           exportShortcutInFlightRef.current = false;
         });
-    } else if (shortcut === "cancel_connection" && !document.fullscreenElement) {
-      if (coachMode) {
+    } else if (shortcut === "cancel_connection" && event) {
+      const action = dashboardEscapeAction(event, { document, coachMode, controlsLocked, connection });
+      if (action === "exit_coach") {
         setCoachMode(false);
         setWorkstationNotice("Esc：已退出页面内大屏模式");
-      } else if (!controlsLocked && (source === "serial" || connection === "connecting")) {
+      } else if (action === "cancel_pending_connection") {
         setWorkstationNotice("Esc：正在取消连接并返回演示");
         analytics.markDemoReturnIntentional();
         void telemetryControl.useDemo();
@@ -1047,8 +1068,7 @@ export function FlightDashboard() {
       } else if (shortcut === "export_latest") {
         executeWorkstationShortcut(shortcut);
       } else if (shortcut === "cancel_connection") {
-        if (document.fullscreenElement) return;
-        executeWorkstationShortcut(shortcut);
+        executeWorkstationShortcut(shortcut, event);
       }
     };
 

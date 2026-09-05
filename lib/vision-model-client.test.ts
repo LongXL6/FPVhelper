@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createVisionModelClient } from "./vision-model-client";
-import { VISION_MODEL_MANIFEST, type VisionModelRequest, type VisionModelResponse } from "./vision-model";
+import { VISION_MODEL_MANIFEST, VISION_WEBGPU_MODEL_MANIFEST, type VisionModelRequest, type VisionModelResponse } from "./vision-model";
 
 class ModelWorker extends EventTarget {
   messages: VisionModelRequest[] = [];
@@ -48,6 +48,38 @@ describe("local vision model worker client", () => {
     expect(worker.messages).toHaveLength(1);
     worker.respond({ type: "error", message: "请先设置参考目标照片" });
     await expect(pending).rejects.toThrow("参考目标");
+    client.dispose();
+  });
+
+  it("passes an explicit backend preference and freezes the actual returned manifest", async () => {
+    const worker = new ModelWorker();
+    const client = createVisionModelClient({ context, workerFactory: () => worker });
+    const pending = client.load({ devicePreference: "auto" });
+    expect(worker.messages[0]).toMatchObject({ type: "load", options: { devicePreference: "auto" } });
+    worker.respond({ type: "ready", manifest: VISION_WEBGPU_MODEL_MANIFEST });
+    const result = await pending;
+    expect(result).toEqual(VISION_WEBGPU_MODEL_MANIFEST);
+    expect(Object.isFrozen(result)).toBe(true);
+    client.dispose();
+  });
+
+  it("rejects a receipt that mixes GPU execution with the q8 resource", async () => {
+    const worker = new ModelWorker();
+    const client = createVisionModelClient({ context, workerFactory: () => worker });
+    const pending = client.load({ devicePreference: "auto" });
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "ready", requestId: 1, context, manifest: { ...VISION_MODEL_MANIFEST, backend: "webgpu" } } }));
+    await expect(pending).rejects.toThrow("运行来源");
+    client.dispose();
+  });
+
+  it("retains diagnostics below threshold without turning the best window into an accepted candidate", async () => {
+    const worker = new ModelWorker();
+    const client = createVisionModelClient({ context, workerFactory: () => worker });
+    const pending = client.analyze(bitmap(), 2000, .65);
+    const result = { frameTimeMs: 2000, candidates: [], inferenceMs: 20, modelId: VISION_MODEL_MANIFEST.id, modelRevision: VISION_MODEL_MANIFEST.revision,
+      diagnostics: { preprocessMs: 1, modelMs: 12, matchingMs: 6, bestMatch: { box: { x: .2, y: .3, width: .1, height: .2 }, similarity: .4 } } };
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "result", requestId: 1, context, result } }));
+    await expect(pending).resolves.toEqual(result);
     client.dispose();
   });
 

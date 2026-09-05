@@ -1,7 +1,11 @@
+import type { LiveVisionDiagnostics, LiveVisionObservationDiagnostics } from "./live-vision-diagnostics";
 import type { VisionCandidate, VisionGap, VisionGateProfile, VisionLap, VisionProfileSummary, VisionRect, VisionResolvedEvent, VisionReview } from "./vision-lab-types";
 
 export const LIVE_VISION_MAX_DURATION_MS = 30 * 60_000;
-export const LIVE_VISION_SAMPLE_FPS = 2;
+export const LIVE_VISION_SAMPLE_FPS = 30;
+export const LIVE_VISION_MAX_OBSERVATION_GAP_MS = 1500;
+export const LIVE_VISION_EXIT_DELAY_MS = 150;
+export const LIVE_VISION_MAX_JSON_BYTES = 64 * 1024 ** 2;
 
 export interface LiveVisionOptions {
   stream: MediaStream | null;
@@ -13,6 +17,7 @@ export interface LiveVisionOptions {
   profileId: string | null;
   trainingSessionId?: string | null;
   similarityThreshold?: number;
+  sampleFps?: number;
 }
 
 export interface LiveVisionSource {
@@ -38,12 +43,13 @@ export interface LiveVisionObservation {
     expectedDisplayTimeMs: number | null;
   } | null;
   inferenceMs: number;
+  diagnostics?: LiveVisionObservationDiagnostics;
 }
 
 export interface LiveVisionRun {
   schemaVersion: 1;
   kind: "fpvhelper-live-vision";
-  pipelineVersion: "reference-motion-v1";
+  pipelineVersion: "reference-motion-v1" | "reference-motion-v2";
   provenance: "local" | "imported";
   id: string;
   createdAt: string;
@@ -58,7 +64,7 @@ export interface LiveVisionRun {
     physicalCaptureTimeKnown: false;
     trainingSynchronized: false;
   };
-  settings: { sampleFps: 2; similarityThreshold: number; maxDurationMs: number };
+  settings: { sampleFps: number; similarityThreshold: number; maxDurationMs: number; maxObservationGapMs?: number; exitDelayMs?: number };
   state: "starting" | "monitoring" | "stopped" | "interrupted" | "failed";
   endedAtEpochMs: number | null;
   elapsedMs: number;
@@ -87,6 +93,9 @@ export interface LiveVisionController {
   canStart: boolean;
   elapsedMs: number;
   progress: { analyzedFrames: number; inferenceMs: number | null; message: string };
+  diagnostics: LiveVisionDiagnostics | null;
+  attachDiagnosticCanvas(canvas: HTMLCanvasElement | null): void;
+  exportDiagnostics(): Promise<void>;
   error: string | null;
   notice: string | null;
   profile: VisionGateProfile | null;

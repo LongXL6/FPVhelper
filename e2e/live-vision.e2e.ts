@@ -14,7 +14,7 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
     if (!("showDirectoryPicker" in window)) {
       Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: async () => navigator.storage.getDirectory() });
     }
-    const metrics = { workers: 0, analyzedFrames: 0, getUserMediaCalls: 0 };
+    const metrics = { workers: 0, analyzedFrames: 0, getUserMediaCalls: 0, propose: false, proposalFrames: 0 };
     (window as Window & { __liveVisionE2e?: typeof metrics }).__liveVisionE2e = metrics;
     const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async (constraints) => {
@@ -34,9 +34,10 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
           request.image.close();
         } else {
           metrics.analyzedFrames += 1;
-          const width = [0.15, 0.25, 0.4][metrics.analyzedFrames - 1];
+          const width = metrics.propose ? [0.15, 0.25, 0.4][metrics.proposalFrames++] : undefined;
           response = { ...context, type: "result", result: {
             frameTimeMs: request.frameTimeMs, modelId: manifest.id, modelRevision: manifest.revision, inferenceMs: 1,
+            diagnostics: { preprocessMs: .1, modelMs: .6, matchingMs: .3, bestMatch: { similarity: width ? .8 : .4, box: { x: .2, y: .2, width: .3, height: .3 } } },
             candidates: width ? [{ box: { x: 0.2, y: 0.2, width, height: width }, similarity: 0.8 }] : [],
           } };
           request.image.close();
@@ -105,6 +106,12 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await panel.getByRole("button", { name: "人工确认一次穿越", exact: true }).click();
   await expect(panel.getByRole("status")).toContainText("人工复核已保存在本机");
 
+  await page.evaluate(() => { (window as Window & { __liveVisionE2e?: { propose: boolean } }).__liveVisionE2e!.propose = true; (document.activeElement as HTMLElement)?.blur(); });
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".status-chip")).toContainText("数据桥在线");
+  await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await expect(panel.getByTestId("live-analysis-fps")).not.toHaveText("—");
+  await expect(panel.locator('canvas[aria-label="最近分析画面"]')).toHaveJSProperty("width", 448);
   await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "训练记录", exact: true }).click();
   await expect(page.locator('[aria-label="实时过门计时"]')).toHaveAttribute("data-state", "monitoring");
   await expect.poll(() => page.evaluate(() => (window as Window & { __liveVisionE2e?: { analyzedFrames: number } }).__liveVisionE2e!.analyzedFrames)).toBeGreaterThanOrEqual(5);
@@ -172,8 +179,19 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await download.saveAs(path);
   expect(await download.failure()).toBeNull();
   const run = JSON.parse(await readFile(path, "utf8")) as LiveVisionRun;
-  expect(run).toMatchObject({ kind: "fpvhelper-live-vision", state: "stopped", source: { pilotName: "VISION-LIVE", trainingSessionId: training.sessions[0].id, crop: { x: 0, y: 0, width: 1, height: 1 } }, clock: { kind: "host_presentation_estimate", physicalCaptureTimeKnown: false, trainingSynchronized: false }, profile: { id: profileId }, settings: { sampleFps: 2 } });
+  expect(run).toMatchObject({ kind: "fpvhelper-live-vision", state: "stopped", source: { pilotName: "VISION-LIVE", trainingSessionId: training.sessions[0].id, crop: { x: 0, y: 0, width: 1, height: 1 } }, clock: { kind: "host_presentation_estimate", physicalCaptureTimeKnown: false, trainingSynchronized: false }, profile: { id: profileId }, settings: { sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150 } });
   expect(run.observations.length).toBeGreaterThanOrEqual(5);
+  expect(run.pipelineVersion).toBe("reference-motion-v2");
+  expect(run.observations.every((observation) => observation.diagnostics?.bestMatch)).toBe(true);
+  const diagnosticDownload = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "导出本机诊断 JSON", exact: true }).click();
+  const diagnostic = await diagnosticDownload;
+  const diagnosticPath = info.outputPath("synthetic-live-diagnostics.json");
+  await diagnostic.saveAs(diagnosticPath);
+  const diagnosticReport = JSON.parse(await readFile(diagnosticPath, "utf8"));
+  expect(diagnosticReport.imageDataIncluded).toBe(false);
+  expect(diagnosticReport.samples.length).toBeLessThanOrEqual(120);
+  expect(diagnosticReport.diagnostics.counters.analyzed).toBe(run.observations.length);
   expect(run.candidates).toHaveLength(1);
   expect(run.reviews.map((entry) => entry.action)).toEqual(["add", "add", "reject"]);
   expect(run.reviews[1].timeMs).toBeGreaterThan(run.reviews[0].timeMs);

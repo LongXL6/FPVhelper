@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createVisionPatchGrid, createVisionReference, findVisionModelCandidates, visionLetterbox, type VisionPatchGrid } from "./vision-model-matching";
+import { createVisionPatchGrid, createVisionReference, findVisionModelCandidates, matchVisionModel, visionLetterbox, type VisionPatchGrid } from "./vision-model-matching";
 
 function grid(width: number, height: number): VisionPatchGrid {
   const features = new Float32Array(width * height * 9);
@@ -85,5 +85,33 @@ describe("local DINOv2 reference matching", () => {
     const empty = grid(3, 3);
     empty.features.fill(0);
     expect(() => createVisionReference(empty)).toThrow("没有可用特征");
+  });
+
+  it("reports the true best below-threshold window without accepting it", () => {
+    const frame = grid(16, 16);
+    placeTarget(frame, 8, 4);
+    const ref = reference();
+    // Orthogonal background mixed into the reference lowers every true cosine.
+    for (const cell of ref.cells) { for (let d = 0; d < 8; d++) cell[d] *= .5; cell[8] = Math.sqrt(.75); }
+    const diagnostics = matchVisionModel(ref, frame, .99);
+    expect(diagnostics.candidates).toEqual([]);
+    expect(diagnostics.bestMatch).not.toBeNull();
+    const unfiltered = findVisionModelCandidates(ref, frame, -1);
+    expect(diagnostics.bestMatch).toEqual(unfiltered[0]);
+    expect(diagnostics.bestMatch!.similarity).toBeLessThan(.99);
+  });
+
+  it("uses the same normalized image coordinates and unchanged accepted selection for diagnostics", () => {
+    const frame = grid(16, 16);
+    frame.contentBox = visionLetterbox(1600, 900);
+    frame.imageWidth = 1600;
+    frame.imageHeight = 900;
+    placeTarget(frame, 6, 5);
+    const result = matchVisionModel(reference(), frame, .99);
+    expect(result.candidates).toEqual(findVisionModelCandidates(reference(), frame, .99));
+    expect(result.bestMatch).toEqual(result.candidates[0]);
+    expect(result.bestMatch!.box.y).toBeCloseTo(1 / 6);
+    frame.contentBox = { x: 0, y: .49, width: 1, height: .02 };
+    expect(matchVisionModel(reference(), frame)).toEqual({ candidates: [], bestMatch: null });
   });
 });

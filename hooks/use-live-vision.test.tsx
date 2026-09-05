@@ -8,7 +8,7 @@ import * as storage from "../lib/live-vision-store";
 import * as profiles from "../lib/vision-lab-store";
 import * as media from "../lib/vision-lab-media";
 import * as models from "../lib/vision-model-client";
-import { VISION_MODEL_MANIFEST, type VisionModelFrameResult } from "../lib/vision-model";
+import { VISION_MODEL_MANIFEST, VISION_WEBGPU_MODEL_MANIFEST, type VisionModelFrameResult, type VisionModelManifest } from "../lib/vision-model";
 
 let clockMs: number;
 let controller: LiveVisionController;
@@ -60,7 +60,7 @@ function deferred<T>() {
 }
 function result(timeMs: number): VisionModelFrameResult { return { frameTimeMs: timeMs, inferenceMs: 100, candidates: [], modelId: VISION_MODEL_MANIFEST.id, modelRevision: VISION_MODEL_MANIFEST.revision }; }
 function client() {
-  return { load: vi.fn(async () => VISION_MODEL_MANIFEST), setReference: vi.fn(async (image: ImageBitmap) => { image.close(); return { width: 224, height: 224 }; }), analyze: vi.fn(async (image: ImageBitmap, timeMs: number) => { image.close(); return result(timeMs); }), dispose: vi.fn() };
+  return { load: vi.fn(async (): Promise<VisionModelManifest> => VISION_MODEL_MANIFEST), setReference: vi.fn(async (image: ImageBitmap) => { image.close(); return { width: 224, height: 224 }; }), analyze: vi.fn(async (image: ImageBitmap, timeMs: number) => { image.close(); return result(timeMs); }), dispose: vi.fn() };
 }
 function Harness({ options }: { options: LiveVisionOptions }) {
   const value = useLiveVision(options);
@@ -134,6 +134,39 @@ describe("live vision runtime isolation", () => {
     expect(controller.laps).toEqual([]);
   });
 
+  it("samples above 2 FPS and keeps below-threshold match diagnostics without inventing events", async () => {
+    const model = client();
+    model.analyze.mockImplementation(async (image, timeMs) => {
+      image.close();
+      return { ...result(timeMs), diagnostics: { preprocessMs: 3, modelMs: 20, matchingMs: 4, bestMatch: { similarity: .4, box: RECT } } };
+    });
+    vi.mocked(models.createVisionModelClient).mockReturnValue(model);
+    await start();
+    for (let index = 0; index < 20; index += 1) await advance(40);
+    expect(model.load).toHaveBeenCalledWith({ devicePreference: "auto" });
+    expect(model.analyze).toHaveBeenCalledTimes(20);
+    expect(controller.diagnostics?.analysisFps).toBeCloseTo(25);
+    expect(controller.diagnostics?.lastSample?.bestMatch?.similarity).toBe(.4);
+    expect(controller.events).toEqual([]);
+    expect(storage.saveLiveVisionRun).toHaveBeenCalledTimes(1);
+    await act(async () => { await controller.stop(); await controller.exportRun("json"); await controller.exportDiagnostics(); });
+    expect(controller.run?.observations).toHaveLength(20);
+    const exported = JSON.parse(vi.mocked(media.downloadVisionText).mock.calls[0][0]);
+    expect(storage.parseLiveVisionRun(exported).observations[0].diagnostics).toMatchObject({ bestMatch: { similarity: .4 }, acceptedMatches: 0 });
+    const report = JSON.parse(vi.mocked(media.downloadVisionText).mock.calls[1][0]);
+    expect(report.samples).toHaveLength(20);
+    expect(report.imageDataIncluded).toBe(false);
+  });
+
+  it("persists the selected GPU weights before any observation and never a pretend q8 snapshot", async () => {
+    const model = client();
+    model.load.mockResolvedValue(VISION_WEBGPU_MODEL_MANIFEST);
+    vi.mocked(models.createVisionModelClient).mockReturnValue(model);
+    await start(); await advance(500);
+    expect(controller.run?.model).toMatchObject({ backend: "webgpu", weightsSha256: VISION_WEBGPU_MODEL_MANIFEST.weightsSha256 });
+    expect(storage.saveLiveVisionRun).toHaveBeenCalledWith(expect.objectContaining({ model: expect.objectContaining({ backend: "webgpu", weightsSha256: VISION_WEBGPU_MODEL_MANIFEST.weightsSha256 }) }));
+  });
+
   it("can stop model loading and ignores a late load without taking another source's frames", async () => {
     const loading = deferred<typeof VISION_MODEL_MANIFEST>();
     const old = client(); old.load.mockImplementationOnce(() => loading.promise);
@@ -142,11 +175,12 @@ describe("live vision runtime isolation", () => {
     await act(async () => { pending = controller.start(); });
     expect(controller.state).toBe("loading");
     await act(async () => { await controller.stop(); });
-    const stoppedId = controller.run!.id;
+    expect(controller.run).toBeNull(); // No model provenance exists until loading succeeds.
+    expect(runs.size).toBe(0);
     await start();
     const currentId = controller.run!.id;
     await act(async () => { loading.resolve(VISION_MODEL_MANIFEST); await pending; });
-    expect(currentId).not.toBe(stoppedId);
+    expect(currentId).toBeTruthy();
     expect(controller.run?.id).toBe(currentId);
     expect(old.setReference).not.toHaveBeenCalled();
     expect(old.dispose).toHaveBeenCalledOnce();
@@ -211,7 +245,7 @@ describe("live vision runtime isolation", () => {
     expect(controller.getCurrentTimeMs()).toBe(1000);
   });
 
-  it("checkpoints every ten analyzed frames instead of writing every frame", async () => {
+  it("checkpoints by elapsed time instead of writing every few high-rate frames", async () => {
     await start();
     for (let index = 0; index < 9; index += 1) await advance(500);
     expect(storage.saveLiveVisionRun).toHaveBeenCalledTimes(1);
