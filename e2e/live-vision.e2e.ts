@@ -136,6 +136,10 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await expect(page.getByRole("heading", { name: "正在记录 VISION-LIVE", exact: true })).toBeVisible();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await expect.poll(async () => {
+    const { drafts } = await readStoredTrainingRecords(page);
+    return drafts.length === 1 ? drafts[0].samples.length : 0;
+  }, { message: "Wait for recorded RC samples before stopping the shared recording" }).toBeGreaterThan(100);
   await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
   await expect(page.locator(".session-detail-header")).toContainText("已保存到本机");

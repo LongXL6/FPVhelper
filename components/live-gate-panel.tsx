@@ -171,14 +171,16 @@ function LiveEventReview({ event, durationMs, disabled, onReview }: {
   disabled: boolean;
   onReview: LiveVisionController["reviewEvent"];
 }) {
-  const [seconds, setSeconds] = useState((event.timeMs / 1_000).toFixed(3));
+  const initialSeconds = (event.timeMs / 1_000).toFixed(3);
+  const [seconds, setSeconds] = useState(initialSeconds);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
-  const timeMs = Number(seconds) * 1_000;
+  const changed = Number(seconds) !== Number(initialSeconds);
+  // Formatting alone must not change the source timestamp or invalidate an event at the run end.
+  const timeMs = changed ? Number(seconds) * 1_000 : event.timeMs;
   const validTime = seconds.trim() !== "" && Number.isFinite(timeMs) && timeMs >= 0 && timeMs <= durationMs;
-  const changed = Math.abs(timeMs - event.timeMs) >= 0.5;
   const ready = !disabled && !busy && validTime && reason.trim().length > 0;
   const submit = async (action: "confirm" | "reject" | "adjust") => {
     if (!ready || inFlight.current) return;
