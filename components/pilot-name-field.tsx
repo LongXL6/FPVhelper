@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import type { BetaflightDeviceNames } from "@/lib/betaflight-device-name";
 import type { PilotChannelConfig } from "@/lib/video-workspace";
 
@@ -13,8 +13,13 @@ interface PilotNameFieldProps {
   onUseDeviceName: () => void;
 }
 
-export function PilotNameField({ channel, deviceNames, disabled, compact = false, onChange, onUseDeviceName }: PilotNameFieldProps) {
+export function PilotNameField(props: PilotNameFieldProps) {
+  return <PilotNameFieldForChannel key={props.channel.id} {...props} />;
+}
+
+function PilotNameFieldForChannel({ channel, deviceNames, disabled, compact = false, onChange, onUseDeviceName }: PilotNameFieldProps) {
   const helpId = useId();
+  const [draft, setDraft] = useState<string | null>(null);
   const manual = channel.athleteCodeMode === "manual";
   const hint = manual
     ? "手动命名"
@@ -36,12 +41,18 @@ export function PilotNameField({ channel, deviceNames, disabled, compact = false
           type="text"
           aria-label={compact ? "当前训练选手代号" : "选手姓名或代号"}
           aria-describedby={helpId}
-          value={channel.athleteCode}
+          value={draft ?? channel.athleteCode}
           maxLength={40}
           disabled={disabled}
           placeholder="自动读取或手动输入"
           autoComplete="off"
-          onChange={(event) => onChange(event.target.value)}
+          // Keep a late device name from replacing the selection before the first keystroke.
+          onFocus={(event) => setDraft(event.currentTarget.value)}
+          onBlur={() => setDraft(null)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            onChange(event.target.value);
+          }}
         />
       </label>
       <div className="pilot-name-field__source" id={helpId}>
@@ -51,7 +62,10 @@ export function PilotNameField({ channel, deviceNames, disabled, compact = false
           type="button"
           aria-label={compact ? "使用飞控名称" : "选手画面使用飞控名称"}
           disabled={disabled}
-          onClick={onUseDeviceName}
+          onClick={() => {
+            setDraft(null);
+            onUseDeviceName();
+          }}
         >使用飞控名称</button> : null}
       </div>
       {!compact ? <p className="pilot-name-field__help">读取当前 USB 连接飞控的配置名；若连接地面桥接飞控，请确认与画面中的选手一致。</p> : null}

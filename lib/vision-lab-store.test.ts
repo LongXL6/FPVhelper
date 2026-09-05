@@ -173,6 +173,84 @@ describe("vision run import validation", () => {
 });
 
 describe("independent vision lab IndexedDB storage", () => {
+  it("rejects an old tab's interrupted snapshot after another tab completes the analysis", async () => {
+    const original = run();
+    const initial: VisionTimingRun = { ...original, state: "analyzing", analyzedUntilMs: 0, analyzedFrames: 0, candidates: [] };
+    await saveVisionRun(initial);
+    const loadedByOtherTab = (await getVisionRun(initial.id))!;
+    await saveVisionRun(original);
+    const restored: VisionTimingRun = { ...loadedByOtherTab, state: "cancelled", gaps: [{ startMs: 0, endMs: 10_000, reason: "页面恢复，剩余区间未分析" }] };
+    await expect(saveVisionRun(restored)).rejects.toThrow(/冲突.*导出.*重新载入/);
+    expect(await getVisionRun(original.id)).toEqual(original);
+  });
+
+  it("rejects either progress counter moving backwards even when candidate history is unchanged", async () => {
+    const current: VisionTimingRun = { ...run(), state: "analyzing", analyzedUntilMs: 9500 };
+    await saveVisionRun(current);
+    for (const stale of [{ ...current, analyzedFrames: 19 }, { ...current, analyzedUntilMs: 9000 }]) {
+      await expect(saveVisionRun(stale)).rejects.toThrow(/冲突/);
+      expect(await getVisionRun(current.id)).toEqual(current);
+    }
+  });
+
+  it("rejects truncated, rewritten or reordered raw candidates without requiring human reviews", async () => {
+    const original = run();
+    const current = { ...original, candidates: [...original.candidates, { ...original.candidates[0], id: "candidate-2", timeMs: 3000, startMs: 2900, endMs: 3100 }] };
+    await saveVisionRun(current);
+    for (const candidates of [current.candidates.slice(0, 1), current.candidates.map((event) => ({ ...event, similarity: 0.9 })), [...current.candidates].reverse()]) {
+      await expect(saveVisionRun({ ...current, candidates })).rejects.toThrow(/冲突/);
+      expect(await getVisionRun(current.id)).toEqual(current);
+    }
+  });
+
+  it("keeps the run identity, source, gate, settings and model snapshots fixed", async () => {
+    const current = run();
+    await saveVisionRun(current);
+    const changed: Partial<VisionTimingRun>[] = [
+      { createdAt: "2026-09-06T00:00:00.000Z" }, { provenance: "imported" },
+      { video: { ...current.video, sha256: "d".repeat(64) } },
+      { profile: { ...current.profile, revision: 2, rect: { x: 0, y: 0, width: 0.5, height: 0.5 } } },
+      { settings: { ...current.settings, crop: "top-left" } },
+      { model: { ...current.model, revision: "revision-2" } },
+    ];
+    for (const patch of changed) {
+      await expect(saveVisionRun({ ...current, ...patch })).rejects.toThrow(/冲突/);
+      expect(await getVisionRun(current.id)).toEqual(current);
+    }
+  });
+
+  it("allows checkpoints to complete with the final candidate at the same frame count", async () => {
+    const complete = run();
+    const checkpoint: VisionTimingRun = { ...complete, state: "analyzing", analyzedUntilMs: 9500, candidates: [] };
+    await saveVisionRun({ ...checkpoint, analyzedUntilMs: 0, analyzedFrames: 0 });
+    await saveVisionRun(checkpoint);
+    await saveVisionRun(complete);
+    await saveVisionRun(structuredClone(complete));
+    expect(await getVisionRun(complete.id)).toEqual(complete);
+  });
+
+  it.each(["cancelled", "failed"] as const)("allows %s recovery, review and retry without reopening finished analysis", async (state) => {
+    const checkpoint: VisionTimingRun = { ...run(), state: "analyzing", analyzedUntilMs: 9500 };
+    await saveVisionRun(checkpoint);
+    const stopped = { ...checkpoint, state, gaps: [{ startMs: 9500, endMs: 10_000, reason: "未处理区间" }] };
+    await saveVisionRun(stopped);
+    const reviewed = { ...stopped, reviews: [review()] };
+    await saveVisionRun(reviewed);
+    await saveVisionRun(structuredClone(reviewed));
+    await expect(saveVisionRun({ ...reviewed, gaps: [] })).rejects.toThrow(/冲突/);
+    await expect(saveVisionRun({ ...reviewed, state: "analyzing" })).rejects.toThrow(/冲突/);
+    expect(await getVisionRun(checkpoint.id)).toEqual(reviewed);
+  });
+
+  it("does not demote a completed analysis when a stale terminal save has equal progress", async () => {
+    const complete = run();
+    await saveVisionRun(complete);
+    for (const state of ["cancelled", "failed", "analyzing"] as const) {
+      await expect(saveVisionRun({ ...complete, state })).rejects.toThrow(/冲突/);
+      expect(await getVisionRun(complete.id)).toEqual(complete);
+    }
+  });
+
   it("allows equal review snapshots and appends without changing earlier history", async () => {
     const original = run();
     await saveVisionRun(original);

@@ -260,11 +260,21 @@ export async function saveVisionRun(run: VisionTimingRun): Promise<void> {
         try {
           if (read.result !== undefined) {
             const current = parseVisionRun(read.result);
+            const fixedFields = ["schemaVersion", "pipelineVersion", "timestampSource", "provenance", "id", "createdAt", "profile", "video", "settings", "model"] as const;
+            if (fixedFields.some((field) => JSON.stringify(current[field]) !== JSON.stringify(valid[field]))
+              || current.analyzedFrames > valid.analyzedFrames || current.analyzedUntilMs > valid.analyzedUntilMs
+              || (current.state !== "analyzing" && current.state !== valid.state)
+              || current.candidates.length > valid.candidates.length
+              || current.candidates.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(valid.candidates[index]))
+              || current.gaps.length > valid.gaps.length
+              || current.gaps.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(valid.gaps[index]))) {
+              throw new Error("分析记录保存冲突：本机已有更新或不同的分析历史。请先导出当前 JSON，再重新载入最新记录后继续；已有记录未被覆盖");
+            }
             if (current.reviews.length > valid.reviews.length || current.reviews.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(valid.reviews[index]))) {
               throw new Error("复核记录保存冲突：本机已有更新或不同的复核历史。请先导出当前 JSON，再重新载入最新记录后继续；已有记录未被覆盖");
             }
           }
-          // The read and put share one transaction, so another tab cannot slip in a divergent review.
+          // The read and put share one transaction, preserving observation and review history across tabs.
           store.put(valid);
         } catch (error) {
           writeError = error;
