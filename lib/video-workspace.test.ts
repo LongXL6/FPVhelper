@@ -8,12 +8,14 @@ import {
   normalizeVideoCrop,
   removeVideoSource,
   resetPilotChannelCrop,
+  resolveVideoWorkspaceNames,
   resolvedPilotVideoViewMode,
   saveVideoWorkspace,
   selectPilotChannel,
   selectVideoSource,
   setPilotChannelCrop,
   setPilotChannelViewMode,
+  setPilotChannelAutomaticName,
   setVideoSourceDevice,
   setVideoSourceLabel,
   setVideoSourceLayout,
@@ -38,6 +40,67 @@ function memoryStorage(initial: string | null = null, initialKey = VIDEO_WORKSPA
 }
 
 describe("local video workspace", () => {
+  it("resolves per-pilot live names, preferring Pilot Name and keeping manual edits", () => {
+    const initial = createDefaultVideoWorkspace();
+    const [first, second, third] = initial.pilotChannels;
+    const names = {
+      [first.id]: { pilotName: "PILOT-A", craftName: "CRAFT-A", status: "ready" as const },
+      [second.id]: { pilotName: "", craftName: "CRAFT-B", status: "ready" as const },
+    };
+    const auto = resolveVideoWorkspaceNames(initial, names);
+    expect(auto.pilotChannels.map((pilot) => pilot.athleteCode)).toEqual(["PILOT-A", "CRAFT-B", "", ""]);
+    const manual = updatePilotChannel(auto, first.id, { athleteCode: "OPERATOR-A" });
+    expect(resolveVideoWorkspaceNames(manual, names).pilotChannels[0].athleteCode).toBe("OPERATOR-A");
+    expect(resolveVideoWorkspaceNames(manual, {}).pilotChannels[1].athleteCode).toBe("");
+    expect(resolveVideoWorkspaceNames(setPilotChannelAutomaticName(manual, first.id), names).pilotChannels[0].athleteCode).toBe("PILOT-A");
+    expect(resolveVideoWorkspaceNames(auto, names, { pilotChannelId: third.id, athleteCode: "FROZEN-C" }).pilotChannels[2].athleteCode).toBe("FROZEN-C");
+  });
+
+  it("keeps a deliberately cleared manual name empty when metadata arrives or after reload", () => {
+    const initial = createDefaultVideoWorkspace();
+    const first = initial.pilotChannels[0];
+    const cleared = updatePilotChannel(initial, first.id, { athleteCode: "" });
+    const storage = memoryStorage();
+    saveVideoWorkspace(storage, cleared);
+    const reloaded = loadVideoWorkspace(storage).workspace;
+    const resolved = resolveVideoWorkspaceNames(reloaded, {
+      [first.id]: { pilotName: "LATE-PILOT", craftName: "", status: "ready" },
+    });
+    expect(resolved.pilotChannels[0]).toMatchObject({ athleteCode: "", athleteCodeMode: "manual" });
+  });
+
+  it("never persists a connected device name as the next connection's identity", () => {
+    const initial = createDefaultVideoWorkspace();
+    const first = initial.pilotChannels[0];
+    const resolved = resolveVideoWorkspaceNames(initial, {
+      [first.id]: { pilotName: "CONNECTED-A", craftName: "", status: "ready" },
+    });
+    const storage = memoryStorage();
+    saveVideoWorkspace(storage, resolved);
+    expect(storage.getItem(VIDEO_WORKSPACE_STORAGE_KEY)).not.toContain("CONNECTED-A");
+    expect(loadVideoWorkspace(storage).workspace.pilotChannels[0]).toMatchObject({ athleteCode: "", athleteCodeMode: "auto" });
+    expect(resolveVideoWorkspaceNames(resolved, {}, { pilotChannelId: first.id, athleteCode: "CONNECTED-A" }).pilotChannels[0].athleteCode).toBe("CONNECTED-A");
+    expect(resolveVideoWorkspaceNames(resolved, {}).pilotChannels[0].athleteCode).toBe("");
+  });
+
+  it("migrates existing names as manual without changing v2 crops or full-frame overrides", () => {
+    let initial = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    initial = setPilotChannelCrop(initial, initial.pilotChannels[0].id, { xPercent: 10, yPercent: 15, widthPercent: 40, heightPercent: 35 });
+    initial = setPilotChannelViewMode(initial, initial.pilotChannels[1].id, "full");
+    const old = {
+      ...initial,
+      pilotChannels: initial.pilotChannels.map((channel, index) => ({
+        ...channel,
+        athleteCode: index === 0 ? "EXISTING" : "",
+        athleteCodeMode: undefined,
+      })),
+    };
+    const loaded = loadVideoWorkspace(memoryStorage(JSON.stringify(old)));
+    expect(loaded.error).toBeNull();
+    expect(loaded.workspace.pilotChannels[0]).toMatchObject({ athleteCode: "EXISTING", athleteCodeMode: "manual", viewMode: "crop", crop: initial.pilotChannels[0].crop });
+    expect(loaded.workspace.pilotChannels[1]).toMatchObject({ athleteCodeMode: "auto", viewMode: "full" });
+  });
+
   it("starts with one full-frame source and one active pilot channel", () => {
     const workspace = createDefaultVideoWorkspace();
     expect(workspace.sources).toEqual([

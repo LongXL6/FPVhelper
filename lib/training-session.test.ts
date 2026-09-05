@@ -467,10 +467,20 @@ describe("training capture and successful video receipt extensions", () => {
     expect(withTrainingSessionVideoReceipt(session, receipt).video).toMatchObject({ overlay: "none", overlayTiming: "none" });
   });
 
+  it("round-trips MP4 receipts with the browser's quoted codec while preserving existing WebM receipts", () => {
+    for (const videoReceipt of [receipt, {
+      ...receipt, filename: "训练录像.mp4", mimeType: 'video/mp4; codecs="avc1.424028"',
+    }]) {
+      const recorded = withTrainingSessionVideoReceipt(finishedSession(), videoReceipt, "sticks");
+      expect(parseTrainingSession(serializeTrainingSession(recorded)).video).toEqual(recorded.video);
+    }
+  });
+
   it.each([
     { bytes: 0 }, { bytes: -1 }, { bytes: 1.5 }, { bytes: Number.MAX_SAFE_INTEGER + 1 },
     { filename: "../recording.webm" }, { filename: " record.webm" }, { filename: "a\n.webm" },
     { mimeType: "text/html" }, { mimeType: "video/webm\n" },
+    { filename: "renamed.mp4" }, { mimeType: "video/mp4" }, { mimeType: 'video/webm;codecs="vp9' },
     { startedAtEpochMs: -1 }, { finishedAtEpochMs: STARTED_AT }, { finishedAtEpochMs: Number.NaN },
   ])("rejects incomplete or invalid file receipts: %o", (invalid) => {
     expect(() => withTrainingSessionVideoReceipt(finishedSession(), { ...receipt, ...invalid }, "sticks")).toThrow("video");

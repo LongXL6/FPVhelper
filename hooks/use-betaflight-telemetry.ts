@@ -49,6 +49,11 @@ import {
   type StickMotionVisualization,
 } from "@/lib/stick-motion";
 import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
+import {
+  BetaflightNameReader,
+  EMPTY_BETAFLIGHT_DEVICE_NAMES,
+  type BetaflightDeviceNames,
+} from "@/lib/betaflight-device-name";
 
 const SERIAL_VISUAL_HISTORY_HZ = 20;
 const SERIAL_VISUAL_SAMPLE_STEP = Math.max(1, Math.round(MSP_RC_TARGET_HZ / SERIAL_VISUAL_HISTORY_HZ));
@@ -64,6 +69,7 @@ export interface TelemetryController {
   parserStats: MspParserStats;
   parserQuality: MspParserQuality;
   rcReceiveHz: number | null;
+  deviceNames: BetaflightDeviceNames;
   linkState: LinkState;
   rawCapture: RawSerialCaptureState;
   serialSupported: boolean;
@@ -90,6 +96,7 @@ export function useBetaflightTelemetry({
   const [parserStats, setParserStats] = useState<MspParserStats>(EMPTY_MSP_PARSER_STATS);
   const [linkState, setLinkState] = useState<LinkState>("unknown");
   const [rcReceiveHz, setRcReceiveHz] = useState<number | null>(null);
+  const [deviceNames, setDeviceNames] = useState(EMPTY_BETAFLIGHT_DEVICE_NAMES);
   const portRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
@@ -99,6 +106,8 @@ export function useBetaflightTelemetry({
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusExWatchdogRef = useRef<StatusExFreshnessWatchdog | null>(null);
   const parserRef = useRef(new MspV1StreamParser());
+  const deviceNameReaderRef = useRef(new BetaflightNameReader());
+  const deviceNamesSnapshotRef = useRef(EMPTY_BETAFLIGHT_DEVICE_NAMES);
   const pendingRcRequestStartedAtRef = useRef<number | null>(null);
   const sequenceRef = useRef(0);
   const connectionAttemptRef = useRef(0);
@@ -130,6 +139,13 @@ export function useBetaflightTelemetry({
     currentTelemetryRef.current = sample;
     setTelemetry(sample);
     for (const listener of sampleListenersRef.current) listener(sample, sampleSource);
+  }, []);
+
+  const publishDeviceNames = useCallback(() => {
+    const snapshot = deviceNameReaderRef.current.getSnapshot();
+    if (deviceNamesSnapshotRef.current === snapshot) return;
+    deviceNamesSnapshotRef.current = snapshot;
+    setDeviceNames(snapshot);
   }, []);
 
   const recordStickMotion = useCallback((
@@ -192,6 +208,8 @@ export function useBetaflightTelemetry({
     rcReceiveRateRef.current.reset();
     lastRatePublishedAtRef.current = 0;
     setRcReceiveHz(null);
+    deviceNameReaderRef.current.reset();
+    publishDeviceNames();
     setLinkState("unknown");
     const reader = readerRef.current;
     const writer = writerRef.current;
@@ -229,7 +247,7 @@ export function useBetaflightTelemetry({
     }
 
     return disconnectedAttempt;
-  }, [finishRawCapture, stopTimers]);
+  }, [finishRawCapture, publishDeviceNames, stopTimers]);
 
   const emitDemoFrame = useCallback(() => {
     if (!demoActiveRef.current) return;
@@ -376,10 +394,14 @@ export function useBetaflightTelemetry({
             break;
           }
           if (!value) continue;
+          if (portRef.current !== port || connectionAttemptRef.current !== connectionAttempt) break;
           ingestRawCapture(value);
           const frames = parserRef.current.push(value);
           setParserStats(parserRef.current.getStats());
           for (const frame of frames) {
+            if (portRef.current !== port || connectionAttemptRef.current !== connectionAttempt) break;
+            deviceNameReaderRef.current.acceptFrame(frame);
+            publishDeviceNames();
             if (!frame.error) applyFrame(frame.command, frame.payload, connectionAttempt);
           }
         }
@@ -392,7 +414,7 @@ export function useBetaflightTelemetry({
         }
       }
     },
-    [applyFrame, ingestRawCapture],
+    [applyFrame, ingestRawCapture, publishDeviceNames],
   );
 
   const startRawCapture = useCallback(() => {
@@ -499,7 +521,7 @@ export function useBetaflightTelemetry({
 
         writing = true;
         pendingRcRequestStartedAtRef.current = now;
-        const requests = [buildMspV1Request(MSP.RC)];
+        const requests: Uint8Array[] = [buildMspV1Request(MSP.RC)];
         if (now - lastStatusExRequestAt >= MSP_STATUS_EX_POLL_INTERVAL_MS) {
           lastStatusExRequestAt = now;
           requests.push(buildMspV1Request(MSP.STATUS_EX));
@@ -507,6 +529,11 @@ export function useBetaflightTelemetry({
         if (now - lastAnalogRequestAt >= MSP_ANALOG_POLL_INTERVAL_MS) {
           lastAnalogRequestAt = now;
           requests.push(buildMspV1Request(MSP.ANALOG));
+        }
+        if (receivedRcFrameRef.current) {
+          const nameRequest = deviceNameReaderRef.current.nextRequest(now);
+          publishDeviceNames();
+          if (nameRequest) requests.push(nameRequest);
         }
         void (async () => {
           for (const request of requests) await writer.write(request);
@@ -522,7 +549,7 @@ export function useBetaflightTelemetry({
     } catch (connectError) {
       await failSerial(classifySerialError(connectError, "open"), connectionAttempt);
     }
-  }, [disconnect, failSerial, readLoop, startDemo]);
+  }, [disconnect, failSerial, publishDeviceNames, readLoop, startDemo]);
 
   useEffect(() => {
     if (demoPlaybackActiveRef.current) {
@@ -569,6 +596,7 @@ export function useBetaflightTelemetry({
     parserStats,
     parserQuality: mspParserQuality(parserStats),
     rcReceiveHz,
+    deviceNames,
     linkState,
     rawCapture,
     serialSupported: typeof navigator !== "undefined" && Boolean(navigator.serial),

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  localVideoContainerForMimeType,
   localVideoRecordingFilename,
   preferredLocalVideoMimeType,
   startLocalVideoRecording,
@@ -7,6 +8,7 @@ import {
 
 class FakeMediaRecorder extends EventTarget {
   state: RecordingState = "inactive";
+  mimeType = "";
   start = vi.fn((timesliceMs?: number) => {
     void timesliceMs;
     this.state = "recording";
@@ -37,9 +39,18 @@ function fakeStream() {
 }
 
 describe("local video recording", () => {
-  it("selects the first browser-supported WebM encoder", () => {
+  it("prefers supported MP4 and uses WebM only when MP4 is unsupported", () => {
+    expect(preferredLocalVideoMimeType(() => true)).toBe("video/mp4;codecs=avc1");
+    expect(preferredLocalVideoMimeType((mimeType) => mimeType === "video/mp4")).toBe("video/mp4");
     expect(preferredLocalVideoMimeType((mimeType) => mimeType.includes("vp8"))).toBe("video/webm;codecs=vp8");
     expect(preferredLocalVideoMimeType(() => false)).toBeNull();
+  });
+
+  it("derives the container from MIME including browser-supplied codec parameters", () => {
+    expect(localVideoContainerForMimeType('video/mp4; codecs="avc1.424028"')).toBe("mp4");
+    expect(localVideoContainerForMimeType("video/webm;codecs=vp9")).toBe("webm");
+    expect(localVideoContainerForMimeType("video/quicktime")).toBeNull();
+    expect(localVideoContainerForMimeType("video/mp4\n")).toBeNull();
   });
 
   it("builds a local filename that links the pilot, Session and selected view", () => {
@@ -51,6 +62,10 @@ describe("local video recording", () => {
     });
 
     expect(filename).toMatch(/^fpv-video-20260831-123456-PILOT-07-abcdef12-crop\.webm$/);
+    expect(localVideoRecordingFilename({
+      athleteCode: "PILOT-07", sessionId: "session-abcdef123456",
+      startedAtEpochMs: 100, cropped: false, mimeType: "video/mp4;codecs=avc1",
+    })).toMatch(/-full\.mp4$/);
   });
 
   it("writes each MediaRecorder chunk in order and confirms only after close", async () => {
@@ -101,6 +116,71 @@ describe("local video recording", () => {
     await runtime.stop();
 
     expect(calls).toEqual(["close", "track-stop"]);
+  });
+
+  it("records MP4 bytes and reports the recorder's actual codec only after file close", async () => {
+    const recorder = new FakeMediaRecorder();
+    recorder.mimeType = 'video/mp4;codecs="avc1.424028"';
+    let finishClose!: () => void;
+    const close = new Promise<void>((resolve) => { finishClose = resolve; });
+    const write = vi.fn(async () => undefined);
+    const createRecorder = vi.fn(() => recorder as unknown as MediaRecorder);
+    const runtime = startLocalVideoRecording({
+      stream: fakeStream().stream,
+      writable: { write, close: () => close },
+      filename: "pilot.mp4", mimeType: "video/mp4", createRecorder,
+    });
+    recorder.emitChunk(new Blob(["mp4 frames"], { type: "video/mp4" }));
+    const confirmed = vi.fn();
+    const result = runtime.stop().then((receipt) => { confirmed(receipt); return receipt; });
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+    expect(confirmed).not.toHaveBeenCalled();
+    finishClose();
+    expect(await result).toMatchObject({ filename: "pilot.mp4", mimeType: recorder.mimeType, bytes: 10 });
+    expect(createRecorder).toHaveBeenCalledWith(expect.anything(), { mimeType: "video/mp4" });
+  });
+
+  it("rejects mismatched filename containers before starting an encoder", () => {
+    const createRecorder = vi.fn(() => new FakeMediaRecorder() as unknown as MediaRecorder);
+    const close = vi.fn(async () => undefined);
+    const { stream, stop } = fakeStream();
+    expect(() => startLocalVideoRecording({
+      stream, writable: { write: async () => undefined, close },
+      filename: "renamed.mp4", mimeType: "video/webm", stopStreamTracksOnFinish: true, createRecorder,
+    })).toThrow("后缀");
+    expect(createRecorder).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not silently retry another format when the MP4 encoder refuses to start", () => {
+    const recorder = new FakeMediaRecorder();
+    recorder.mimeType = "video/mp4";
+    recorder.start.mockImplementation(() => { throw new DOMException("encoder unavailable", "NotSupportedError"); });
+    const createRecorder = vi.fn(() => recorder as unknown as MediaRecorder);
+    const close = vi.fn(async () => undefined);
+    expect(() => startLocalVideoRecording({
+      stream: fakeStream().stream, writable: { write: async () => undefined, close },
+      filename: "pilot.mp4", mimeType: "video/mp4", createRecorder,
+    })).toThrow("encoder unavailable");
+    expect(createRecorder).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a browser producing another container instead of confirming a renamed file", async () => {
+    const recorder = new FakeMediaRecorder();
+    recorder.mimeType = "video/mp4";
+    const write = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    const runtime = startLocalVideoRecording({
+      stream: fakeStream().stream, writable: { write, close },
+      filename: "pilot.mp4", mimeType: "video/mp4",
+      createRecorder: () => recorder as unknown as MediaRecorder,
+    });
+    recorder.emitChunk(new Blob(["webm bytes"], { type: "video/webm" }));
+    await expect(runtime.done).rejects.toThrow("分块格式");
+    expect(write).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("rejects the recording receipt when a chunk cannot be written", async () => {

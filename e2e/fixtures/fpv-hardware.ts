@@ -77,12 +77,22 @@ export interface FakeSerialPortMetrics {
   rcResponses: number;
   requestedCommands: number[];
   rcChannelsUs: number[];
+  requestedTextTypes: number[];
+}
+
+export interface FakeSerialDeviceNames {
+  apiMinor: number;
+  pilotName: string;
+  craftName: string;
+  metadataResponse: "normal" | "unsupported" | "timeout";
+  metadataDelayMs: number;
 }
 
 interface FakeSerialControl {
   holdNextWrite: () => void;
   attemptClose: () => Promise<string>;
   disconnectPort: (portIndex: number) => void;
+  configurePortNames: (portIndex: number, names: Partial<FakeSerialDeviceNames>) => void;
 }
 
 declare global {
@@ -134,6 +144,14 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
         rcResponses: 0,
         requestedCommands: [],
         rcChannelsUs,
+        requestedTextTypes: [],
+      }));
+      const deviceNames: FakeSerialDeviceNames[] = window.__fpvFakeSerialPorts.map((_, index) => ({
+        apiMinor: 45,
+        pilotName: `BF-PILOT-0${index + 1}`,
+        craftName: `BF-CRAFT-0${index + 1}`,
+        metadataResponse: "normal",
+        metadataDelayMs: 0,
       }));
       window.localStorage.setItem(
         "fpvhelper.analytics.ingest-token.v1",
@@ -147,10 +165,23 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
         stickOverlayMode: "trail",
       }));
 
-      const mspResponse = (command: number, payload: Uint8Array) => {
+      const crc8 = (bytes: Uint8Array) => {
+        let crc = 0;
+        for (const byte of bytes) {
+          crc ^= byte;
+          for (let bit = 0; bit < 8; bit += 1) crc = ((crc << 1) ^ (crc & 0x80 ? 0xd5 : 0)) & 0xff;
+        }
+        return crc;
+      };
+
+      const mspResponse = (command: number, payload: Uint8Array, version: 1 | 2, error = false) => {
+        if (version === 2) {
+          const content = Uint8Array.of(0, command & 0xff, command >> 8, payload.byteLength & 0xff, payload.byteLength >> 8, ...payload);
+          return Uint8Array.of(36, 88, error ? 33 : 62, ...content, crc8(content));
+        }
         let checksum = payload.byteLength ^ command;
         for (const byte of payload) checksum ^= byte;
-        return Uint8Array.of(36, 77, 62, payload.byteLength, command, ...payload, checksum);
+        return Uint8Array.of(36, 77, error ? 33 : 62, payload.byteLength, command, ...payload, checksum);
       };
 
       const uint16Payload = (values: number[]) => {
@@ -163,17 +194,26 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
       const validateReadRequest = (request: Uint8Array) => {
         const errors: string[] = [];
         if (!(request instanceof Uint8Array)) errors.push("request_not_uint8array");
-        if (request.byteLength !== 6) errors.push("request_length_not_6");
-        if (request[0] !== 36 || request[1] !== 77 || request[2] !== 60) errors.push("request_header_not_$M<");
-        if (request[3] !== 0) errors.push("request_payload_not_empty");
-        const command = request[4];
-        if (command !== 105 && command !== 110 && command !== 150) errors.push("request_command_not_read_only");
-        if (request[5] !== (request[3] ^ command)) errors.push("request_checksum_invalid");
+        const version = request[1] === 88 ? 2 : 1;
+        if (request[0] !== 36 || (request[1] !== 77 && request[1] !== 88) || request[2] !== 60) errors.push("request_header_invalid");
+        const command = version === 2 ? request[4] | (request[5] << 8) : request[4];
+        const payload = version === 2 ? request.slice(8, -1) : request.slice(5, -1);
+        if (![1, 10, 105, 110, 150, 0x3006].includes(command)) errors.push("request_command_not_read_only");
+        if (version === 2) {
+          if (request[3] !== 0) errors.push("request_flags_not_zero");
+          if (request.byteLength !== 9 + (request[6] | (request[7] << 8))) errors.push("request_length_invalid");
+          if (command !== 0x3006 || payload.length !== 1 || (payload[0] !== 1 && payload[0] !== 2)) errors.push("request_get_text_payload_invalid");
+          if (request.at(-1) !== crc8(request.slice(3, -1))) errors.push("request_crc_invalid");
+        } else {
+          if (request.byteLength !== 6 || request[3] !== 0) errors.push("request_payload_not_empty");
+          if (command === 0x3006) errors.push("request_get_text_requires_mspv2");
+          if (request[5] !== (request[3] ^ command)) errors.push("request_checksum_invalid");
+        }
         if (errors.length > 0) {
           metrics.protocolErrors.push(...errors);
           throw new TypeError(`Invalid MSP read request: ${errors.join(",")}`);
         }
-        return command;
+        return { command, payload, version: version as 1 | 2 };
       };
 
       class FakeReadable {
@@ -229,6 +269,10 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
           }
           this.queuedResponses.push(response);
         }
+
+        enqueueIfActive(response: Uint8Array) {
+          if (this.activeReader) this.enqueue(response);
+        }
       }
 
       class FakeWritable {
@@ -249,11 +293,15 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
           return {
             write: (request: Uint8Array) => {
               if (!this.activeWriter || this.aborted) return Promise.reject(new DOMException("Writer is not active", "InvalidStateError"));
-              const command = validateReadRequest(request);
+              const { command, payload: requestPayload, version } = validateReadRequest(request);
               metrics.requestedCommands.push(command);
               this.portMetrics.requestedCommands.push(command);
 
               let payload: Uint8Array;
+              let responseError = false;
+              const names = deviceNames[this.portMetrics.portIndex];
+              const metadataRequest = command === 1 || command === 10 || command === 0x3006;
+              if (command === 0x3006) this.portMetrics.requestedTextTypes.push(requestPayload[0]);
               if (command === 105) {
                 payload = uint16Payload(this.portMetrics.rcChannelsUs);
                 metrics.rcResponses += 1;
@@ -263,11 +311,26 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
                 payload[15] = 0;
                 payload[16] = 3;
                 metrics.statusExResponses += 1;
-              } else {
+              } else if (command === 110) {
                 payload = Uint8Array.of(50, 0, 0, 132, 3);
                 metrics.analogResponses += 1;
+              } else if (names.metadataResponse === "unsupported") {
+                payload = new Uint8Array();
+                responseError = true;
+              } else if (command === 1) {
+                payload = Uint8Array.of(0, 1, names.apiMinor);
+              } else if (command === 10) {
+                payload = new TextEncoder().encode(names.craftName);
+              } else {
+                const text = new TextEncoder().encode(requestPayload[0] === 1 ? names.pilotName : names.craftName);
+                payload = Uint8Array.of(requestPayload[0], text.length, ...text);
               }
-              this.readable.enqueue(mspResponse(command, payload));
+              if (!(metadataRequest && names.metadataResponse === "timeout")) {
+                const response = mspResponse(command, payload, version, responseError);
+                if (metadataRequest && names.metadataDelayMs > 0) {
+                  window.setTimeout(() => this.readable.enqueueIfActive(response), names.metadataDelayMs);
+                } else this.readable.enqueue(response);
+              }
 
               if (!holdNextWrite) return Promise.resolve();
               holdNextWrite = false;
@@ -376,6 +439,9 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
         disconnectPort: (portIndex) => {
           const port = ports[portIndex];
           if (port) serial.emitDisconnect(port);
+        },
+        configurePortNames: (portIndex, update) => {
+          if (deviceNames[portIndex]) Object.assign(deviceNames[portIndex], update);
         },
       };
 

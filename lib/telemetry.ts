@@ -38,9 +38,12 @@ export interface MspParserStats {
 export type MspParserQuality = "unknown" | "good" | "degraded" | "poor";
 
 export const MSP = {
+  API_VERSION: 1,
+  NAME: 10,
   RC: 105,
   ANALOG: 110,
   STATUS_EX: 150,
+  GET_TEXT: 0x3006,
 } as const;
 
 export const MSP_RC_TARGET_HZ = 100;
@@ -153,10 +156,32 @@ export function connectionStateAfterRcSilence(
   return current;
 }
 
-export type ReadOnlyMspCommand = typeof MSP.RC | typeof MSP.ANALOG | typeof MSP.STATUS_EX;
+export type ReadOnlyMspCommand = typeof MSP.API_VERSION | typeof MSP.NAME | typeof MSP.RC | typeof MSP.ANALOG | typeof MSP.STATUS_EX;
 
 export function buildMspV1Request(command: ReadOnlyMspCommand) {
+  if (![MSP.API_VERSION, MSP.NAME, MSP.RC, MSP.ANALOG, MSP.STATUS_EX].some((allowed) => allowed === command)) {
+    throw new RangeError("Unsupported read-only MSP v1 command");
+  }
   return Uint8Array.of(36, 77, 60, 0, command, command);
+}
+
+function crc8DvbS2(bytes: ArrayLike<number>, start: number, end: number) {
+  let crc = 0;
+  for (let index = start; index < end; index += 1) {
+    crc ^= bytes[index];
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = ((crc << 1) ^ ((crc & 0x80) ? 0xd5 : 0)) & 0xff;
+    }
+  }
+  return crc;
+}
+
+export function buildMspV2GetTextRequest(textType: 1 | 2) {
+  if (textType !== 1 && textType !== 2) throw new RangeError("Unsupported read-only MSP text type");
+  // Native MSPv2: flags, little-endian command/length, then the requested text type.
+  const request = Uint8Array.of(36, 88, 60, 0, MSP.GET_TEXT & 0xff, MSP.GET_TEXT >> 8, 1, 0, textType, 0);
+  request[request.length - 1] = crc8DvbS2(request, 3, request.length - 1);
+  return request;
 }
 
 export function mspParserQuality(stats: MspParserStats): MspParserQuality {
@@ -174,7 +199,7 @@ export class MspV1StreamParser {
 
   push(chunk: Uint8Array) {
     this.stats.bytesReceived += chunk.byteLength;
-    this.buffer.push(...chunk);
+    for (const byte of chunk) this.buffer.push(byte);
     const frames: MspFrame[] = [];
 
     while (this.buffer.length >= 3) {
@@ -186,10 +211,9 @@ export class MspV1StreamParser {
       }
 
       if (start > 0) this.discard(start);
-      if (this.buffer.length < 6) break;
-
-      const payloadSize = this.buffer[3];
-      const frameSize = payloadSize + 6;
+      const layout = this.frameLayoutAt(0);
+      if (!layout) break;
+      const { frameSize, payloadOffset, payloadSize, command } = layout;
       if (this.buffer.length < frameSize) {
         const recoveryStart = this.findValidatedFrameHeader(3);
         if (recoveryStart === -1) break;
@@ -198,15 +222,15 @@ export class MspV1StreamParser {
       }
 
       const direction = this.buffer[2];
-      const command = this.buffer[4];
-      const payload = Uint8Array.from(this.buffer.slice(5, 5 + payloadSize));
-      const receivedChecksum = this.buffer[5 + payloadSize];
-      const checksum = this.checksumAt(0);
+      const payload = Uint8Array.from(this.buffer.slice(payloadOffset, payloadOffset + payloadSize));
+      const receivedChecksum = this.buffer[frameSize - 1];
+      const checksum = this.checksumAt(0, frameSize);
 
       if (checksum !== receivedChecksum) {
         this.stats.checksumErrors += 1;
         const recoveryStart = this.findValidatedFrameHeader(1);
-        this.discard(recoveryStart === -1 ? frameSize : recoveryStart);
+        // A corrupt length may include part of the following frame; retain header prefixes.
+        this.discard(recoveryStart === -1 ? 1 : recoveryStart);
         continue;
       }
 
@@ -239,7 +263,7 @@ export class MspV1StreamParser {
     for (let index = fromIndex; index <= this.buffer.length - 3; index += 1) {
       if (
         this.buffer[index] === 36 &&
-        this.buffer[index + 1] === 77 &&
+        (this.buffer[index + 1] === 77 || this.buffer[index + 1] === 88) &&
         (this.buffer[index + 2] === 62 || this.buffer[index + 2] === 33)
       ) {
         return index;
@@ -251,12 +275,12 @@ export class MspV1StreamParser {
   private findValidatedFrameHeader(fromIndex: number) {
     let start = this.findHeader(fromIndex);
     while (start !== -1) {
-      if (this.buffer.length - start >= 6) {
-        const payloadSize = this.buffer[start + 3];
-        const frameSize = payloadSize + 6;
+      const layout = this.frameLayoutAt(start);
+      if (layout) {
+        const { frameSize } = layout;
         if (
           this.buffer.length - start >= frameSize &&
-          this.checksumAt(start) === this.buffer[start + 5 + payloadSize]
+          this.checksumAt(start, frameSize) === this.buffer[start + frameSize - 1]
         ) {
           return start;
         }
@@ -266,10 +290,24 @@ export class MspV1StreamParser {
     return -1;
   }
 
-  private checksumAt(start: number) {
-    const payloadSize = this.buffer[start + 3];
-    let checksum = payloadSize ^ this.buffer[start + 4];
-    for (let index = start + 5; index < start + 5 + payloadSize; index += 1) {
+  private frameLayoutAt(start: number) {
+    const isV2 = this.buffer[start + 1] === 88;
+    if (this.buffer.length - start < (isV2 ? 8 : 5)) return null;
+    const payloadSize = isV2
+      ? this.buffer[start + 6] | (this.buffer[start + 7] << 8)
+      : this.buffer[start + 3];
+    return {
+      frameSize: payloadSize + (isV2 ? 9 : 6),
+      payloadOffset: start + (isV2 ? 8 : 5),
+      payloadSize,
+      command: isV2 ? this.buffer[start + 4] | (this.buffer[start + 5] << 8) : this.buffer[start + 4],
+    };
+  }
+
+  private checksumAt(start: number, frameSize: number) {
+    if (this.buffer[start + 1] === 88) return crc8DvbS2(this.buffer, start + 3, start + frameSize - 1);
+    let checksum = 0;
+    for (let index = start + 3; index < start + frameSize - 1; index += 1) {
       checksum ^= this.buffer[index];
     }
     return checksum;
@@ -277,7 +315,7 @@ export class MspV1StreamParser {
 
   private trailingHeaderPrefixLength() {
     const length = this.buffer.length;
-    if (length >= 2 && this.buffer[length - 2] === 36 && this.buffer[length - 1] === 77) return 2;
+    if (length >= 2 && this.buffer[length - 2] === 36 && (this.buffer[length - 1] === 77 || this.buffer[length - 1] === 88)) return 2;
     if (length >= 1 && this.buffer[length - 1] === 36) return 1;
     return 0;
   }

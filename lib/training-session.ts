@@ -1,6 +1,6 @@
 import type { FlightTelemetry, TelemetrySource } from "./telemetry";
 import { isWorkstationId } from "./workstation-id";
-import type { LocalVideoRecordingReceipt } from "./local-video-recording";
+import { localVideoContainerForMimeType, type LocalVideoRecordingReceipt } from "./local-video-recording";
 import {
   calculateTrainingCaptureQuality,
   createTrainingCaptureContext,
@@ -388,8 +388,13 @@ function parseTrainingSessionVideo(input: unknown): TrainingSessionVideo {
     throw new Error("video.filename 必须是本地文件名，不能包含路径或控制字符");
   }
   const mimeType = requireString(video.mimeType, "video.mimeType");
-  if (!/^video\/[a-zA-Z0-9.+-]+(?:;[a-zA-Z0-9=., _+-]+)*$/.test(mimeType) || mimeType.length > 150) {
+  if (!/^video\/[a-zA-Z0-9.+-]+(?: *; *[a-zA-Z0-9_-]+=(?:[a-zA-Z0-9.,_+-]+|"[a-zA-Z0-9., _+-]+"))*$/.test(mimeType) || mimeType.length > 150) {
     throw new Error("video.mimeType 必须是有效视频 MIME 类型");
+  }
+  const container = localVideoContainerForMimeType(mimeType);
+  const extension = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
+  if ((container && extension !== container) || ((extension === "mp4" || extension === "webm") && extension !== container)) {
+    throw new Error("video.filename 后缀与 MIME 视频格式不一致");
   }
   const bytes = requireFiniteNumber(video.bytes, "video.bytes");
   if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("video.bytes 必须是正安全整数");

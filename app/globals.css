@@ -1572,6 +1572,18 @@ body, .dashboard-shell { background-image: none; }
 .active-pilot-field { display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: 12px; }
 .active-pilot-field input { width: 168px; min-width: 0; height: 40px; padding: 8px 11px; border: 1px solid #dce1e5; border-radius: 6px; background: white; color: var(--ink); font: 12px/1.5 var(--body); }
 .active-pilot-field input:focus { border-color: #bc927c; }
+.pilot-name-field { display: grid; gap: 6px; min-width: 0; }
+.pilot-name-field__source { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; }
+.pilot-name-field__source small, .pilot-name-field__help { color: var(--muted); font: 400 10px/1.6 var(--body); }
+.pilot-name-field__help { margin: 0; }
+.pilot-name-field__reset { padding: 0; border: 0; background: transparent; color: var(--accent); font: 500 10px/1.6 var(--body); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.pilot-name-field__reset:disabled { opacity: .5; cursor: default; }
+.pilot-name-field--compact .pilot-name-field__source { padding-left: 59px; }
+.video-viewport-configure { position: absolute; z-index: 7; top: 12px; right: 12px; padding: 8px 10px; border: 1px solid #b7c7cc70; border-radius: 6px; background: #19232ce6; color: #e4eae8; font: 500 10px/1.5 var(--body); cursor: pointer; }
+.video-viewport-configure:hover { background: #34423d; border-color: #b9d2c7; }
+.video-viewport-configure:disabled { opacity: .5; cursor: default; }
+.video-stage--multi .video-viewport-select { max-width: calc(100% - 122px); min-width: 0; }
+.workspace-shell--coach .video-viewport-configure { display: none; }
 .preflight-strip > span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .preflight-strip > span.is-ready { color: var(--success); }
 .preflight-strip > small { margin-left: auto; color: var(--muted); font-size: 11px; }
@@ -1940,6 +1952,8 @@ body, .dashboard-shell { background-image: none; }
   .top-actions .button { flex: 1 1 auto; }
   .preflight-strip { gap: 13px 17px; padding: 17px 0 20px; }
   .active-pilot-field { flex-basis: 100%; width: 100%; justify-content: space-between; }
+  .pilot-name-field--compact { width: 100%; }
+  .pilot-name-field--compact .pilot-name-field__source { padding-left: 0; }
   .active-pilot-field input { width: min(64%, 220px); min-height: 42px; }
   .preflight-strip > span { font-size: 10px; }
   .preflight-strip > small { font-size: 10px; line-height: 1.7; }

@@ -7,6 +7,7 @@ import { useBetaflightTelemetry, type TelemetryController } from "./use-betaflig
 vi.mock("@/lib/telemetry", () => import("../lib/telemetry"));
 vi.mock("@/lib/hardware-errors", () => import("../lib/hardware-errors"));
 vi.mock("@/lib/stick-motion", () => import("../lib/stick-motion"));
+vi.mock("@/lib/betaflight-device-name", () => import("../lib/betaflight-device-name"));
 vi.mock("@/hooks/use-raw-serial-capture", () => import("./use-raw-serial-capture"));
 
 let controller: TelemetryController;
@@ -22,10 +23,10 @@ function Harness() {
   return null;
 }
 
-function frame(command: number, payload: number[]) {
+function frame(command: number, payload: number[], error = false) {
   let checksum = payload.length ^ command;
   for (const byte of payload) checksum ^= byte;
-  return [36, 77, 62, payload.length, command, ...payload, checksum];
+  return [36, 77, error ? 33 : 62, payload.length, command, ...payload, checksum];
 }
 
 function rcFrame(throttle = 1400) {
@@ -37,14 +38,13 @@ async function receive(bytes: number[]) {
   await act(async () => { received.enqueue(Uint8Array.from(bytes)); });
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  nowMs = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => nowMs);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { isSecureContext: true });
-  write = vi.fn<(chunk: Uint8Array) => Promise<void>>().mockResolvedValue(undefined);
-  const port = Object.assign(new EventTarget(), {
+async function advance(ms = 10) {
+  nowMs += ms;
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+}
+
+function createPort() {
+  return Object.assign(new EventTarget(), {
     connected: true,
     readable: new ReadableStream<Uint8Array>({ start(stream) { received = stream; } }),
     writable: new WritableStream<Uint8Array>({ write }),
@@ -52,6 +52,20 @@ beforeEach(() => {
     close: vi.fn().mockResolvedValue(undefined),
     getInfo: () => ({}),
   });
+}
+
+function commandsWritten() {
+  return write.mock.calls.map(([bytes]) => bytes[1] === 88 ? bytes[4] | bytes[5] << 8 : bytes[4]);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  nowMs = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { isSecureContext: true });
+  write = vi.fn<(chunk: Uint8Array) => Promise<void>>().mockResolvedValue(undefined);
+  const port = createPort();
   requestPort = vi.fn().mockResolvedValue(port);
   vi.stubGlobal("navigator", { serial: Object.assign(new EventTarget(), { requestPort, getPorts: async () => [] }) });
   act(() => { renderer = create(<Harness />); });
@@ -143,5 +157,93 @@ describe("Betaflight telemetry fidelity", () => {
     expect(controller.connection).toBe("stale");
     await receive(rcFrame());
     expect(controller.connection).toBe("live");
+  });
+
+  it("probes names only after real RC and keeps metadata behind the in-flight RC request", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    await advance();
+    expect(commandsWritten()).toEqual([MSP.RC]);
+    expect(controller.deviceNames.status).toBe("idle");
+
+    await receive(rcFrame());
+    await advance();
+    expect(commandsWritten()).toEqual([MSP.RC, MSP.RC, MSP.API_VERSION]);
+    expect(controller.deviceNames.status).toBe("reading");
+    const sample = controller.telemetry;
+    await receive(frame(MSP.API_VERSION, [0, 1, 44]));
+    await advance();
+    expect(commandsWritten()).toEqual([MSP.RC, MSP.RC, MSP.API_VERSION]);
+    expect(controller.telemetry).toBe(sample);
+
+    await receive(rcFrame());
+    await advance();
+    expect(commandsWritten().slice(-2)).toEqual([MSP.RC, MSP.NAME]);
+  });
+
+  it("publishes a legacy craft name without publishing a telemetry sample and clears it on reconnect", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    await receive(rcFrame());
+    await advance();
+    await receive([...frame(MSP.API_VERSION, [0, 1, 44]), ...rcFrame()]);
+    await advance();
+    const samples: FlightTelemetry[] = [];
+    const unsubscribe = controller.subscribeSamples((sample) => { samples.push(sample); });
+    const latestRc = controller.telemetry;
+    await receive(frame(MSP.NAME, Array.from("PILOT-OLD", (character) => character.charCodeAt(0))));
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "PILOT-OLD", status: "ready" });
+    expect(controller.telemetry).toBe(latestRc);
+    expect(samples).toHaveLength(0);
+    const names = controller.deviceNames;
+    await receive(Array.from({ length: 100 }, () => rcFrame()).flat());
+    expect(samples).toHaveLength(100);
+    expect(controller.deviceNames).toBe(names);
+    unsubscribe();
+
+    const oldReceived = received;
+    requestPort.mockResolvedValueOnce(createPort());
+    await act(async () => {
+      oldReceived.enqueue(Uint8Array.from(frame(MSP.NAME, Array.from("LATE-OLD", (character) => character.charCodeAt(0)))));
+      await controller.connectSerial();
+    });
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "", status: "idle" });
+    await receive(rcFrame());
+    await advance();
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "", status: "reading" });
+    await act(async () => { await controller.useDemo(); });
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "", status: "idle" });
+  });
+
+  it("finishes unanswered optional probes while sustaining 100 Hz RC requests and 20 Hz visual history", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    await receive(rcFrame());
+    for (let index = 0; index < 150; index += 1) {
+      await advance();
+      await receive(rcFrame());
+    }
+    expect(commandsWritten().filter((command) => command === MSP.RC)).toHaveLength(150);
+    expect(commandsWritten().filter((command) => command === MSP.API_VERSION)).toHaveLength(1);
+    expect(commandsWritten().filter((command) => command === MSP.NAME)).toHaveLength(1);
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "", status: "unavailable" });
+    expect(controller.connection).toBe("live");
+    expect(controller.source).toBe("serial");
+    expect(controller.error).toBeNull();
+    expect(controller.throttleHistory).toHaveLength(30);
+    expect(controller.stickMotion.samples).toHaveLength(20);
+    expect(controller.stickMotion.samples.at(-1)?.sequence).toBe(150);
+  });
+
+  it("treats unsupported optional commands as name unavailability without failing serial capture", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    await receive(rcFrame());
+    await advance();
+    await receive([...frame(MSP.API_VERSION, [], true), ...rcFrame()]);
+    await advance();
+    expect(commandsWritten().slice(-2)).toEqual([MSP.RC, MSP.NAME]);
+    await receive(frame(MSP.NAME, [], true));
+    expect(controller.deviceNames).toEqual({ pilotName: "", craftName: "", status: "unavailable" });
+    expect(controller.connection).toBe("live");
+    expect(controller.error).toBeNull();
+    await receive(rcFrame(1700));
+    expect(controller.telemetry.rcThrottleUs).toBe(1700);
   });
 });

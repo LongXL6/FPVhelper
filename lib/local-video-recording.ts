@@ -1,10 +1,20 @@
 import type { TrainingSessionDirectoryWritable } from "./training-session-export-directory";
 
-const WEBM_MIME_TYPES = [
+const LOCAL_VIDEO_MIME_TYPES = [
+  "video/mp4;codecs=avc1",
+  "video/mp4",
   "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
 ] as const;
+
+export function localVideoContainerForMimeType(mimeType: string): "mp4" | "webm" | null {
+  if (/[\u0000-\u001f\u007f]/.test(mimeType)) return null;
+  const mediaType = mimeType.split(";", 1)[0].trim().toLowerCase();
+  if (mediaType === "video/mp4") return "mp4";
+  if (mediaType === "video/webm") return "webm";
+  return null;
+}
 
 export interface LocalVideoRecordingReceipt {
   filename: string;
@@ -42,22 +52,26 @@ export function localVideoRecordingFilename({
   sessionId,
   startedAtEpochMs,
   cropped,
+  mimeType = "video/webm",
 }: {
   athleteCode: string;
   sessionId: string;
   startedAtEpochMs: number;
   cropped: boolean;
+  mimeType?: string;
 }) {
+  const extension = localVideoContainerForMimeType(mimeType);
+  if (!extension) throw new Error("不支持当前录像 MIME 类型");
   const startedAt = new Date(startedAtEpochMs);
   const timestamp = `${startedAt.getFullYear()}${pad(startedAt.getMonth() + 1)}${pad(startedAt.getDate())}-${pad(startedAt.getHours())}${pad(startedAt.getMinutes())}${pad(startedAt.getSeconds())}`;
   const shortId = sessionId.startsWith("session-") ? sessionId.slice(8, 16) : sessionId.slice(0, 8);
-  return `fpv-video-${timestamp}-${safeFilenameSegment(athleteCode)}-${shortId}-${cropped ? "crop" : "full"}.webm`;
+  return `fpv-video-${timestamp}-${safeFilenameSegment(athleteCode)}-${shortId}-${cropped ? "crop" : "full"}.${extension}`;
 }
 
 export function preferredLocalVideoMimeType(
   isTypeSupported: (mimeType: string) => boolean,
 ) {
-  return WEBM_MIME_TYPES.find((mimeType) => isTypeSupported(mimeType)) ?? null;
+  return LOCAL_VIDEO_MIME_TYPES.find((mimeType) => isTypeSupported(mimeType)) ?? null;
 }
 
 export function startLocalVideoRecording({
@@ -103,7 +117,14 @@ export function startLocalVideoRecording({
   };
 
   try {
+    const container = localVideoContainerForMimeType(mimeType);
+    if (!container || !filename.toLowerCase().endsWith(`.${container}`)) {
+      throw new Error("录像文件后缀与请求的编码格式不一致");
+    }
     recorder = createRecorder(stream, { mimeType });
+    if (recorder.mimeType && localVideoContainerForMimeType(recorder.mimeType) !== container) {
+      throw new Error("浏览器实际录像格式与文件后缀不一致");
+    }
   } catch (error) {
     return closeAfterStartFailure(error);
   }
@@ -122,6 +143,10 @@ export function startLocalVideoRecording({
     if (!writeError && bytes === 0) {
       writeError = new Error("录像未产生任何视频数据；文件已关闭，但不算有效录像");
     }
+    const actualMimeType = recorder.mimeType || mimeType;
+    if (!writeError && localVideoContainerForMimeType(actualMimeType) !== localVideoContainerForMimeType(mimeType)) {
+      writeError = new Error("浏览器实际录像格式发生变化；文件不算完整录像");
+    }
     let closeError: Error | null = null;
     try {
       await writable.close();
@@ -137,7 +162,7 @@ export function startLocalVideoRecording({
     resolveDone({
       filename,
       bytes,
-      mimeType,
+      mimeType: actualMimeType,
       startedAtEpochMs,
       finishedAtEpochMs: Date.now(),
     });
@@ -164,6 +189,9 @@ export function startLocalVideoRecording({
     writeChain = writeChain.then(async () => {
       if (writeError) return;
       try {
+        if (chunk.type && localVideoContainerForMimeType(chunk.type) !== localVideoContainerForMimeType(mimeType)) {
+          throw new Error("录像分块格式与文件后缀不一致");
+        }
         await writable.write(chunk);
         bytes += chunk.size;
       } catch (error) {

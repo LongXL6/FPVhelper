@@ -15,6 +15,7 @@ import { formatStickAxisValue } from "@/lib/stick-display";
 import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
+import { PilotNameField } from "@/components/pilot-name-field";
 import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
@@ -33,6 +34,7 @@ import {
   createPilotTelemetryWorkspaceStore,
   PilotTelemetryWorkspaceHost,
   usePilotTelemetryController,
+  usePilotTelemetryNames,
 } from "@/hooks/use-pilot-telemetry-workspace";
 import { useTrainingSession } from "@/hooks/use-training-session";
 import {
@@ -45,6 +47,7 @@ import { PUBLIC_APP_BUILD } from "@/lib/app-version";
 import type { SerialErrorCode, VideoCaptureErrorCode } from "@/lib/hardware-errors";
 import {
   localVideoRecordingFilename,
+  localVideoContainerForMimeType,
   preferredLocalVideoMimeType,
 } from "@/lib/local-video-recording";
 import {
@@ -78,11 +81,13 @@ import {
   loadVideoWorkspace,
   removeVideoSource,
   resetPilotChannelCrop,
+  resolveVideoWorkspaceNames,
   saveVideoWorkspace,
   selectPilotChannel,
   selectVideoSource,
   setPilotChannelCrop,
   setPilotChannelViewMode,
+  setPilotChannelAutomaticName,
   setVideoSourceDevice,
   setVideoSourceLabel,
   setVideoSourceLayout,
@@ -92,6 +97,7 @@ import {
   videoViewportsForSource,
   type VideoSourceConfig,
   type VideoWorkspaceConfig,
+  type FrozenPilotName,
 } from "@/lib/video-workspace";
 import {
   assessTrainingAttemptCandidate,
@@ -189,6 +195,13 @@ const WORKSTATION_NOTICE_MS = 4_000;
 const WORKSTATION_SHORTCUTS_EVENT = "fpvhelper:workstation-shortcuts";
 const VIDEO_WORKSPACE_EVENT = "fpvhelper:video-workspace";
 const DEFAULT_VIDEO_WORKSPACE_SNAPSHOT = JSON.stringify(createDefaultVideoWorkspace());
+
+function subscribeToVideoRecordingCapabilities() { return () => undefined; }
+function getVideoRecordingMimeTypeSnapshot() {
+  return typeof MediaRecorder === "undefined"
+    ? null
+    : preferredLocalVideoMimeType((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+}
 
 function subscribeToTrainingPreferences(onStoreChange: () => void) {
   const handleStorage = (event: StorageEvent) => {
@@ -422,7 +435,8 @@ export function FlightDashboard() {
     getItem: () => videoWorkspaceSnapshot,
     setItem: () => undefined,
   }), [videoWorkspaceSnapshot]);
-  const videoWorkspace = loadedVideoWorkspace.workspace;
+  const [recordingPilotName, setRecordingPilotName] = useState<FrozenPilotName | null>(null);
+  const [nameControlsWereLocked, setNameControlsWereLocked] = useState(false);
   const [videoWorkspaceWriteError, setVideoWorkspaceWriteError] = useState<string | null>(null);
   const [coachMode, setCoachMode] = useState(false);
   const [selectedMarkerKind, setSelectedMarkerKind] = useState<Exclude<TrainingSessionMarkerKind, "manual">>("clean");
@@ -432,6 +446,11 @@ export function FlightDashboard() {
   const [workstationNotice, setWorkstationNotice] = useState<string | null>(null);
   const [overlayLayoutNotice, setOverlayLayoutNotice] = useState<string | null>(null);
   const [telemetryWorkspaceStore] = useState(createPilotTelemetryWorkspaceStore);
+  const pilotDeviceNames = usePilotTelemetryNames(telemetryWorkspaceStore);
+  const videoWorkspace = useMemo(() => resolveVideoWorkspaceNames(
+    loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName,
+  ), [loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName]);
+  const videoSetupRef = useRef<HTMLDetailsElement>(null);
   const exportShortcutInFlightRef = useRef(false);
   const pilotOutputCanvasesRef = useRef(new Map<string, HTMLCanvasElement>());
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
@@ -605,6 +624,10 @@ export function FlightDashboard() {
   }, [localVideoRecording.state]);
 
   const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || localVideoRecording.isActive;
+  if (nameControlsWereLocked !== controlsLocked) {
+    setNameControlsWereLocked(controlsLocked);
+    if (!controlsLocked) setRecordingPilotName(null);
+  }
   const activeVideoControlsLocked = controlsLocked || videoState === "connecting" || videoState === "live";
   const sessionIsFinalizing = trainingSession.isFinishing
     || trainingSession.hasPendingSave
@@ -637,13 +660,22 @@ export function FlightDashboard() {
     || activeViewport.crop.widthPercent !== 100
     || activeViewport.crop.heightPercent !== 100
   ));
-  const localVideoMimeType = typeof MediaRecorder === "undefined"
-    ? null
-    : preferredLocalVideoMimeType((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+  const localVideoMimeType = useSyncExternalStore(
+    subscribeToVideoRecordingCapabilities, getVideoRecordingMimeTypeSnapshot, () => undefined,
+  );
+  const localVideoContainer = localVideoContainerForMimeType(localVideoMimeType ?? "");
+  const localVideoFormatLabel = localVideoContainer?.toUpperCase() ?? "视频";
+  const localVideoFormatCopy = localVideoMimeType === undefined
+    ? "正在检测本机录像格式…"
+    : localVideoContainer === "mp4"
+      ? "保存 MP4 视频，原始打杆数据另存 JSON。"
+      : localVideoContainer === "webm"
+        ? "当前浏览器不支持 MP4 录制，将保存 WebM 视频；原始打杆数据另存 JSON。"
+        : "当前浏览器不支持本地视频录制。";
   const localVideoStartBlockReason = !recordPilotVideo
     ? null
     : typeof MediaRecorder === "undefined" || !localVideoMimeType
-      ? "当前浏览器不支持本地 WebM 录像；可关闭视频录像后只记录遥测"
+      ? "当前浏览器不支持本地视频录像；可切换为仅原始打杆数据"
       : trainingSession.exportDirectoryState !== "ready"
         ? "先选择并授权本地保存文件夹，或关闭视频录像"
         : !activeSource || !activeViewport
@@ -665,7 +697,7 @@ export function FlightDashboard() {
         : trainingSession.storageError
           ? "本地存储异常，暂不能开始"
           : !normalizeAthleteCode(athleteCode)
-            ? "先填写选手代号"
+            ? "连接飞控自动读取姓名，或手动填写"
             : !bridgeIsLive
               ? "连接桥接飞控，等待遥控输入就绪"
               : linkState === "lost"
@@ -694,12 +726,12 @@ export function FlightDashboard() {
       : localVideoRecording.state === "starting"
         ? "正在启动浏览器本地编码器"
         : localVideoRecording.state === "stopping"
-          ? "正在写完最后一段并关闭 WebM 文件"
+          ? "正在写完最后一段并关闭视频文件"
           : localVideoRecording.state === "saved" && localVideoRecording.receipt
             ? `已确认写入并关闭 ${localVideoRecording.receipt.filename} · ${formatFileSize(localVideoRecording.receipt.bytes)}`
             : localVideoRecording.state === "error"
               ? `视频未保存完整：${localVideoRecording.error ?? "本地编码或写盘失败"}；遥测 Session 不受影响`
-              : `将保存当前选手的${activeViewportIsCropped ? "裁切" : "完整"}画面与摇杆叠层；原始打杆数据另存 JSON`;
+              : `将保存当前选手的${activeViewportIsCropped ? "裁切" : "完整"}画面与摇杆叠层。${localVideoFormatCopy}`;
 
   const activeRecordingSourceId = activeSource?.id ?? null;
   const activeRecordingPilotChannelId = activeViewport?.pilotChannelId ?? null;
@@ -716,8 +748,16 @@ export function FlightDashboard() {
   async function startDashboardRecording() {
     if (!canStartDashboardRecording) return;
     setWorkspaceView("live");
+    if (activeChannel) setRecordingPilotName({ pilotChannelId: activeChannel.id, athleteCode });
     const startedAtEpochMs = captureInteractionEpochMs();
-    const startedSessionId = await startTrainingSession();
+    let startedSessionId: string | null;
+    try {
+      startedSessionId = await startTrainingSession();
+    } catch (startError) {
+      setRecordingPilotName(null);
+      throw startError;
+    }
+    if (!startedSessionId) setRecordingPilotName(null);
     if (!startedSessionId || !recordPilotVideo) return;
 
     let writable: Awaited<ReturnType<typeof createExportFileWritable>> | null = null;
@@ -735,6 +775,7 @@ export function FlightDashboard() {
         sessionId: startedSessionId,
         startedAtEpochMs,
         cropped: activeViewportIsCropped,
+        mimeType: localVideoMimeType,
       });
       writable = await createExportFileWritable(filename);
       if (!isTrainingSessionRecording(startedSessionId)) {
@@ -1146,7 +1187,7 @@ export function FlightDashboard() {
           <div className="recording-readiness__summary">
             <b>{recordPilotVideo ? "视频与打杆，一起留下。" : "本次仅保存原始打杆数据"}</b>
             <span>{recordPilotVideo
-              ? `录制当前选手${athleteCode.trim() ? ` ${athleteCode.trim()}` : ""}的${activeViewportIsCropped ? "裁切" : "完整"}画面，烧入打杆 OSD，并同时保存原始 JSON。`
+              ? `录制当前选手${athleteCode.trim() ? ` ${athleteCode.trim()}` : ""}的${activeViewportIsCropped ? "裁切" : "完整"}画面，烧入打杆 OSD。${localVideoFormatCopy}`
               : "需要视频时，在上方将录制内容切换为「视频＋打杆 OSD＋数据」。"}</span>
           </div>
           <div className="recording-readiness__steps">
@@ -1250,9 +1291,14 @@ export function FlightDashboard() {
 
       <div className="workspace-view workspace-view--live" hidden={workspaceView !== "live"}>
       <div className="preflight-strip">
-        <label className="active-pilot-field">当前选手代号<input aria-label="当前训练选手代号" value={athleteCode} maxLength={40} placeholder="例如 PILOT-01" disabled={controlsLocked || !activeChannel} onChange={(event) => {
-          if (activeChannel) commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode: event.target.value }));
-        }} /></label>
+        {activeChannel ? <PilotNameField
+          compact
+          channel={activeChannel}
+          deviceNames={pilotDeviceNames[activeChannel.id]}
+          disabled={controlsLocked}
+          onChange={(athleteCode) => commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode }))}
+          onUseDeviceName={() => commitVideoWorkspace(setPilotChannelAutomaticName(videoWorkspace, activeChannel.id))}
+        /> : null}
         <span className={groundRxReady ? "is-ready" : ""}><Icon name={groundRxReady ? "check" : "usb"} size={16} />{groundRxReady ? "遥控输入就绪" : source === "demo" ? "正在预览演示输入" : "等待真实遥控输入"}</span>
         <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : recordPilotVideo ? "视频录制需接入画面" : "视频可选接入"}</span>
         <small>{trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
@@ -1384,7 +1430,7 @@ export function FlightDashboard() {
             </div>
           </div>
 
-          <details className="video-setup-details">
+          <details className="video-setup-details" ref={videoSetupRef} tabIndex={-1}>
             <summary><span>输入与选手设置</span><small>{activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "配置视频输入"} · {videoWorkspace.sources.length} 路输入 · {activeViewport?.label ?? ""}</small></summary>
           <div className="video-workspace-bar" aria-label="本机视频工作区">
             <span className="video-workspace-label">已配置输入</span>
@@ -1449,6 +1495,8 @@ export function FlightDashboard() {
               onAthleteCodeChange={(athleteCode) => {
                 commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode }));
               }}
+              deviceNames={pilotDeviceNames[activeChannel.id]}
+              onUseDeviceName={() => commitVideoWorkspace(setPilotChannelAutomaticName(videoWorkspace, activeChannel.id))}
               onViewModeChange={(viewMode) => {
                 commitVideoWorkspace(setPilotChannelViewMode(videoWorkspace, activeChannel.id, viewMode));
               }}
@@ -1509,6 +1557,22 @@ export function FlightDashboard() {
                       <span>{isActive ? "CURRENT" : sourceLabel}</span>
                       <b>{tileLabel}</b>
                     </button>
+
+                    <button
+                      className="video-viewport-configure"
+                      type="button"
+                      aria-label={`配置 ${tileLabel} 的裁切与绑定`}
+                      disabled={controlsLocked}
+                      onClick={() => {
+                        const selectedSource = selectVideoSource(videoWorkspace, sourceConfig.id);
+                        commitVideoWorkspace(selectPilotChannel(selectedSource, viewport.pilotChannelId));
+                        if (videoSetupRef.current) {
+                          videoSetupRef.current.open = true;
+                          videoSetupRef.current.focus({ preventScroll: true });
+                          videoSetupRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                      }}
+                    >裁切与绑定</button>
 
                     <PilotViewportTelemetry
                       pilotChannelId={viewport.pilotChannelId}
@@ -1727,7 +1791,7 @@ export function FlightDashboard() {
             data-testid="local-video-recording-status"
           >
             <span>
-              <b>LOCAL PILOT VIDEO</b>
+              <b>LOCAL PILOT VIDEO · {localVideoFormatLabel}</b>
               <small>{localVideoStatusCopy}</small>
             </span>
             <strong>{localVideoRecording.state === "recording"
