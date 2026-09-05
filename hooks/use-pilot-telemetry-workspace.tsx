@@ -5,6 +5,7 @@ import { useBetaflightTelemetry, type TelemetryController } from "./use-betaflig
 import type { RawSerialCaptureState } from "./use-raw-serial-capture";
 import { EMPTY_STICK_MOTION } from "../lib/stick-motion";
 import { EMPTY_MSP_PARSER_STATS, EMPTY_TELEMETRY } from "../lib/telemetry";
+import { EMPTY_BETAFLIGHT_DEVICE_NAMES, type BetaflightDeviceNames } from "../lib/betaflight-device-name";
 
 const IDLE_RAW_CAPTURE: RawSerialCaptureState = {
   state: "idle",
@@ -19,6 +20,7 @@ const noAction = () => undefined;
 const returnFalse = () => false;
 
 const UNAVAILABLE_TELEMETRY_CONTROLLER: TelemetryController = {
+  deviceNames: EMPTY_BETAFLIGHT_DEVICE_NAMES,
   telemetry: EMPTY_TELEMETRY,
   throttleHistory: [],
   stickMotion: EMPTY_STICK_MOTION,
@@ -40,8 +42,13 @@ const UNAVAILABLE_TELEMETRY_CONTROLLER: TelemetryController = {
   subscribeSamples: () => noAction,
 };
 
+export type PilotTelemetryNamesSnapshot = Readonly<Record<string, BetaflightDeviceNames>>;
+const EMPTY_PILOT_TELEMETRY_NAMES: PilotTelemetryNamesSnapshot = Object.freeze({});
+
 export interface PilotTelemetryWorkspaceStore {
   getSnapshot: (pilotChannelId: string | undefined) => TelemetryController;
+  getNamesSnapshot: () => PilotTelemetryNamesSnapshot;
+  subscribeNames: (listener: () => void) => () => void;
   publish: (pilotChannelId: string, controller: TelemetryController) => void;
   remove: (pilotChannelId: string) => void;
   subscribe: (pilotChannelId: string | undefined, listener: () => void) => () => void;
@@ -50,22 +57,41 @@ export interface PilotTelemetryWorkspaceStore {
 export function createPilotTelemetryWorkspaceStore(): PilotTelemetryWorkspaceStore {
   const controllers = new Map<string, TelemetryController>();
   const listeners = new Map<string, Set<() => void>>();
+  const namesListeners = new Set<() => void>();
+  let namesSnapshot = EMPTY_PILOT_TELEMETRY_NAMES;
 
   const notify = (pilotChannelId: string) => {
     listeners.get(pilotChannelId)?.forEach((listener) => listener());
   };
 
+  const updateNames = (pilotChannelId: string, names: BetaflightDeviceNames) => {
+    const previous = namesSnapshot[pilotChannelId] ?? EMPTY_BETAFLIGHT_DEVICE_NAMES;
+    if (previous.pilotName === names.pilotName && previous.craftName === names.craftName && previous.status === names.status) return;
+    const next = { ...namesSnapshot };
+    if (names.status === "idle" && !names.pilotName && !names.craftName) delete next[pilotChannelId];
+    else next[pilotChannelId] = { ...names };
+    namesSnapshot = Object.keys(next).length ? next : EMPTY_PILOT_TELEMETRY_NAMES;
+    namesListeners.forEach((listener) => listener());
+  };
+
   return {
+    getNamesSnapshot: () => namesSnapshot,
+    subscribeNames(listener) {
+      namesListeners.add(listener);
+      return () => { namesListeners.delete(listener); };
+    },
     getSnapshot(pilotChannelId) {
       return pilotChannelId ? controllers.get(pilotChannelId) ?? UNAVAILABLE_TELEMETRY_CONTROLLER : UNAVAILABLE_TELEMETRY_CONTROLLER;
     },
     publish(pilotChannelId, controller) {
       if (controllers.get(pilotChannelId) === controller) return;
       controllers.set(pilotChannelId, controller);
+      updateNames(pilotChannelId, controller.deviceNames);
       notify(pilotChannelId);
     },
     remove(pilotChannelId) {
       if (!controllers.delete(pilotChannelId)) return;
+      updateNames(pilotChannelId, EMPTY_BETAFLIGHT_DEVICE_NAMES);
       notify(pilotChannelId);
     },
     subscribe(pilotChannelId, listener) {
@@ -82,6 +108,10 @@ export function createPilotTelemetryWorkspaceStore(): PilotTelemetryWorkspaceSto
       };
     },
   };
+}
+
+export function usePilotTelemetryNames(store: PilotTelemetryWorkspaceStore) {
+  return useSyncExternalStore(store.subscribeNames, store.getNamesSnapshot, () => EMPTY_PILOT_TELEMETRY_NAMES);
 }
 
 const PilotTelemetryBridge = memo(function PilotTelemetryBridge({

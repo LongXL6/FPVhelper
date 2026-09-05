@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { VideoSourceState, VideoWorkspaceElementRegistrar } from "@/hooks/use-video-workspace-capture";
+import { PilotNameField } from "@/components/pilot-name-field";
+import type { BetaflightDeviceNames } from "@/lib/betaflight-device-name";
 import {
   resolvedPilotVideoViewMode,
   transformVideoCrop,
@@ -25,6 +27,8 @@ interface PilotVideoBindingControlsProps {
   onSourceLayoutChange: (layout: VideoSourceLayout) => void;
   onChannelChange: (channelId: string) => void;
   onAthleteCodeChange: (athleteCode: string) => void;
+  deviceNames?: BetaflightDeviceNames;
+  onUseDeviceName: () => void;
   onViewModeChange: (mode: "full" | "crop") => void;
   onCropChange: (crop: VideoCropRect) => void;
   onResetCrop: () => void;
@@ -209,6 +213,8 @@ export function PilotVideoBindingControls({
   onSourceLayoutChange,
   onChannelChange,
   onAthleteCodeChange,
+  deviceNames,
+  onUseDeviceName,
   onViewModeChange,
   onCropChange,
   onResetCrop,
@@ -310,19 +316,7 @@ export function PilotVideoBindingControls({
 
         <section className="pilot-binding-card pilot-binding-card--output" aria-label="选手画面输出设置">
           <header><i>02</i><div><b>配置选手画面</b><small>命名并决定直接使用或裁切</small></div></header>
-          <label className="pilot-binding-card__athlete">
-            <span>选手姓名或代号</span>
-            <input
-              type="text"
-              aria-label="选手姓名或代号"
-              value={channel.athleteCode}
-              maxLength={40}
-              disabled={disabled}
-              placeholder="例如 王小明 / PILOT-07"
-              autoComplete="off"
-              onChange={(event) => onAthleteCodeChange(event.target.value)}
-            />
-          </label>
+          <PilotNameField channel={channel} deviceNames={deviceNames} disabled={disabled} onChange={onAthleteCodeChange} onUseDeviceName={onUseDeviceName} />
 
           <div className="pilot-binding-card__choice" role="group" aria-label="选手取景方式">
             <span>显示方式</span>

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMspV1Request,
+  buildMspV2GetTextRequest,
   canIssueMspRcRequest,
   createRcReceiveRate,
   connectionStateAfterRcSilence,
@@ -19,6 +20,7 @@ import {
   mspParserQuality,
   MspV1StreamParser,
   STATUS_EX_STALE_TIMEOUT_MS,
+  type ReadOnlyMspCommand,
 } from "./telemetry";
 
 afterEach(() => {
@@ -34,6 +36,107 @@ function responseFrame(command: number, payload: number[]) {
 function uint16Payload(values: number[]) {
   return values.flatMap((value) => [value & 0xff, value >> 8]);
 }
+
+// Native MSPv2 GET_TEXT reply: pilot name "LongXL", CRC8-DVB-S2 = 0x49.
+const pilotNameFrame = Uint8Array.of(36, 88, 62, 0, 6, 48, 8, 0, 1, 6, 76, 111, 110, 103, 88, 76, 0x49);
+
+describe("read-only MSP name queries and native v2 frames", () => {
+  it("builds only the allowed metadata reads with fixed wire checksums", () => {
+    expect([...buildMspV1Request(MSP.API_VERSION)]).toEqual([36, 77, 60, 0, 1, 1]);
+    expect([...buildMspV1Request(MSP.NAME)]).toEqual([36, 77, 60, 0, 10, 10]);
+    expect([...buildMspV2GetTextRequest(1)]).toEqual([36, 88, 60, 0, 6, 48, 1, 0, 1, 0x6f]);
+    expect([...buildMspV2GetTextRequest(2)]).toEqual([36, 88, 60, 0, 6, 48, 1, 0, 2, 0xc5]);
+    expect(() => buildMspV1Request(11 as ReadOnlyMspCommand)).toThrow(RangeError);
+    expect(() => buildMspV1Request(MSP.GET_TEXT as ReadOnlyMspCommand)).toThrow(RangeError);
+    expect(() => buildMspV2GetTextRequest(3 as 1 | 2)).toThrow(RangeError);
+  });
+
+  it("parses a native v2 name frame at every USB split point", () => {
+    for (let split = 1; split < pilotNameFrame.length; split += 1) {
+      const parser = new MspV1StreamParser();
+      expect(parser.push(pilotNameFrame.subarray(0, split))).toEqual([]);
+      expect(parser.push(pilotNameFrame.subarray(split))).toEqual([{
+        command: MSP.GET_TEXT,
+        payload: Uint8Array.of(1, 6, 76, 111, 110, 103, 88, 76),
+        error: false,
+      }]);
+      expect(parser.getStats().checksumErrors).toBe(0);
+    }
+  });
+
+  it("keeps v1 telemetry and v2 metadata in order in the same USB chunk", () => {
+    const parser = new MspV1StreamParser();
+    const rc = responseFrame(MSP.RC, uint16Payload([1500, 1250, 1750, 1600]));
+    const analog = responseFrame(MSP.ANALOG, [50, 0, 0, 200, 0]);
+    expect(parser.push(Uint8Array.from([...rc, ...pilotNameFrame, ...analog])).map((frame) => frame.command)).toEqual([
+      MSP.RC, MSP.GET_TEXT, MSP.ANALOG,
+    ]);
+    expect(parser.getStats()).toMatchObject({ checksumValidFrames: 3, checksumErrors: 0, resyncs: 0 });
+  });
+
+  it("retains a native v2 header prefix after noisy input", () => {
+    const parser = new MspV1StreamParser();
+    expect(parser.push(Uint8Array.of(9, 2, 36, 88))).toEqual([]);
+    expect(parser.push(pilotNameFrame.subarray(2))).toHaveLength(1);
+    expect(parser.getStats()).toMatchObject({ discardedBytes: 2, resyncs: 1 });
+  });
+
+  it("checks native v2 flags as well as payload and recovers to a subsequent v1 frame", () => {
+    const parser = new MspV1StreamParser();
+    const corrupt = pilotNameFrame.slice();
+    corrupt[3] = 1;
+    const rc = responseFrame(MSP.RC, uint16Payload([1500, 1500, 1500, 1000]));
+    expect(parser.push(Uint8Array.from([...corrupt, ...rc])).map((frame) => frame.command)).toEqual([MSP.RC]);
+    expect(parser.getStats()).toMatchObject({ checksumErrors: 1, checksumValidFrames: 1 });
+  });
+
+  it("recovers from a corrupt v1 frame to a native v2 frame", () => {
+    const parser = new MspV1StreamParser();
+    const corrupt = responseFrame(MSP.RC, [0, 1]);
+    corrupt[corrupt.length - 1] ^= 1;
+    expect(parser.push(Uint8Array.from([...corrupt, ...pilotNameFrame])).map((frame) => frame.command)).toEqual([MSP.GET_TEXT]);
+  });
+
+  it("abandons an oversized v2 length only when a later checksummed frame is complete", () => {
+    const parser = new MspV1StreamParser();
+    expect(parser.push(Uint8Array.of(36, 88, 62, 0, 6, 48, 255, 255))).toEqual([]);
+    expect(parser.push(pilotNameFrame.subarray(0, 10))).toEqual([]);
+    expect(parser.push(pilotNameFrame.subarray(10))).toHaveLength(1);
+    expect(parser.getStats()).toMatchObject({ discardedBytes: 8, checksumValidFrames: 1 });
+  });
+
+  it("preserves a following partial header when a corrupt length consumes its first bytes", () => {
+    const parser = new MspV1StreamParser();
+    const corrupt = Uint8Array.of(36, 77, 62, 4, MSP.NAME, 1, 2, 0);
+    expect(parser.push(Uint8Array.from([...corrupt, 36, 88]))).toEqual([]);
+    expect(parser.push(pilotNameFrame.subarray(2))).toHaveLength(1);
+    expect(parser.getStats().checksumErrors).toBe(1);
+  });
+
+  it("surfaces a valid native v2 error without mistaking it for a CRC failure", () => {
+    const parser = new MspV1StreamParser();
+    expect(parser.push(Uint8Array.of(36, 88, 33, 0, 6, 48, 0, 0, 0x60))).toEqual([
+      { command: MSP.GET_TEXT, payload: new Uint8Array(), error: true },
+    ]);
+    expect(parser.getStats()).toMatchObject({ protocolErrors: 1, checksumErrors: 0, checksumValidFrames: 1 });
+  });
+
+  it("reads the full little-endian 16-bit native v2 payload length", () => {
+    const parser = new MspV1StreamParser();
+    const payload = new Uint8Array(300).fill(65);
+    const frame = Uint8Array.from([36, 88, 62, 0, 6, 48, 44, 1, ...payload, 0xc0]);
+    expect(parser.push(frame.subarray(0, 270))).toEqual([]);
+    expect(parser.push(frame.subarray(270))).toEqual([{ command: MSP.GET_TEXT, payload, error: false }]);
+  });
+
+  it("clears partially received native v2 frames on reset", () => {
+    const parser = new MspV1StreamParser();
+    parser.push(pilotNameFrame.subarray(0, 10));
+    parser.reset();
+    expect(parser.push(pilotNameFrame)).toHaveLength(1);
+    expect(parser.getStats()).toMatchObject({ bytesReceived: pilotNameFrame.length, resyncs: 0 });
+  });
+});
 
 describe("MSP v1 telemetry", () => {
   it("counts received RC frames in a rolling second without extrapolating startup or render rate", () => {

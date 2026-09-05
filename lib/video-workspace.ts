@@ -1,3 +1,5 @@
+import type { BetaflightDeviceNames } from "./betaflight-device-name";
+
 export const VIDEO_WORKSPACE_SCHEMA_VERSION = 2;
 export const VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v2";
 export const LEGACY_VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v1";
@@ -26,6 +28,7 @@ export interface PilotChannelConfig {
   sourceId: string;
   slot: 0 | 1 | 2 | 3;
   athleteCode: string;
+  athleteCodeMode: "auto" | "manual";
   gateProfileId: string | null;
   videoProfileId: string | null;
   viewMode: PilotVideoViewMode;
@@ -92,6 +95,7 @@ function createPilotChannels(source: string, layout: VideoSourceLayout = "full")
     sourceId: source,
     slot,
     athleteCode: "",
+    athleteCodeMode: "auto",
     gateProfileId: null,
     videoProfileId: null,
     viewMode: "source-default",
@@ -262,10 +266,44 @@ export function updatePilotChannel(
       ? {
           ...channel,
           athleteCode: update.athleteCode === undefined ? channel.athleteCode : update.athleteCode.slice(0, 40),
+          athleteCodeMode: update.athleteCode === undefined ? channel.athleteCodeMode : "manual" as const,
           gateProfileId: update.gateProfileId === undefined ? channel.gateProfileId : update.gateProfileId,
           videoProfileId: update.videoProfileId === undefined ? channel.videoProfileId : update.videoProfileId,
         }
       : channel),
+  };
+}
+
+export function setPilotChannelAutomaticName(workspace: VideoWorkspaceConfig, selectedChannelId: string): VideoWorkspaceConfig {
+  return {
+    ...workspace,
+    pilotChannels: workspace.pilotChannels.map((channel) => channel.id === selectedChannelId
+      ? { ...channel, athleteCode: "", athleteCodeMode: "auto" }
+      : channel),
+  };
+}
+
+export interface FrozenPilotName {
+  pilotChannelId: string;
+  athleteCode: string;
+}
+
+export function resolveVideoWorkspaceNames(
+  workspace: VideoWorkspaceConfig,
+  names: Readonly<Record<string, BetaflightDeviceNames>>,
+  frozenName: FrozenPilotName | null = null,
+): VideoWorkspaceConfig {
+  return {
+    ...workspace,
+    pilotChannels: workspace.pilotChannels.map((channel) => {
+      const device = names[channel.id];
+      const athleteCode = frozenName?.pilotChannelId === channel.id
+        ? frozenName.athleteCode
+        : channel.athleteCodeMode === "manual"
+          ? channel.athleteCode
+          : device?.pilotName.trim() || device?.craftName.trim() || "";
+      return athleteCode === channel.athleteCode ? channel : { ...channel, athleteCode };
+    }),
   };
 }
 
@@ -450,11 +488,16 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
       && (rawChannel.viewMode === "source-default" || rawChannel.viewMode === "full" || rawChannel.viewMode === "crop")
       ? rawChannel.viewMode
       : "source-default";
+    const savedAthleteCode = typeof rawChannel.athleteCode === "string" ? rawChannel.athleteCode.slice(0, 40) : "";
+    const athleteCodeMode = rawChannel.athleteCodeMode === "auto" || rawChannel.athleteCodeMode === "manual"
+      ? rawChannel.athleteCodeMode
+      : savedAthleteCode.trim() ? "manual" : "auto";
     savedChannels.set(id, {
       id,
       sourceId: rawChannel.sourceId,
       slot: rawChannel.slot,
-      athleteCode: typeof rawChannel.athleteCode === "string" ? rawChannel.athleteCode.slice(0, 40) : "",
+      athleteCode: athleteCodeMode === "manual" ? savedAthleteCode : "",
+      athleteCodeMode,
       gateProfileId: typeof rawChannel.gateProfileId === "string" ? rawChannel.gateProfileId.slice(0, 120) : null,
       videoProfileId: typeof rawChannel.videoProfileId === "string" ? rawChannel.videoProfileId.slice(0, 120) : null,
       viewMode,
@@ -512,7 +555,13 @@ export function loadVideoWorkspace(storage: VideoWorkspaceStorage): {
 
 export function saveVideoWorkspace(storage: VideoWorkspaceStorage, workspace: VideoWorkspaceConfig) {
   try {
-    storage.setItem(VIDEO_WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+    storage.setItem(VIDEO_WORKSPACE_STORAGE_KEY, JSON.stringify({
+      ...workspace,
+      // A name read from a connected FC must not identify the next device after reload.
+      pilotChannels: workspace.pilotChannels.map((channel) => channel.athleteCodeMode === "auto"
+        ? { ...channel, athleteCode: "" }
+        : channel),
+    }));
     return null;
   } catch (error) {
     return storageErrorMessage(error);

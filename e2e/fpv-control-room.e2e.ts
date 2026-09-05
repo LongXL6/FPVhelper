@@ -1,4 +1,5 @@
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
 import { expect, readStoredTrainingRecords, test, type FakeSerialMetrics } from "./fixtures/fpv-hardware";
 
 async function openInputSettings(page: Page) {
@@ -21,6 +22,88 @@ async function expectStickInputs(page: Page, { roll, pitch, yaw, throttle }: { r
   await expect(fields.nth(0)).toHaveAttribute("aria-label", `左摇杆 · GROUND_RC，YAW ${axis(yaw * 10)}，THR ${axis(throttle * 20 - 1000)}；归一化行程 −1000 至 +1000，中心 0`);
   await expect(fields.nth(1)).toHaveAttribute("aria-label", `右摇杆 · GROUND_RC，ROLL ${axis(roll * 10)}，PITCH ${axis(pitch * 10)}；归一化行程 −1000 至 +1000，中心 0`);
   await expect(page.locator(".gauge-grid--primary")).toContainText(`${throttle}%`);
+}
+
+async function videoCapabilities(page: Page) {
+  return page.evaluate(() => [
+    "video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm",
+  ].map((mimeType) => ({ mimeType, supported: MediaRecorder.isTypeSupported(mimeType) })));
+}
+
+async function attachRecordedVideoEvidence(
+  page: Page,
+  testInfo: TestInfo,
+  receipt: { filename: string; mimeType: string; bytes: number },
+  capabilityMode: "native" | "webm-only",
+) {
+  const supportedTypes = await videoCapabilities(page);
+  const mp4Supported = supportedTypes.some(({ mimeType, supported }) => mimeType.startsWith("video/mp4") && supported);
+  const playback = await page.evaluate(async (filename) => {
+    const root = await navigator.storage.getDirectory();
+    const file = await (await root.getFileHandle(filename)).getFile();
+    const header = Array.from(new Uint8Array(await file.slice(0, 12).arrayBuffer()));
+    const fileDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
+      reader.addEventListener("error", () => reject(reader.error), { once: true });
+      reader.readAsDataURL(file);
+    });
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error("Recorded video did not decode")), 8_000);
+        video.addEventListener("loadeddata", () => { window.clearTimeout(timer); resolve(); }, { once: true });
+        video.addEventListener("error", () => { window.clearTimeout(timer); reject(new Error("Recorded video cannot play")); }, { once: true });
+        video.src = url;
+        video.load();
+      });
+      await video.play();
+      return { header, width: video.videoWidth, height: video.videoHeight, readyState: video.readyState, bytes: file.size, fileDataUrl };
+    } finally {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+    }
+  }, receipt.filename);
+  const container = playback.header.slice(4, 8).join(",") === "102,116,121,112"
+    ? "mp4"
+    : playback.header.slice(0, 4).join(",") === "26,69,223,163" ? "webm" : "unknown";
+  const evidencePath = testInfo.outputPath("recorded-video-evidence.json");
+  const videoPath = testInfo.outputPath(`fake-training-video.${container}`);
+  await mkdir(testInfo.outputDir, { recursive: true });
+  await writeFile(evidencePath, JSON.stringify({
+      capabilityMode,
+      supportedTypes,
+      expectedContainer: mp4Supported ? "mp4" : "webm",
+      actualMimeType: receipt.mimeType,
+      filename: receipt.filename,
+      container,
+      header: playback.header,
+      playable: { width: playback.width, height: playback.height, readyState: playback.readyState },
+      receiptBytes: receipt.bytes,
+      fileBytes: playback.bytes,
+    }, null, 2));
+  await writeFile(videoPath, Buffer.from(playback.fileDataUrl.slice(playback.fileDataUrl.indexOf(",") + 1), "base64"));
+  await testInfo.attach("recorded-video-evidence.json", {
+    contentType: "application/json",
+    path: evidencePath,
+  });
+  await testInfo.attach(`fake-training-video.${container}`, {
+    contentType: receipt.mimeType,
+    path: videoPath,
+  });
+  expect(receipt.mimeType).toMatch(mp4Supported ? /^video\/mp4(?:;|$)/ : /^video\/webm(?:;|$)/);
+  expect(container).toBe(mp4Supported ? "mp4" : "webm");
+  expect(receipt.filename).toMatch(mp4Supported ? /\.mp4$/ : /\.webm$/);
+  expect(playback.width).toBeGreaterThan(0);
+  expect(playback.height).toBeGreaterThan(0);
+  expect(playback.readyState).toBeGreaterThanOrEqual(2);
+  expect(playback.bytes).toBe(receipt.bytes);
+  expect(playback.bytes).toBeGreaterThan(0);
 }
 
 interface StoredSession {
@@ -50,12 +133,15 @@ interface StoredSession {
 test.describe("default video and OSD recording entry", () => {
   test.use({ seedDataOnlyPreference: false });
 
-  test("requires video and directory, preserves data-only choice, and records from the visible setup", async ({ page }) => {
+  test("requires video and directory, preserves data-only choice, and records from the visible setup", async ({ page }, testInfo) => {
     await page.goto("/");
     const mode = page.getByRole("combobox", { name: "录制内容", exact: true });
     const setup = page.getByRole("region", { name: "录制准备", exact: true });
     const recordButton = page.getByRole("button", { name: "● 开始记录", exact: true });
     await expect(mode).toHaveValue("video");
+    const capabilities = await videoCapabilities(page);
+    const mp4Supported = capabilities.some(({ mimeType, supported }) => mimeType.startsWith("video/mp4") && supported);
+    await expect(setup).toContainText(mp4Supported ? "保存 MP4 视频" : "当前浏览器不支持 MP4 录制，将保存 WebM 视频");
     await expect(setup.getByRole("button")).toHaveCount(3);
     await expect(page.getByTestId("local-video-recording-status")).toContainText("待准备");
     expect(await page.evaluate(() => window.__fpvFakeSerial.requestPortCalls)).toBe(0);
@@ -64,8 +150,8 @@ test.describe("default video and OSD recording entry", () => {
     await page.reload();
     await expect(mode).toHaveValue("data");
     await expect(setup).toContainText("本次仅保存原始打杆数据");
-    await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("OSD-DEFAULT");
     await setup.getByRole("button", { name: /连接当前选手/ }).click();
+    await expect(page.getByRole("textbox", { name: "当前训练选手代号" })).toHaveValue("BF-PILOT-01");
     await expect(recordButton).toBeEnabled();
 
     await mode.selectOption("video");
@@ -88,9 +174,10 @@ test.describe("default video and OSD recording entry", () => {
     await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
     await page.waitForTimeout(800);
     await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
-    await expectSavedSession(page, "OSD-DEFAULT");
+    await expectSavedSession(page, "BF-PILOT-01");
     const saved = await readStoredTrainingRecords(page);
     expect(saved.sessions).toHaveLength(1);
+    expect(saved.sessions[0].athleteCode).toBe("BF-PILOT-01");
     expect(saved.sessions[0].video).toMatchObject({ recorded: true, overlay: "sticks" });
     const exports = await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory();
@@ -100,8 +187,48 @@ test.describe("default video and OSD recording entry", () => {
       }
       return result;
     });
-    expect(exports.some((file) => file.name.endsWith(".webm") && file.bytes > 0)).toBe(true);
+    const video = saved.sessions[0].video;
+    if (!video.recorded) throw new Error("Missing confirmed automatic-name video receipt");
+    const extension = video.mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+    expect(video.filename).toMatch(new RegExp(`-BF-PILOT-01-.*\\.${extension}$`));
+    expect(exports).toContainEqual({ name: video.filename, bytes: video.bytes });
     expect(exports.some((file) => file.name.endsWith(".json") && file.bytes > 0)).toBe(true);
+    await attachRecordedVideoEvidence(page, testInfo, video, "native");
+  });
+
+  test("records a playable WebM and explains the fallback when only WebM encoding is available", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      const nativeIsTypeSupported = MediaRecorder.isTypeSupported.bind(MediaRecorder);
+      Object.defineProperty(MediaRecorder, "isTypeSupported", {
+        configurable: true,
+        value: (mimeType: string) => mimeType.startsWith("video/webm") && nativeIsTypeSupported(mimeType),
+      });
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => navigator.storage.getDirectory(),
+      });
+    });
+    await page.goto("/");
+    const setup = page.getByRole("region", { name: "录制准备", exact: true });
+    await expect(page.getByRole("combobox", { name: "录制内容", exact: true })).toHaveValue("video");
+    await expect(setup).toContainText("当前浏览器不支持 MP4 录制，将保存 WebM 视频");
+    await setup.getByRole("button", { name: /连接当前选手/ }).click();
+    await expect(page.getByRole("textbox", { name: "当前训练选手代号" })).toHaveValue("BF-PILOT-01");
+    await setup.getByRole("button", { name: /打开当前输入/ }).click();
+    await setup.getByRole("button", { name: /选择保存目录/ }).click();
+    const recordButton = page.getByRole("button", { name: "● 开始记录", exact: true });
+    await expect(recordButton).toBeEnabled();
+    await recordButton.click();
+    await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+    await page.waitForTimeout(800);
+    await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
+    await expectSavedSession(page, "BF-PILOT-01");
+    const saved = await readStoredTrainingRecords(page);
+    expect(saved.sessions).toHaveLength(1);
+    const video = saved.sessions[0].video;
+    if (!video.recorded) throw new Error("Missing confirmed WebM fallback receipt");
+    expect(video.mimeType).toMatch(/^video\/webm(?:;|$)/);
+    await attachRecordedVideoEvidence(page, testInfo, video, "webm-only");
   });
 });
 
@@ -404,15 +531,15 @@ test("active pilot full and cropped video record to the authorized local folder"
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];
     for await (const [name, handle] of root.entries()) {
-      if (handle.kind !== "file" || !name.endsWith(".webm")) continue;
+      if (handle.kind !== "file" || !/\.(mp4|webm)$/.test(name)) continue;
       const file = await (handle as FileSystemFileHandle).getFile();
       files.push({ name, size: file.size });
     }
     return files;
   });
   expect(recordings).toHaveLength(2);
-  expect(recordings.some((recording) => /-VIDEO-01-.*-full\.webm$/.test(recording.name))).toBe(true);
-  expect(recordings.some((recording) => /-VIDEO-01-.*-crop\.webm$/.test(recording.name))).toBe(true);
+  expect(recordings.some((recording) => /-VIDEO-01-.*-full\.(mp4|webm)$/.test(recording.name))).toBe(true);
+  expect(recordings.some((recording) => /-VIDEO-01-.*-crop\.(mp4|webm)$/.test(recording.name))).toBe(true);
   expect(recordings.every((recording) => recording.size > 0)).toBe(true);
   const saved = await readStoredTrainingRecords(page);
   expect(saved.sessions).toHaveLength(2);
@@ -429,6 +556,7 @@ test("active pilot full and cropped video record to the authorized local folder"
   for (const session of saved.sessions) {
     expect(session.video).toMatchObject({ recorded: true, synchronized: false, overlay: "sticks" });
     if (!session.video.recorded) throw new Error(`Missing confirmed video receipt for ${session.id}`);
+    expect(session.video.filename).toMatch(session.video.mimeType.startsWith("video/mp4") ? /\.mp4$/ : /\.webm$/);
     expect(recordings).toContainEqual({ name: session.video.filename, size: session.video.bytes });
     const exported = exportedSessions.find((candidate) => candidate.id === session.id);
     expect(exported?.video).toEqual(session.video);
@@ -537,7 +665,7 @@ test("a delayed video file open cannot start after its Training Session has ende
       return recorderStart.apply(this, args);
     };
     prototype.getFileHandle = async function (...args) {
-      if (args[0].endsWith(".webm")) {
+      if (/\.(mp4|webm)$/.test(args[0])) {
         media.__videoFileOpenPending = true;
         await gate;
       }
@@ -557,7 +685,7 @@ test("a delayed video file open cannot start after its Training Session has ende
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];
     for await (const [name, handle] of root.entries()) {
-      if (name.endsWith(".webm") && handle.kind === "file") files.push({ name, size: (await (handle as FileSystemFileHandle).getFile()).size });
+      if (/\.(mp4|webm)$/.test(name) && handle.kind === "file") files.push({ name, size: (await (handle as FileSystemFileHandle).getFile()).size });
     }
     return files;
   })).toHaveLength(1);
@@ -689,7 +817,7 @@ test("fake media and read-only MSP bridge persist a local training session", asy
 
   await expect.poll(() => page.evaluate(() => (
     [...new Set(window.__fpvFakeSerial.requestedCommands)].sort((left, right) => left - right)
-  ))).toEqual([105, 110, 150]);
+  ))).toEqual([1, 105, 110, 150, 0x3006]);
   await expect.poll(() => page.evaluate(() => window.__fpvFakeSerial)).toMatchObject({
     requestPortCalls: 1,
     openCalls: 1,
