@@ -1090,6 +1090,23 @@ export function FlightDashboard() {
             title={singleKeyShortcutsEnabled ? "F 键切换全屏教练大屏；Esc 退出" : "点击切换教练大屏；页面内大屏可按 Esc 退出"}
             onClick={() => void toggleCoachMode()}
           >{coachMode ? "退出大屏" : "教练大屏"}{singleKeyShortcutsEnabled ? " (F)" : ""}</button>
+          <label className="recording-mode-control">
+            <span>录制内容</span>
+            <select
+              aria-label="录制内容"
+              value={recordPilotVideo ? "video" : "data"}
+              disabled={controlsLocked}
+              onChange={(event) => updateTrainingPreferences({
+                autoExport,
+                recordPilotVideo: event.target.value === "video",
+                showStickOverlays,
+                stickOverlayMode,
+              })}
+            >
+              <option value="video">视频＋打杆 OSD＋数据</option>
+              <option value="data">仅原始打杆数据</option>
+            </select>
+          </label>
           <button
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
@@ -1124,7 +1141,52 @@ export function FlightDashboard() {
         </div>
       </header>
 
-
+      {!controlsLocked ? (
+        <section className="recording-readiness" aria-label="录制准备">
+          <div className="recording-readiness__summary">
+            <b>{recordPilotVideo ? "视频与打杆，一起留下。" : "本次仅保存原始打杆数据"}</b>
+            <span>{recordPilotVideo
+              ? `录制当前选手${athleteCode.trim() ? ` ${athleteCode.trim()}` : ""}的${activeViewportIsCropped ? "裁切" : "完整"}画面，烧入打杆 OSD，并同时保存原始 JSON。`
+              : "需要视频时，在上方将录制内容切换为「视频＋打杆 OSD＋数据」。"}</span>
+          </div>
+          <div className="recording-readiness__steps">
+            {recordPilotVideo ? (
+              <button
+                type="button"
+                className="recording-readiness__step"
+                data-ready={videoState === "live"}
+                disabled={!tabAllowsStart || !activeSource || !activeViewport || videoState === "live" || videoState === "connecting"}
+                onClick={() => { if (activeSource) void videoCapture.connectSource(activeSource.id); }}
+              ><span>视频画面</span><b>{videoState === "live" ? "已接入" : videoState === "connecting" ? "正在连接…" : "打开当前输入 →"}</b></button>
+            ) : null}
+            <button
+              type="button"
+              className="recording-readiness__step"
+              data-ready={groundRxReady}
+              disabled={!tabAllowsStart || source === "serial" || connection === "connecting" || !telemetryControl.serialSupported}
+              onClick={() => {
+                analytics.beginSerialConnect();
+                void telemetryControl.connectSerial();
+              }}
+            ><span>{recordPilotVideo ? "打杆 OSD" : "打杆数据"}</span><b>{groundRxReady ? "真实输入已就绪" : connection === "connecting" ? "正在连接…" : source === "serial" ? "等待遥控链路恢复" : "连接当前选手 →"}</b></button>
+            {recordPilotVideo ? (
+              <button
+                type="button"
+                className="recording-readiness__step"
+                data-ready={trainingSession.exportDirectoryState === "ready"}
+                title={exportDirectoryCopy}
+                disabled={trainingSession.exportDirectoryState === "ready" || trainingSession.exportDirectoryState === "loading" || trainingSession.exportDirectoryState === "unsupported"}
+                onClick={() => void (trainingSession.exportDirectoryName && (trainingSession.exportDirectoryState === "permission_required" || trainingSession.exportDirectoryState === "error")
+                  ? trainingSession.reauthorizeExportDirectory()
+                  : trainingSession.configureExportDirectory())}
+              ><span>保存文件夹</span><b>{trainingSession.exportDirectoryState === "ready" ? "已授权" : trainingSession.exportDirectoryState === "loading" ? "正在检查…" : trainingSession.exportDirectoryState === "unsupported" ? "浏览器不支持" : trainingSession.exportDirectoryName ? "授权保存目录 →" : "选择保存目录 →"}</b></button>
+            ) : null}
+          </div>
+          <p className="recording-readiness__result" data-ready={canStartDashboardRecording}>
+            {canStartDashboardRecording ? "已就绪，点击「开始记录」。" : startRequirement}
+          </p>
+        </section>
+      ) : null}
 
       {tabStartBlockReason ? (
         <aside className="workstation-banner workstation-banner--blocked" role="alert">
@@ -1192,7 +1254,7 @@ export function FlightDashboard() {
           if (activeChannel) commitVideoWorkspace(updatePilotChannel(videoWorkspace, activeChannel.id, { athleteCode: event.target.value }));
         }} /></label>
         <span className={groundRxReady ? "is-ready" : ""}><Icon name={groundRxReady ? "check" : "usb"} size={16} />{groundRxReady ? "遥控输入就绪" : source === "demo" ? "正在预览演示输入" : "等待真实遥控输入"}</span>
-        <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : "视频可选接入"}</span>
+        <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : recordPilotVideo ? "视频录制需接入画面" : "视频可选接入"}</span>
         <small>{trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
       </div>
       <div className="workspace-grid">
@@ -1610,20 +1672,6 @@ export function FlightDashboard() {
             <label className="session-toggle">
               <input
                 type="checkbox"
-                checked={recordPilotVideo}
-                disabled={controlsLocked}
-                onChange={(event) => updateTrainingPreferences({
-                  autoExport,
-                  recordPilotVideo: event.target.checked,
-                  showStickOverlays,
-                  stickOverlayMode,
-                })}
-              />
-              <span>录制视频与摇杆叠层</span>
-            </label>
-            <label className="session-toggle">
-              <input
-                type="checkbox"
                 checked={autoExport || recordPilotVideo}
                 disabled={controlsLocked || recordPilotVideo}
                 onChange={(event) => updateTrainingPreferences({
@@ -1690,9 +1738,11 @@ export function FlightDashboard() {
                   ? "SAVED"
                   : localVideoRecording.state === "error"
                     ? "VIDEO ERROR"
-                    : recordPilotVideo
-                      ? "ARMED"
-                      : "OFF"}</strong>
+                    : localVideoRecording.state === "starting"
+                      ? "准备录像…"
+                      : recordPilotVideo
+                        ? canStartDashboardRecording ? "已就绪" : "待准备"
+                        : "OFF"}</strong>
           </div>
         </div>
 

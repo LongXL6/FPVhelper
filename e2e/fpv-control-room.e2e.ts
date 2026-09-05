@@ -47,6 +47,64 @@ interface StoredSession {
   }>;
 }
 
+test.describe("default video and OSD recording entry", () => {
+  test.use({ seedDataOnlyPreference: false });
+
+  test("requires video and directory, preserves data-only choice, and records from the visible setup", async ({ page }) => {
+    await page.goto("/");
+    const mode = page.getByRole("combobox", { name: "录制内容", exact: true });
+    const setup = page.getByRole("region", { name: "录制准备", exact: true });
+    const recordButton = page.getByRole("button", { name: "● 开始记录", exact: true });
+    await expect(mode).toHaveValue("video");
+    await expect(setup.getByRole("button")).toHaveCount(3);
+    await expect(page.getByTestId("local-video-recording-status")).toContainText("待准备");
+    expect(await page.evaluate(() => window.__fpvFakeSerial.requestPortCalls)).toBe(0);
+
+    await mode.selectOption("data");
+    await page.reload();
+    await expect(mode).toHaveValue("data");
+    await expect(setup).toContainText("本次仅保存原始打杆数据");
+    await page.getByRole("textbox", { name: "当前训练选手代号" }).fill("OSD-DEFAULT");
+    await setup.getByRole("button", { name: /连接当前选手/ }).click();
+    await expect(recordButton).toBeEnabled();
+
+    await mode.selectOption("video");
+    await expect(recordButton).toBeDisabled();
+    await setup.getByRole("button", { name: /打开当前输入/ }).click();
+    await expect(setup.getByRole("button", { name: /视频画面/ })).toHaveAttribute("data-ready", "true");
+    await expect(recordButton).toBeDisabled();
+    await expect(setup).toContainText("先选择并授权本地保存文件夹");
+    await page.evaluate(() => {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => navigator.storage.getDirectory(),
+      });
+    });
+    await setup.getByRole("button", { name: /选择保存目录/ }).click();
+    await expect(setup.getByRole("button", { name: /保存文件夹/ })).toHaveAttribute("data-ready", "true");
+    await expect(recordButton).toBeEnabled();
+    await recordButton.click();
+    await expect(mode).toBeDisabled();
+    await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+    await page.waitForTimeout(800);
+    await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
+    await expectSavedSession(page, "OSD-DEFAULT");
+    const saved = await readStoredTrainingRecords(page);
+    expect(saved.sessions).toHaveLength(1);
+    expect(saved.sessions[0].video).toMatchObject({ recorded: true, overlay: "sticks" });
+    const exports = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const result: Array<{ name: string; bytes: number }> = [];
+      for await (const [name, handle] of root.entries()) {
+        if (handle.kind === "file") result.push({ name, bytes: (await (handle as FileSystemFileHandle).getFile()).size });
+      }
+      return result;
+    });
+    expect(exports.some((file) => file.name.endsWith(".webm") && file.bytes > 0)).toBe(true);
+    expect(exports.some((file) => file.name.endsWith(".json") && file.bytes > 0)).toBe(true);
+  });
+});
+
 test("onboarding closes even when its local preference cannot be saved", async ({ page, context }) => {
   await context.addInitScript(() => {
     window.localStorage.removeItem("fpvhelper.onboarding.v1");
@@ -309,7 +367,7 @@ test("active pilot full and cropped video record to the authorized local folder"
   await page.reload();
 
   await page.locator(".recording-options > summary").click();
-  await expect(page.getByRole("checkbox", { name: "录制视频与摇杆叠层" })).toBeChecked();
+  await expect(page.getByRole("combobox", { name: "录制内容", exact: true })).toHaveValue("video");
   await expect(page.getByText(/本地保存目录：/)).toBeVisible();
   await page.getByRole("button", { name: "打开画面" }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();

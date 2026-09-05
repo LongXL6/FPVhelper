@@ -93,9 +93,10 @@ declare global {
   }
 }
 
-export const test = base.extend<{ fakeHardware: void }>({
-  fakeHardware: [async ({ context }, use) => {
-    await context.addInitScript(() => {
+export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: boolean }>({
+  seedDataOnlyPreference: [true, { option: true }],
+  fakeHardware: [async ({ context, seedDataOnlyPreference }, use) => {
+    await context.addInitScript(({ seedDataOnlyPreference }) => {
       const metrics: FakeSerialMetrics = {
         requestPortCalls: 0,
         openCalls: 0,
@@ -139,7 +140,7 @@ export const test = base.extend<{ fakeHardware: void }>({
         `fpvh_ingest_${"a".repeat(43)}`,
       );
       window.localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
-      if (!window.localStorage.getItem("fpvhelper.training-preferences.v1")) window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
+      if (seedDataOnlyPreference && !window.localStorage.getItem("fpvhelper.training-preferences.v1")) window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
         autoExport: false,
         recordPilotVideo: false,
         showStickOverlays: true,
@@ -382,7 +383,7 @@ export const test = base.extend<{ fakeHardware: void }>({
         configurable: true,
         value: serial,
       });
-    });
+    }, { seedDataOnlyPreference });
     await use();
   }, { auto: true }],
 });
