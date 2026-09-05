@@ -151,6 +151,7 @@ describe("live vision runtime isolation", () => {
     expect(storage.saveLiveVisionRun).toHaveBeenCalledTimes(1);
     await act(async () => { await controller.stop(); await controller.exportRun("json"); await controller.exportDiagnostics(); });
     expect(controller.run?.observations).toHaveLength(20);
+    expect(controller.progress.analyzedFrames).toBe(20);
     const exported = JSON.parse(vi.mocked(media.downloadVisionText).mock.calls[0][0]);
     expect(storage.parseLiveVisionRun(exported).observations[0].diagnostics).toMatchObject({ bestMatch: { similarity: .4 }, acceptedMatches: 0 });
     const report = JSON.parse(vi.mocked(media.downloadVisionText).mock.calls[1][0]);

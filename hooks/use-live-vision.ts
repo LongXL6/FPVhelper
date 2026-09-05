@@ -153,6 +153,7 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     const tail = elapsed > current.analyzedUntilMs ? [{ startMs: current.analyzedUntilMs, endMs: elapsed, reason }] : [];
     const stopped: LiveVisionRun = { ...current, state: outcome, endedAtEpochMs: Date.now(), elapsedMs: elapsed, stopReason: reason, candidates: [...current.candidates, ...runtime.tracker.finish()], gaps: [...current.gaps, ...tail] };
     publish(stopped);
+    if (mounted.current) setProgress({ analyzedFrames: stopped.observations.length, inferenceMs: stopped.observations.at(-1)?.inferenceMs ?? null, message: reason });
     try {
       await persist(stopped, true);
       if (mounted.current && token === generation.current && runRef.current === stopped) setNotice(`${reason}。本轮候选和复核历史已保存在本机；不会自动恢复`);

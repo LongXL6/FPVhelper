@@ -146,7 +146,14 @@ try {
   }), run.id);
   if (!isDeepStrictEqual(savedRun, run)) throw new Error("Export and persisted live run differ");
   checkFailures();
-  await panel.screenshot({ path: output("browser-real-live-model.png") });
+  const preview = panel.locator('canvas[aria-label="最近分析画面"]');
+  await preview.scrollIntoViewIfNeeded();
+  const painted = await preview.evaluate((canvas) => {
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return pixels.some((value, index) => index % 4 === 3 && value > 0);
+  });
+  if (!painted) throw new Error("Diagnostic preview has no painted pixels after stop and export");
+  await panel.getByRole("region", { name: "本机识别诊断", exact: true }).screenshot({ path: output("browser-real-live-model.png") });
   const report = { source: "Synthetic camera; actual shared stream and real fixed model; no FPV accuracy or physical timing claim", manifest, captured, run, external: requests.filter((request) => new URL(request.url).origin !== baseURL), failures, errors, nonBlocking };
   await writeFile(output("browser-report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ stage: "passed", frames: run.observations.length, pendingCandidates: run.candidates.length, cameraRequests: captured.cameraRequests, tracksRetained: captured.tracks.length, output: output("browser-report.json") }));
