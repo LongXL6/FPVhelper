@@ -8,6 +8,7 @@ import {
 import { Icon, type IconName } from "@/components/ui/icon";
 import { WorkspaceVideoElement, PilotViewportTelemetry } from "@/components/video-workspace-display";
 import { SessionLibrary } from "@/components/session-library";
+import { ThrottleTimeline } from "@/components/throttle-timeline";
 import { SessionReportLoader } from "@/components/session-report-loader";
 import { startStickVideoCompositor } from "@/lib/stick-video-compositor";
 import { StickAxes } from "@/components/stick-axes";
@@ -395,27 +396,6 @@ function Gauge({ label, value, detail, accent = "blue" }: { label: string; value
         <p>{detail}</p>
       </div>
     </section>
-  );
-}
-
-function ThrottleTimeline({ samples }: { samples: number[] }) {
-  const points = useMemo(() => {
-    if (samples.length < 2) return "0,80 640,80";
-    return samples
-      .map((value, index) => `${(index / (samples.length - 1)) * 640},${96 - clamp(value, 0, 100) * 0.84}`)
-      .join(" ");
-  }, [samples]);
-
-  return (
-    <div className="timeline-plot" aria-label="最近三秒的油门曲线">
-      <svg viewBox="0 0 640 104" preserveAspectRatio="none" aria-hidden="true">
-        <line x1="0" y1="24" x2="640" y2="24" />
-        <line x1="0" y1="60" x2="640" y2="60" />
-        <line x1="0" y1="96" x2="640" y2="96" />
-        <polyline points={points} />
-      </svg>
-      <div className="timeline-labels"><span>-3.0 s</span><span>现在</span></div>
-    </div>
   );
 }
 
@@ -1762,7 +1742,7 @@ export function FlightDashboard() {
           <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
           <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
         </div>
-        <ThrottleTimeline samples={throttleHistory} />
+        <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />
       </section>
 
       <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>

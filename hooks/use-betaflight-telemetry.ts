@@ -49,6 +49,7 @@ import {
   type StickMotionVisualization,
 } from "@/lib/stick-motion";
 import { useRawSerialCapture, type RawSerialCaptureState } from "@/hooks/use-raw-serial-capture";
+import { createLiveThrottleHistory, type LiveThrottleSample } from "@/lib/live-throttle-history";
 import {
   BetaflightNameReader,
   EMPTY_BETAFLIGHT_DEVICE_NAMES,
@@ -60,7 +61,7 @@ const SERIAL_VISUAL_SAMPLE_STEP = Math.max(1, Math.round(MSP_RC_TARGET_HZ / SERI
 
 export interface TelemetryController {
   telemetry: FlightTelemetry;
-  throttleHistory: number[];
+  throttleHistory: LiveThrottleSample[];
   stickMotion: StickMotionVisualization;
   connection: ConnectionState;
   source: TelemetrySource;
@@ -87,7 +88,8 @@ export function useBetaflightTelemetry({
   demoPlaybackActive?: boolean;
 } = {}): TelemetryController {
   const [telemetry, setTelemetry] = useState(EMPTY_TELEMETRY);
-  const [throttleHistory, setThrottleHistory] = useState<number[]>([]);
+  const [throttleHistory, setThrottleHistory] = useState<LiveThrottleSample[]>([]);
+  const throttleHistoryRef = useRef(createLiveThrottleHistory());
   const [stickMotion, setStickMotion] = useState<StickMotionVisualization>(EMPTY_STICK_MOTION);
   const [connection, setConnection] = useState<ConnectionState>("demo");
   const [source, setSource] = useState<TelemetrySource>("demo");
@@ -254,13 +256,16 @@ export function useBetaflightTelemetry({
     sequenceRef.current += 1;
     const nextTelemetry = createDemoTelemetry(performance.now(), sequenceRef.current);
     publishSample(nextTelemetry, "demo");
-    setThrottleHistory((current) => [...current.slice(-59), nextTelemetry.throttleStickPercent]);
+    const history = throttleHistoryRef.current.observe(nextTelemetry, "demo", true);
+    if (history) setThrottleHistory(history);
     recordStickMotion(nextTelemetry, nextTelemetry.sequence);
   }, [publishSample, recordStickMotion]);
 
   const startDemo = useCallback(() => {
     stopTimers();
     resetStickMotion();
+    throttleHistoryRef.current.reset();
+    setThrottleHistory([]);
     setSource("demo");
     setConnection("demo");
     setError(null);
@@ -342,6 +347,7 @@ export function useBetaflightTelemetry({
         firstFrameTimerRef.current = null;
         stopDemoTimer();
         resetStickMotion();
+        throttleHistoryRef.current.reset();
         setThrottleHistory([]);
         setSource("serial");
         setError(null);
@@ -359,9 +365,8 @@ export function useBetaflightTelemetry({
         sequence: sequenceRef.current,
       };
       publishSample(sample, "serial");
-      if (appendVisualHistory) {
-        setThrottleHistory((current) => [...current.slice(-59), rc.throttleStickPercent]);
-      }
+      const history = throttleHistoryRef.current.observe(sample, "serial", appendVisualHistory);
+      if (history) setThrottleHistory(history);
       recordStickMotion(rc, sequenceRef.current, appendVisualHistory);
       setConnection("live");
       armStaleWatchdog(connectionAttempt);

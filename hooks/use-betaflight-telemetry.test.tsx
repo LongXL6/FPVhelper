@@ -80,6 +80,53 @@ afterEach(async () => {
 });
 
 describe("Betaflight telemetry fidelity", () => {
+  it("retains receive timestamps and limits the live trace to three seconds at 20 Hz input", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    const samples: FlightTelemetry[] = [];
+    const unsubscribe = controller.subscribeSamples((sample, source) => {
+      if (source === "serial") samples.push(sample);
+    });
+    for (let index = 1; index <= 120; index += 1) {
+      nowMs = index * 50;
+      await receive(rcFrame(1000 + index));
+    }
+    expect(samples).toHaveLength(120);
+    expect(controller.throttleHistory.length).toBeLessThanOrEqual(13);
+    expect(controller.throttleHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ monotonicTimestampMs: expect.any(Number), source: "serial" }),
+    ]));
+    unsubscribe();
+  });
+
+  it("clears the previous serial trace when switching back to demo", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    for (let index = 1; index <= 20; index += 1) {
+      nowMs = index * 10;
+      await receive(rcFrame(1800));
+    }
+    expect(controller.throttleHistory.length).toBeGreaterThan(1);
+    await act(async () => { await controller.useDemo(); });
+    expect(controller.throttleHistory).toHaveLength(1);
+    expect(controller.throttleHistory[0]).toEqual(expect.objectContaining({ source: "demo" }));
+  });
+
+  it("preserves a raw receive gap through decimation and resumes after a stale period", async () => {
+    await act(async () => { await controller.connectSerial(); });
+    for (let index = 1; index <= 10; index += 1) {
+      nowMs += 10;
+      await receive(rcFrame());
+    }
+    expect(controller.throttleHistory).toHaveLength(2);
+    await advance(1600);
+    expect(controller.connection).toBe("stale");
+    for (let index = 1; index <= 10; index += 1) {
+      nowMs += 10;
+      await receive(rcFrame());
+    }
+    expect(controller.connection).toBe("live");
+    expect(controller.throttleHistory.map((sample) => sample.breakBefore)).toEqual([false, false, true, false]);
+  });
+
   it("keeps the picker in the user gesture and clears demo analog values on the first real RC frame", async () => {
     await act(async () => { vi.advanceTimersByTime(50); });
     expect(controller.telemetry.groundBridgeVoltage).not.toBeNull();

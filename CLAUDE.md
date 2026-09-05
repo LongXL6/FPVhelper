@@ -11,7 +11,7 @@
 # 硬件与数据边界
 
 - 每位选手使用独立、预绑定的地面 Bridge FC + ELRS RX 套件。
-- Dashboard 只读 `MSP_RC` / `MSP_ANALOG`，不得写 Betaflight；桥接飞控不得连接 ESC 或电机。
+- Dashboard 只读 `MSP_RC` / `MSP_ANALOG` / `MSP_STATUS_EX`，并允许一次性可选名称读取 `MSP_API_VERSION` / `MSP_NAME` / `MSP2_GET_TEXT`（仅 Pilot/Craft 类型）；以 `lib/telemetry.ts` 和 `lib/betaflight-device-name.ts` 的受限请求构造器为准，不得写 Betaflight；桥接飞控不得连接 ESC 或电机。
 - 地面 bridge RSSI 不是机上 ELRS LQ，桥接飞控电压不是飞行器电池电压。
 - 视频与原始 RC 样本永不上传；Session JSON 保存在本机并由操作员导出。
 - 选手代号与备注是假名化数据。代号映射和监护人同意编号留在线下台账，不进入 JSON 或产品统计。
