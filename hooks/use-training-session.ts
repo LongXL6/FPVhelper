@@ -823,8 +823,6 @@ export function useTrainingSession({
         uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set(draft.samples.map((entry) => entry.sequence)) };
       }
       uniqueSequencesRef.current.sequences.add(sample.sequence);
-      setSampleCount(draft.samples.length);
-      setUniqueSampleCount(uniqueSequencesRef.current.sequences.size);
     } else if (fields) {
       measurementEvent("session.sample.duplicate", { ...fields, accepted: false, reason: "adjacent_sequence_source" });
     }
@@ -858,13 +856,30 @@ export function useTrainingSession({
   }, [finishRecording, inputKey, isRecording, linkState]);
 
   useEffect(() => {
-    if (!isRecording) return;
+    if (!isRecording || !sessionId) return;
+    let cancelled = false;
+    // Start publishes zero counts; later ticks publish only changed progress for this Session.
+    let publishedSampleCount = 0;
+    let publishedUniqueSampleCount = 0;
     const timer = window.setInterval(() => {
       const draft = draftRef.current;
-      if (draft) setElapsedMs(Math.max(0, performance.now() - draft.startedMonotonicMs));
+      if (cancelled || !recordingActiveRef.current || draft?.id !== sessionId) return;
+      setElapsedMs(Math.max(0, performance.now() - draft.startedMonotonicMs));
+      const unique = uniqueSequencesRef.current;
+      if (unique?.draftId !== draft.id) return;
+      const count = draft.samples.length;
+      const uniqueCount = unique.sequences.size;
+      if (count === publishedSampleCount && uniqueCount === publishedUniqueSampleCount) return;
+      publishedSampleCount = count;
+      publishedUniqueSampleCount = uniqueCount;
+      setSampleCount(count);
+      setUniqueSampleCount(uniqueCount);
     }, 250);
-    return () => window.clearInterval(timer);
-  }, [isRecording]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isRecording, sessionId]);
 
   useEffect(() => {
     if (!isRecording) return;

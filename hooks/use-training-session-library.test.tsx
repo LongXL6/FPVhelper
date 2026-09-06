@@ -573,11 +573,11 @@ describe("training library session actions", () => {
       }
       sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 100, monotonicTimestampMs: 2_000 }, "serial");
     });
-    expect(controller.sampleCount).toBe(100);
-    expect(controller.uniqueSampleCount).toBe(100);
 
     vi.mocked(performance.now).mockReturnValue(2_000);
     await act(async () => controller.stopRecording());
+    expect(controller.sampleCount).toBe(100);
+    expect(controller.uniqueSampleCount).toBe(100);
     expect(controller.lastSession?.samples.map((sample) => sample.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
     expect(controller.lastSession?.estimatedRcSampleRateHz).toBe(100);
     if (enabled) {
@@ -596,8 +596,11 @@ describe("training library session actions", () => {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_000 + sequence * 10 }, "serial");
       }
     });
+    vi.mocked(performance.now).mockReturnValue(2_000);
+    await act(async () => controller.stopRecording());
     expect(controller.sampleCount).toBe(100);
     expect(controller.uniqueSampleCount).toBe(100);
+    expect(controller.lastSession?.samples.map((entry) => entry.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
   });
 
   it("counts unique sequences incrementally and starts the next record with an empty set", async () => {
@@ -608,15 +611,17 @@ describe("training library session actions", () => {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_010 + index * 10 }, "serial");
       }
     });
-    expect(controller.sampleCount).toBe(3);
-    expect(controller.uniqueSampleCount).toBe(2);
 
     vi.mocked(performance.now).mockReturnValue(2_000);
     await act(async () => controller.stopRecording());
+    expect(controller.sampleCount).toBe(3);
+    expect(controller.uniqueSampleCount).toBe(2);
     await act(async () => {
       await controller.startRecording();
       sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: 2_010 }, "serial");
     });
+    vi.mocked(performance.now).mockReturnValue(2_010);
+    await act(async () => controller.stopRecording());
     expect(controller.sampleCount).toBe(1);
     expect(controller.uniqueSampleCount).toBe(1);
   });
