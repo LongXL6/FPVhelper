@@ -592,9 +592,11 @@ test("active pilot full and cropped video record to the authorized local folder"
   const stopButton = page.getByRole("button", { name: "■ 结束记录" });
   await expect(stopButton).toBeEnabled();
   await stopButton.click();
-  await expect(page.getByRole("button", { name: "保存记录…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "等待视频完成…" })).toBeDisabled();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("FINALIZING");
-  expect((await readStoredTrainingRecords(page)).sessions).toHaveLength(2);
+  // RC terminal confirmation is now independent of the still-open media stream.
+  await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.length).toBe(3);
+  expect((await readStoredTrainingRecords(page)).sessions.filter((session) => !session.video.recorded)).toHaveLength(1);
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoClose?: () => void }).__releaseDelayedVideoClose?.();
   });

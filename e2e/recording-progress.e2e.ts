@@ -78,6 +78,8 @@ test("records every input while publishing paired DOM progress on a bounded cade
   await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
   await expect(page.locator(".session-detail-header")).toContainText("已保存到本机");
+  // Media runtime SAVED and RC saved are separate from the subsequent receipt association/export transaction.
+  await expect.poll(async () => { const session = (await readStoredTrainingRecords(page)).sessions[0]; return Boolean(session?.video.recorded && session.exportCount > 0); }).toBe(true);
   const stored = await readStoredTrainingRecords(page);
   expect(stored.drafts).toHaveLength(0);
   expect(stored.sessions).toHaveLength(1);

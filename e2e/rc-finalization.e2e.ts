@@ -6,6 +6,7 @@ import type { TrainingSession } from "../lib/training-session";
 
 test.use({seedDataOnlyPreference:false});
 test.setTimeout(45000);
+const networkViolations = new WeakMap<Page, string[]>();
 const gateSnapshot=(page:Page)=>page.evaluate(()=> (window as unknown as {__phase2aMediaGate:{snapshot():{mode:string;events:Array<{kind:string}>}}}).__phase2aMediaGate.snapshot());
 async function release(page:Page,json=false){await page.evaluate((json)=>{const gate=(window as unknown as {__phase2aMediaGate:{release():void;releaseJson():void}}).__phase2aMediaGate;if(json)gate.releaseJson();else gate.release();},json);}
 async function files(page:Page){return page.evaluate(async()=>{
@@ -18,8 +19,8 @@ async function attach(info:TestInfo,name:string,value:unknown){const path=info.o
 async function prepare(page:Page,mode:string,extra=""){
  await page.addInitScript(installPhase2AMediaGate);
  await page.addInitScript(()=>Object.defineProperty(window,"showDirectoryPicker",{configurable:true,value:async()=> (await navigator.storage.getDirectory()).getDirectoryHandle("phase2a-e2e",{create:true})}));
- const origin="http://127.0.0.1:3137";
- await page.route("**/*",route=>{const req=route.request(),url=new URL(req.url());if(["http:","https:"].includes(url.protocol)&&(url.origin!==origin||!["GET","HEAD"].includes(req.method())))return route.abort();return route.continue();});
+ const origin="http://127.0.0.1:3137";const violations:string[]=[];networkViolations.set(page,violations);
+ await page.route("**/*",route=>{const req=route.request(),url=new URL(req.url());if(["http:","https:"].includes(url.protocol)&&(url.origin!==origin||!["GET","HEAD"].includes(req.method()))){violations.push(req.method()+" "+url.origin+url.pathname);return route.abort();}return route.continue();});
  await page.goto(`/?analytics=off&mediaGate=${mode}${extra}`);
  const setup=page.getByRole("region",{name:"录制准备",exact:true});
  await setup.getByRole("button",{name:/连接当前选手/}).click();await setup.getByRole("button",{name:/打开当前输入/}).click();await setup.getByRole("button",{name:/选择保存目录/}).click();
@@ -30,7 +31,7 @@ async function prepare(page:Page,mode:string,extra=""){
  await page.getByRole("button",{name:"■ 结束记录",exact:true}).click();return checkpoint;
 }
 async function terminal(page:Page){await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.length).toBe(1);return (await readStoredTrainingRecords(page)).sessions[0];}
-test.afterEach(async({page})=>{if(!page.isClosed()){await release(page).catch(()=>undefined);await release(page,true).catch(()=>undefined);}});
+test.afterEach(async({page})=>{if(!page.isClosed()){await release(page).catch(()=>undefined);await release(page,true).catch(()=>undefined);}expect(networkViolations.get(page)??[]).toEqual([]);});
 
 test("normal stop confirms RC, real video close and exactly one final JSON",async({page},info)=>{
  const checkpoint=await prepare(page,"normal");await expect.poll(async()=> (await terminal(page)).video.recorded).toBe(true);
@@ -49,13 +50,13 @@ test("unclosed media does not block terminal RC, early export or same-origin rel
  await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("media-close-entered");
  expect((await gateSnapshot(page)).events.some(e=>e.kind==="media-underlying-close-resolved")).toBe(false);
  expect(stored.samples.length).toBeGreaterThan(checkpoint.samples.length);expect(stored.video.recorded).toBe(false);expect(stored.finalization?.media.state).toBe("pending");expect(stored.interrupted).toBe(false);
- await expect(page.locator(".session-detail-header")).toContainText("遥控数据已保存");await expect(page.getByText("视频仍在收尾",{exact:false}).first()).toBeVisible();
+ await expect(page.locator(".session-detail-header")).toContainText("遥控数据已保存");await expect(page.locator(".session-detail").getByText("视频仍在收尾",{exact:false})).toBeVisible();
  await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=> (await files(page)).filter(f=>f.json).length).toBe(1);
  const early=(await files(page)).find(f=>f.json)!.json!;expect(early.samples).toEqual(stored.samples);expect(early.video.recorded).toBe(false);
- let dialogType:string|null=null;page.once("dialog",async dialog=>{dialogType=dialog.type();await dialog.accept();});await page.reload();
+ let dialogType:string|null=null;page.once("dialog",async dialog=>{dialogType=dialog.type();await dialog.accept();});await page.reload();expect(dialogType).toBe("beforeunload");
  await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
  const reopened=(await readStoredTrainingRecords(page)).sessions[0];expect(reopened.samples).toEqual(stored.samples);expect(reopened.endedAt).toBe(stored.endedAt);expect(reopened.interruptionReason).toBe(stored.interruptionReason);expect(reopened.video.recorded).toBe(false);expect(reopened.finalization?.media.state).toBe("pending");
- await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"训练记录",exact:true}).click();await expect(page.getByText("视频尚未确认",{exact:false}).first()).toBeVisible();
+ await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"训练记录",exact:true}).click();await expect(page.locator(".session-detail").getByText("视频尚未确认",{exact:false})).toBeVisible();
  await attach(info,"pending-reopened.json",{checkpointSamples:checkpoint.samples.length,stored,early,reopened,dialogType,boundary:"same Page/context/origin DB; no target record seed after reload; before-close gate did not close media"});
 });
 
