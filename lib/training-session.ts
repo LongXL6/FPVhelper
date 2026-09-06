@@ -91,6 +91,13 @@ export type TrainingSessionVideo = { recorded: false; synchronized: false } | {
   overlayTiming: "none" | "latest_available_host_sample";
 };
 
+export interface TrainingSessionFinalization {
+  version: 1;
+  contentRevision: number;
+  confirmedExportRevision: number | null;
+  media: { state: "not_requested" | "pending" | "recorded" | "failed" | "unknown"; operationId: string | null };
+}
+
 export interface TrainingSession {
   schemaVersion: typeof TRAINING_SESSION_SCHEMA_VERSION;
   migratedFromSchemaVersion?: 1;
@@ -117,6 +124,7 @@ export interface TrainingSession {
     videoOffsetCalibrated: false;
   };
   video: TrainingSessionVideo;
+  finalization?: TrainingSessionFinalization;
   captureQuality?: TrainingCaptureQuality;
   captureContext?: TrainingCaptureContext;
   markers: TrainingSessionMarker[];
@@ -370,7 +378,7 @@ export function withTrainingSessionNotes(session: TrainingSession, notes: string
   return { ...session, notes: normalizeSessionNotes(notes) };
 }
 
-function parseTrainingSessionVideo(input: unknown): TrainingSessionVideo {
+export function parseTrainingSessionVideo(input: unknown): TrainingSessionVideo {
   if (input === undefined) return { recorded: false, synchronized: false };
   const video = requireRecord(input, "video");
   if (video.synchronized !== false) throw new Error("video.synchronized 必须为 false，不能声称已校准同步");
@@ -448,6 +456,7 @@ export function markTrainingSessionExported(session: TrainingSession, exportedAt
     ...session,
     exportedAt: new Date(exportedAtEpochMs).toISOString(),
     exportCount: session.exportCount + 1,
+    ...(session.finalization ? { finalization: { ...session.finalization, confirmedExportRevision: session.finalization.contentRevision } } : {}),
   };
 }
 
@@ -461,8 +470,10 @@ export function resolveTrainingSessionTermination(
   current: TrainingSessionTermination | null,
   next: TrainingSessionTermination,
 ): TrainingSessionTermination {
-  if (!current || terminationPriority(next) > terminationPriority(current)) return next;
-  return current;
+  const normalizedNext = { interrupted: next.interrupted || next.interruptionReason !== null, interruptionReason: next.interruptionReason };
+  const normalizedCurrent = current ? { interrupted: current.interrupted || current.interruptionReason !== null, interruptionReason: current.interruptionReason } : null;
+  if (!normalizedCurrent || terminationPriority(normalizedNext) > terminationPriority(normalizedCurrent)) return normalizedNext;
+  return normalizedCurrent;
 }
 
 export function withTrainingSessionTermination(
@@ -608,6 +619,23 @@ export function parseTrainingSessionDraft(input: string | unknown): TrainingSess
   };
 }
 
+function parseFinalization(input: unknown, video: TrainingSessionVideo, exportedAt: string | null): TrainingSessionFinalization | undefined {
+  if (input === undefined) return undefined;
+  const f = requireRecord(input, "finalization"), media = requireRecord(f.media, "finalization.media");
+  if (f.version !== 1 || Object.keys(f).some((key) => !["version", "contentRevision", "confirmedExportRevision", "media"].includes(key))) throw new Error("不支持的 finalization 版本或字段");
+  if (!Number.isSafeInteger(f.contentRevision) || Number(f.contentRevision) < 0
+    || (f.confirmedExportRevision !== null && (!Number.isSafeInteger(f.confirmedExportRevision) || Number(f.confirmedExportRevision) < 0 || Number(f.confirmedExportRevision) > Number(f.contentRevision)))
+    || (exportedAt === null && f.confirmedExportRevision !== null)) throw new Error("finalization 导出修订无效");
+  if (typeof media.state !== "string" || !["not_requested", "pending", "recorded", "failed", "unknown"].includes(media.state)
+    || Object.keys(media).some((key) => !["state", "operationId"].includes(key))
+    || (media.operationId !== null && (typeof media.operationId !== "string" || !media.operationId.trim() || media.operationId.length > 200))
+    || (["pending", "failed"].includes(String(media.state)) && media.operationId === null)
+    || (media.state === "not_requested" && media.operationId !== null)
+    || (media.state === "recorded") !== video.recorded) throw new Error("finalization 视频状态或操作身份无效");
+  return { version: 1, contentRevision: Number(f.contentRevision), confirmedExportRevision: f.confirmedExportRevision === null ? null : Number(f.confirmedExportRevision),
+    media: { state: media.state as TrainingSessionFinalization["media"]["state"], operationId: media.operationId as string | null } };
+}
+
 export function parseTrainingSession(input: string | unknown): TrainingSession {
   const parsed = typeof input === "string" ? JSON.parse(input) : input;
   const raw = requireRecord(parsed, "session");
@@ -655,6 +683,8 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
   if ((exportedAt === null) !== (exportCount === 0)) {
     throw new Error("exportedAt 与 exportCount 不一致");
   }
+  const video = parseTrainingSessionVideo(raw.video);
+  const finalization = parseFinalization(raw.finalization, video, exportedAt);
   const sessionWithoutValidity: AssessableTrainingSession = {
     schemaVersion: TRAINING_SESSION_SCHEMA_VERSION,
     ...(schemaVersion === 1 || raw.migratedFromSchemaVersion === 1 ? { migratedFromSchemaVersion: 1 as const } : {}),
@@ -679,7 +709,8 @@ export function parseTrainingSession(input: string | unknown): TrainingSession {
       wallClockStartedAt,
       videoOffsetCalibrated: false,
     },
-    video: parseTrainingSessionVideo(raw.video),
+    video,
+    ...(finalization ? { finalization } : {}),
     ...(raw.captureQuality === undefined ? {} : { captureQuality: parseTrainingCaptureQuality(raw.captureQuality, samples) }),
     ...(raw.captureContext === undefined ? {} : { captureContext: parseTrainingCaptureContext(raw.captureContext) }),
     markers,

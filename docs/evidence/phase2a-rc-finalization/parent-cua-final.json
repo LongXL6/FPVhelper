@@ -1,0 +1,97 @@
+{
+  "classification": "Actual Computer Use UI verification on ordinary candidate; not raw IDB/media recalculation",
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "treeSha": "a30ebfdb79776f0172c99361aa5c43e4b4ab3323",
+  "ordinaryBuildId": "DPyUoeC8qHVHAWSNlDycX",
+  "proxyInjectionSha256": "9550dfb23a336c5cb493d1f149858869564e559c4b0181ebb8e9c0825c41ead6",
+  "origin": "http://127.0.0.1:3140",
+  "tool": "mcp__cua_repl.js",
+  "surface": "Codex IAB supported browser API",
+  "recordedAtUtc": "2026-09-06T15:03:47.446651+00:00",
+  "normal": {
+    "tabId": "4",
+    "mode": "normal",
+    "pilot": "PHASE2A-CUA-NORMAL",
+    "recordIdPrefix": "058f9d48",
+    "actions": [
+      "close onboarding",
+      "fill alias",
+      "connect synthetic bridge and video through product controls",
+      "click Start",
+      "observe REC",
+      "click Stop",
+      "view automatically opened record and media details"
+    ],
+    "samplesShown": 2883,
+    "durationShown": "00:33",
+    "videoBytesShown": 1296205,
+    "videoReceiptShown": "write and close confirmed; sticks overlay; physical synchronization uncalibrated",
+    "autoJsonShown": "fpv-session-20260906-174834-PHASE2A-CUA-NORMAL-058f9d48.json",
+    "latestExportShownConfirmed": true
+  },
+  "pending": {
+    "tabId": "5",
+    "mode": "before-close",
+    "pilot": "PHASE2A-CUA-PENDING",
+    "recordIdPrefix": "ea7e42d4",
+    "actions": [
+      "acknowledge onboarding",
+      "fill alias",
+      "connect synthetic bridge and video through product controls",
+      "click Start",
+      "click Stop",
+      "observe terminal RC saved while video still finishing",
+      "click Export JSON"
+    ],
+    "samplesShown": 2592,
+    "durationShown": "00:30",
+    "startControlDisabled": true,
+    "mediaFinishingShown": true,
+    "rcSavedShown": true,
+    "earlyJsonShown": "fpv-session-20260906-175618-PHASE2A-CUA-PENDING-ea7e42d4.json",
+    "earlyExportShownConfirmed": true,
+    "mediaGateReleasedByParent": false
+  },
+  "reopen": {
+    "method": "fresh same-origin tab6; then close original pending tab5 and reload tab6; no target Session reseeding or DB deletion",
+    "sameOriginalTabReloadCompleted": false,
+    "actions": [
+      "attempt reload tab5; no navigation completed and getJsDialog returned undefined",
+      "open same-origin tab6",
+      "observe other-tab capture lock",
+      "close original pending tab5",
+      "reload tab6",
+      "click Training Records",
+      "observe same ea7e42d4 record,2592 samples,00:30 and video unconfirmed",
+      "click Export JSON again"
+    ],
+    "samplesShown": 2592,
+    "durationShown": "00:30",
+    "recordIdPrefix": "ea7e42d4",
+    "mediaStatusShown": "video unconfirmed; previous page finalization result unknown",
+    "noNewPageClosedReasonShown": true,
+    "reexportShown": "fpv-session-20260906-175618-PHASE2A-CUA-PENDING-ea7e42d4-v2.json",
+    "existingFilePreservedShown": true
+  },
+  "retainedEnvironmentFailures": [
+    "first candidate proxy reached its 15-minute owned lifetime; ordinary upstream remained alive; replacement proxy used same BUILD_ID and injection hash",
+    "error tab4 became browser-generated data URL; URL policy blocked reload/goto/close on that tab; did not access its content or change policy",
+    "native Codex app access for the reload confirmation was denied by Computer Use safety policy; no alternate native app control used"
+  ],
+  "evidenceGaps": [
+    "Actual clicking of the native reload confirmation was not covered by CUA; keep this separate from the automated same-page reload/dialog acceptance test",
+    "Three actual screenshots emitted inline in parent tool outputs, original PNG bytes not exported",
+    "These are UI/action observations; complete samples, timestamps and media/JSON bytes are verified by separately identified automated browser tests, not claimed independently recalculated by this CUA sequence",
+    "Browser tab closure does not prove explicit track.stop or cancellation of underlying file writes"
+  ],
+  "screenshotsInline": 3,
+  "cleanup": {
+    "tabs5and6ClosedAndAbsent": true,
+    "tab4ErrorPageCloseBlocked": true,
+    "userChatGPTTabsUntouched": true,
+    "databaseAndFilesNotDeleted": true
+  },
+  "productChangedDuringCua": false,
+  "networkOrPermissionSettingsChanged": false,
+  "realUserDevicesUsed": false
+}

@@ -1,0 +1,60 @@
+{
+  "classification": "Actual parent Computer Use baseline UI check, not candidate acceptance or independent IDB/media verification",
+  "recordedAtUtc": "2026-09-06T13:42:02.663745+00:00",
+  "sourceBaseSha": "851ca2da59306178bcb4965e48474989e618a96e",
+  "buildId": "V6cINYwXAu4ghbu2DGoVE",
+  "url": "http://127.0.0.1:3140/?analytics=off&mediaGate=before-close",
+  "browserSurface": "Codex IAB",
+  "tabId": "3",
+  "proxyInjectionSha256": "b015ae62495eaf49749121238ed2d655e5a5822b7fa1c51c11d92ce3ae1fd145",
+  "tool": "mcp__cua_repl.js",
+  "controls": "Supported browser role locators; no direct business calls, DOM edits or page evaluate used",
+  "actions": [
+    "create own IAB tab",
+    "close onboarding",
+    "fill synthetic pilot PHASE2A-CUA-BASELINE",
+    "click connect bridge",
+    "click open video",
+    "click select isolated OPFS directory",
+    "click start recording",
+    "observe REC and named MP4 write status",
+    "click end recording",
+    "observe finalizing and RC count gap",
+    "click retry save Session",
+    "observe unchanged saving state",
+    "capture actual viewport screenshot inline",
+    "close own tab and verify tab absent"
+  ],
+  "observed": {
+    "syntheticVideoLabel": "PHASE2A Synthetic Canvas Video",
+    "videoSettingsShown": "1920x1080 30.0 FPS",
+    "frozenSamples": 1701,
+    "persistedSamplesShown": 1700,
+    "durationShown": "00:20.0",
+    "readableTerminalRecordsShown": 0,
+    "mediaStatusShown": "FINALIZING",
+    "retryPresent": true,
+    "retryChangedVisibleSaveState": false
+  },
+  "environmentNotices": [
+    "Screen wake-lock request failed in IAB; no setting/permission changed"
+  ],
+  "screenshot": {
+    "displayedInlineInParentToolResult": true,
+    "originalPngExported": false,
+    "gap": "CUA screenshot emitted inline; no PNG bytes exported to this directory"
+  },
+  "limits": [
+    "UI readbacks only; no independent IDB transaction or media byte read in this CUA check",
+    "This is a second baseline observation, distinct from executor 86/98-frame automated RED",
+    "Proxy supplies synthetic transport and canvas; ordinary product bundles unchanged but HTML test bootstrap injected",
+    "Closing tab is not proof of explicit track.stop or cancellation of underlying pending file write",
+    "Short synthetic recording, not hardware/endurance or physical synchronization evidence"
+  ],
+  "cleanup": {
+    "ownTabClosedAndAbsent": true,
+    "proxyLeftForOwnerCleanup": true,
+    "databaseNotDeleted": true,
+    "userTabsUntouched": true
+  }
+}

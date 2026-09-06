@@ -1,0 +1,51 @@
+
+ RUN  v4.1.11 <WORKTREE>
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: false)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: false)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: true)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: true)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ hooks/use-training-session-library.test.tsx (34 tests | 2 failed | 32 skipped) 33ms
+     × keeps S2 RC failure when S1 late export settles (metadata failure: false) 27ms
+     × keeps S2 RC failure when S1 late export settles (metadata failure: true) 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: false)
+AssertionError: expected null to be '遥控数据尚未安全保存：S2 RC transaction failed；记…' // Object.is equality
+
+- Expected:
+"遥控数据尚未安全保存：S2 RC transaction failed；记录仍保留在本页，可重试"
+
++ Received:
+null
+
+ ❯ hooks/use-training-session-library.test.tsx:164:37
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  hooks/use-training-session-library.test.tsx > training library session actions > keeps S2 RC failure when S1 late export settles (metadata failure: true)
+AssertionError: expected 'JSON 已写入“D1”，但导出状态未写入 IndexedDB：S1 ex…' to be '遥控数据尚未安全保存：S2 RC transaction failed；记…' // Object.is equality
+
+Expected: "遥控数据尚未安全保存：S2 RC transaction failed；记录仍保留在本页，可重试"
+Received: "JSON 已写入“D1”，但导出状态未写入 IndexedDB：S1 export metadata failed"
+
+ ❯ hooks/use-training-session-library.test.tsx:164:37
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 32 skipped (34)
+   Start at  18:45:24
+   Duration  290ms (transform 105ms, setup 0ms, import 140ms, tests 33ms, environment 0ms)

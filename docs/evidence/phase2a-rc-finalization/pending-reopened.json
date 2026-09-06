@@ -1,0 +1,140 @@
+{
+  "case": "pending-reopened",
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "classification": "automated browser assertions; real IDB/OPFS/MediaRecorder with synthetic input",
+  "checkpointSamples": 101,
+  "stored": {
+    "id": "5ed26790-adcf-4ca2-b487-ed5aae395d84",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:03.048Z",
+    "endedAt": "2026-09-06T14:28:04.206Z",
+    "durationMs": 1157.9,
+    "sampleCount": 115,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": null,
+    "exportCount": 0,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": null,
+      "media": {
+        "state": "pending",
+        "operationId": "01713cc3-f718-4444-8589-25f194166519"
+      }
+    },
+    "sampleEvidence": {
+      "count": 115,
+      "sha256PythonCanonicalJson": "b817a3b10686ec9948d779bae09434da3ba961f78c8d15b8bb2638d414af3640",
+      "firstSequence": 14,
+      "lastSequence": 128,
+      "firstElapsedMs": 12.6,
+      "lastElapsedMs": 1153.8,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "early": {
+    "id": "5ed26790-adcf-4ca2-b487-ed5aae395d84",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:03.048Z",
+    "endedAt": "2026-09-06T14:28:04.206Z",
+    "durationMs": 1157.9,
+    "sampleCount": 115,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:04.295Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": 0,
+      "media": {
+        "state": "pending",
+        "operationId": "01713cc3-f718-4444-8589-25f194166519"
+      }
+    },
+    "sampleEvidence": {
+      "count": 115,
+      "sha256PythonCanonicalJson": "b817a3b10686ec9948d779bae09434da3ba961f78c8d15b8bb2638d414af3640",
+      "firstSequence": 14,
+      "lastSequence": 128,
+      "firstElapsedMs": 12.6,
+      "lastElapsedMs": 1153.8,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "reopened": {
+    "id": "5ed26790-adcf-4ca2-b487-ed5aae395d84",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:03.048Z",
+    "endedAt": "2026-09-06T14:28:04.206Z",
+    "durationMs": 1157.9,
+    "sampleCount": 115,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:04.295Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": 0,
+      "media": {
+        "state": "pending",
+        "operationId": "01713cc3-f718-4444-8589-25f194166519"
+      }
+    },
+    "sampleEvidence": {
+      "count": 115,
+      "sha256PythonCanonicalJson": "b817a3b10686ec9948d779bae09434da3ba961f78c8d15b8bb2638d414af3640",
+      "firstSequence": 14,
+      "lastSequence": 128,
+      "firstElapsedMs": 12.6,
+      "lastElapsedMs": 1153.8,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "dialogType": "beforeunload",
+  "boundary": "same Page/context/origin DB; no target record seed after reload; before-close gate did not close media"
+}

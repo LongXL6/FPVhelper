@@ -1,3 +1,4 @@
+import { applyTrainingSessionMetadataPatch, hasCurrentSessionExport, type TrainingSessionMetadataPatch } from "./training-session-metadata";
 import {
   parseTrainingSession,
   parseTrainingSessionDraft,
@@ -8,7 +9,8 @@ import {
 import { toTrainingSessionSummary, type TrainingSessionSummary } from "./training-session-index";
 
 const DEFAULT_DATABASE_NAME = "fpvhelper-training";
-const DATABASE_VERSION = 2;
+// Version bump closes old writers that would discard finalization metadata; stores/chunks remain unchanged.
+const DATABASE_VERSION = 3;
 const DRAFTS_STORE = "drafts";
 const SESSIONS_STORE = "sessions";
 const DRAFT_INDEX = "draftIndex";
@@ -304,6 +306,7 @@ export interface TrainingSessionStore {
   getStorageIntegrity: () => Promise<TrainingSessionStorageIntegrity>;
   saveSession: (session: TrainingSession) => Promise<void>;
   completeSession: (session: TrainingSession) => Promise<void>;
+  patchSession: (id: string, patch: TrainingSessionMetadataPatch) => Promise<TrainingSessionSummary>;
   close: () => Promise<void>;
 }
 
@@ -494,7 +497,7 @@ export function createTrainingSessionStore(
 
     countUnexportedValidSessions: () => run(async (database) => (await availableIndexes(database, SESSION_INDEX)).records
       .filter((record) => (record.metadata as TrainingSessionSummary).validity.valid
-        && (record.metadata as TrainingSessionSummary).exportedAt === null).length, true),
+        && !hasCurrentSessionExport(record.metadata as TrainingSessionSummary)).length, true),
 
     getStorageIntegrity: () => run(async (database) => {
       const drafts = await availableIndexes(database, DRAFT_INDEX);
@@ -507,6 +510,34 @@ export function createTrainingSessionStore(
         ...(migrationWarning ? { migrationWarning } : {}),
       };
     }, true),
+
+    patchSession: (id, patch) => run(async (database) => {
+      const result = await inTransaction(database, [SESSION_INDEX, SAMPLE_CHUNKS], "readwrite", async (transaction) => {
+        const index = transaction.objectStore(SESSION_INDEX);
+        const raw: unknown = await requestResult(index.get(id));
+        if (raw === undefined) throw new Error("未找到可更新的本机记录");
+        let original: StoredRecord;
+        try {
+          if (knownQuarantined.has(`${SESSION_INDEX}/${id}`)) throw new Error("训练记录已隔离");
+          original = readManifest(raw, SESSION_INDEX);
+          await checkChunkKeys(transaction, original);
+        } catch (error) {
+          knownQuarantined.add(`${SESSION_INDEX}/${id}`);
+          if (!isRecord(raw) || raw.status !== "quarantined") quarantine(transaction, SESSION_INDEX, id, raw);
+          return { error: error instanceof Error ? error : new Error("训练记录已隔离") };
+        }
+        const current = original.metadata as TrainingSessionSummary;
+        const updated = applyTrainingSessionMetadataPatch(current, patch);
+        if (updated !== current) {
+          parseTrainingSession({ ...updated, captureQuality: undefined, samples: [] });
+          index.put({ ...original, metadata: updated, metadataChecksum: checksum(updated) });
+        }
+        return { metadata: updated };
+      });
+      // Commit quarantine before rejecting; an aborted transaction would undo the quarantine marker.
+      if (result.error) throw result.error;
+      return result.metadata!;
+    }),
 
     saveSession: (session) => saveCompleted(session, false),
     completeSession: (session) => saveCompleted(session, true),

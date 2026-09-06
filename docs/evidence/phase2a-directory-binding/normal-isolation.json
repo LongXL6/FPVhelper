@@ -1,0 +1,7 @@
+{
+  "testedSha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+  "ordinaryBuildId": "Ug5KVuGzL2RqK2l5oq1iI",
+  "compiledFixtureHits": [],
+  "direct3138HtmlFixturePresent": false,
+  "boundary": "Read-only ordinary static JS and unmodified HTML; proxy injection is separate test infrastructure."
+}

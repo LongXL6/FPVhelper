@@ -1,0 +1,38 @@
+
+ RUN  v4.1.11 <WORKTREE>
+
+stderr | hooks/use-training-session-progress.test.tsx > independent RC finalization > commits post-checkpoint tail and terminal state while media remains pending
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ hooks/use-training-session-progress.test.tsx (17 tests | 1 failed | 16 skipped) 17ms
+     × commits post-checkpoint tail and terminal state while media remains pending 17ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  hooks/use-training-session-progress.test.tsx > independent RC finalization > commits post-checkpoint tail and terminal state while media remains pending
+AssertionError: expected undefined to deeply equal [ 1, 2 ]
+
+- Expected:
+[
+  1,
+  2,
+]
+
++ Received:
+undefined
+
+ ❯ hooks/use-training-session-progress.test.tsx:372:73
+    370|     try {
+    371|       await act(async () => { await controller.retryPendingSave(); });
+    372|       expect(records.get(id)?.samples.map((sample) => sample.sequence)…
+       |                                                                         ^
+    373|       expect(records.get(id)?.interrupted).toBe(false);
+    374|       expect(controller.hasPendingSave).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 16 skipped (17)
+   Start at  16:20:43
+   Duration  238ms (transform 76ms, setup 0ms, import 106ms, tests 17ms, environment 0ms)

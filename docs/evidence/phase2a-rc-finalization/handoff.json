@@ -1,0 +1,107 @@
+{
+  "run_id": "phase2a-rc-finalization-20260906-01",
+  "status": "needs_review",
+  "base": {
+    "sha": "851ca2da59306178bcb4965e48474989e618a96e",
+    "tree": "d462e7074fad5a7bd72f7df42f5432599bdfe4d9",
+    "existingDraftPr": "https://github.com/LongXL6/fpvhelper/pull/9",
+    "stateAtInitialVerification": "OPEN/DRAFT; not merged"
+  },
+  "tested": {
+    "sha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+    "tree": "a30ebfdb79776f0172c99361aa5c43e4b4ab3323",
+    "cleanAtFinalGates": true
+  },
+  "delivery": {
+    "sha": null,
+    "tree": null,
+    "resolution": "Final delivery SHA/tree recorded after documentation commit in local output/playwright/phase2a/handoff/delivery.json and parent task handoff. This tracked file cannot name its own commit hash.",
+    "expectedTestedDiff": "documentation and curated evidence only"
+  },
+  "branch": "codex/fpvhelper-rc-finalization-independent",
+  "builds": {
+    "ordinary": "DPyUoeC8qHVHAWSNlDycX",
+    "smoke": "cyLU6TcO9kLbhK3gAOKRD",
+    "baselineOrdinary": "V6cINYwXAu4ghbu2DGoVE"
+  },
+  "gates": {
+    "check": {
+      "tests": 756,
+      "files": 79,
+      "typecheck": "passed",
+      "lint": "passed"
+    },
+    "browserSmoke": {
+      "passed": 30,
+      "failed": 0
+    },
+    "ordinaryBuild": "passed",
+    "nativeCua": "normal, media pending/early export, fresh same-origin reopen and versioned reexport observed; original-tab reload confirmation not completed"
+  },
+  "diffCategories": {
+    "product": [
+      "components/flight-dashboard.tsx",
+      "components/session-library.tsx",
+      "hooks/use-training-session.ts",
+      "lib/training-session-metadata.ts",
+      "lib/training-session-store.ts",
+      "lib/training-session.ts",
+      "lib/training-weekly-report.ts"
+    ],
+    "testsAndFixtures": [
+      "e2e/fixtures/phase2a-cua-media.ts",
+      "e2e/fixtures/phase2a-media-gate.ts",
+      "e2e/fpv-control-room.e2e.ts",
+      "e2e/rc-finalization.e2e.ts",
+      "e2e/recording-progress.e2e.ts",
+      "hooks/use-training-session-library.test.tsx",
+      "hooks/use-training-session-progress.test.tsx",
+      "lib/training-session-finalization.test.ts",
+      "lib/training-session-store.test.ts",
+      "playwright.phase2a.config.ts",
+      "scripts/phase2a-baseline-red.mts",
+      "scripts/phase2a-cua-browser.mts",
+      "scripts/phase2a-cua-proxy.mts"
+    ],
+    "designAtTested": [
+      "docs/designs/phase2a-rc-finalization.md"
+    ]
+  },
+  "compatibility": {
+    "sessionSchema": 2,
+    "optionalFinalizationVersion": 1,
+    "indexedDbVersion": 3,
+    "rollback": "Keep DB3 support. Do not downgrade/delete the database. Finish old active captures before any future adoption."
+  },
+  "availability": {
+    "github": "No new Phase2A push/PR by this executor. Parent owns authorized publication and verification.",
+    "reviewArtifacts": "Tracked local docs/evidence/phase2a-rc-finalization, not yet GitHub verified.",
+    "originals": "Ignored output/playwright/phase2a; hashes do not make these available remotely.",
+    "recordedMedia": "Native bytes verified during tests; not exported as review artifacts.",
+    "cuaScreenshots": "Inline tool images only; action records provided instead."
+  },
+  "evidence_gaps": [
+    "CUA original-tab reload/dialog confirmation blocked; automated same-page reload/dialog test is separately passed",
+    "No physical hardware, long-duration or power-loss validation",
+    "No proof that context closure explicitly stops every track or cancels underlying writes",
+    "No new performance A/B; R1 stays PARTIAL / measurement_sensitive_or_inconclusive",
+    "Three CUA screenshots inline only; action receipt shared instead of unavailable PNG bytes",
+    "Temporary browser-generated error tab4 could not be closed due to URL policy; no bypass"
+  ],
+  "deferred": [
+    "Media queue budgets",
+    "Full visual-history rewrite",
+    "Full video recovery",
+    "Physical synchronization"
+  ],
+  "externalActions": {
+    "push": false,
+    "newPr": false,
+    "merge": false,
+    "deploy": false,
+    "tag": false,
+    "cloudDatabaseChange": false
+  },
+  "stopPoint": "Parent reviews, publishes stacked private Draft PR and returns review; no subsequent optimization or release.",
+  "parentReview": "independent-data-review.json closes the final stale-session projection blocker; targeted fake-indexeddb tests10/10, not native-browser claim"
+}

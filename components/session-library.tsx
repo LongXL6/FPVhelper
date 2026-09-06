@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TrainingSessionExportResult } from "@/hooks/use-training-session";
 import { SessionCaptureSummary } from "@/components/session-capture-summary";
 import { CAPTURE_GAP_THRESHOLD_MS } from "@/lib/training-capture-quality";
+import { hasCurrentSessionExport, sessionMediaStatusText } from "@/lib/training-session-metadata";
 import { normalizeSessionNotes } from "@/lib/training-session";
 import { formatDvrReviewChecklist } from "@/lib/training-session-summary";
 import type { TrainingSessionSummary } from "@/lib/training-session-index";
@@ -26,6 +27,8 @@ interface SessionLibraryProps {
   storageState: "loading" | "ready" | "error";
   saveState: "idle" | "saving" | "saved" | "error";
   unsavedSessionIds?: string[];
+  pendingMediaSessionId?: string;
+  pendingTerminationSessionId?: string;
 }
 
 type SourceFilter = "all" | "real" | "demo";
@@ -139,6 +142,8 @@ export function SessionLibrary({
   isRecording,
   storageState,
   saveState,
+  pendingMediaSessionId,
+  pendingTerminationSessionId,
   unsavedSessionIds = [],
 }: SessionLibraryProps) {
   const [query, setQuery] = useState("");
@@ -269,7 +274,7 @@ export function SessionLibrary({
 
       {storageState === "error" || saveState === "error" ? (
         <p className="session-notice session-notice--warning" role="status">
-          本机存储暂不可用。页面内已有记录仍可查看，请先导出重要记录。
+          {pendingTerminationSessionId ? "遥控样本已入库，终止状态更新尚未确认；请重试保存终止状态。" : "本机存储暂不可用。页面内已有记录仍可查看，请先导出重要记录。"}
         </p>
       ) : null}
       {isRecording ? (
@@ -324,7 +329,7 @@ export function SessionLibrary({
                     <h2 id="session-detail-title">{selectedSession.athleteCode || "未命名选手"}<span>训练记录</span></h2>
                     <p className="session-detail-date">{formatDate(selectedSession.startedAt)} · 本地时间</p>
                     <span className={`session-badge${selectedSessionIsSaved ? " session-badge--valid" : ""}`}>
-                      {selectedSessionIsSaved ? "已保存到本机" : "尚未保存"}
+                      {selectedSessionIsSaved ? "遥控数据已保存到本机" : "尚未保存"}
                     </span>
                   </div>
                   <button className="session-button" type="button" disabled={exportingSessionId !== null || noteStatus === "saving"} onClick={() => void exportSelectedSession(selectedSession)}>
@@ -338,6 +343,9 @@ export function SessionLibrary({
                   </p>
                 ) : null}
 
+                <p className="session-save-feedback" role="status">{sessionMediaStatusText(selectedSession, pendingMediaSessionId === selectedSession.id)}</p>
+                <p className="session-save-feedback">{hasCurrentSessionExport(selectedSession) ? "最新内容已确认导出。" : selectedSession.exportedAt ? "已有历史导出；最新内容尚未确认导出，旧文件仍保留。" : "尚未确认 JSON 文件导出。"}</p>
+                {pendingTerminationSessionId === selectedSession.id ? <p role="status">遥控样本已保存，终止状态升级待重试；当前导出只包含已确认的终止事实。</p> : null}
                 <dl className="session-metrics">
                   <div><dt>训练时长</dt><dd>{formatDuration(selectedSession.durationMs)}</dd></div>
                   <div><dt>遥控样本</dt><dd>{selectedSession.sampleCount.toLocaleString()}</dd></div>

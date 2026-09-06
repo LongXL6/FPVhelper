@@ -1,0 +1,61 @@
+
+ RUN  v4.1.11 <WORKTREE>
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after replace while an old export settles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after replace while an old export settles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after replace while an old export settles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after clear while an old export settles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after clear while an old export settles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ hooks/use-training-session-library.test.tsx (30 tests | 2 failed | 28 skipped) 26ms
+     × keeps the selected directory state after replace while an old export settles 23ms
+     × keeps the selected directory state after clear while an old export settles 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after replace while an old export settles
+AssertionError: expected 'permission_required' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "permission_required"
+
+ ❯ hooks/use-training-session-library.test.tsx:163:47
+    161|       const state = controller.exportDirectoryState, name = controller…
+    162|       await act(async () => { settle(); await pending; });
+    163|       expect(controller.exportDirectoryState).toBe(state);
+       |                                               ^
+    164|       expect(controller.exportDirectoryName).toBe(name);
+    165|       if (outcome === "success") expect(controller.exportNotice).toCon…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  hooks/use-training-session-library.test.tsx > training library session actions > keeps the selected directory state after clear while an old export settles
+AssertionError: expected 'ready' to be 'unconfigured' // Object.is equality
+
+Expected: "unconfigured"
+Received: "ready"
+
+ ❯ hooks/use-training-session-library.test.tsx:163:47
+    161|       const state = controller.exportDirectoryState, name = controller…
+    162|       await act(async () => { settle(); await pending; });
+    163|       expect(controller.exportDirectoryState).toBe(state);
+       |                                               ^
+    164|       expect(controller.exportDirectoryName).toBe(name);
+    165|       if (outcome === "success") expect(controller.exportNotice).toCon…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 28 skipped (30)
+   Start at  18:32:11
+   Duration  260ms (transform 88ms, setup 0ms, import 122ms, tests 26ms, environment 0ms)

@@ -1,0 +1,200 @@
+{
+  "protocol": "phase2a-local-review-evidence/v1",
+  "hashAlgorithm": "SHA-256; sample arrays use Python JSON ensure_ascii=False, sort_keys=True, separators comma/colon",
+  "entries": [
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/baseline-red-01/receipt.json",
+      "originalBytes": 244238,
+      "originalSha256": "cbf2ecd1e019ed31068fabc9df46b6c1be1bf7fa701a3c21140d1af80c937003",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/baseline-red.json",
+      "reviewBytes": 3325,
+      "reviewSha256": "33bfe18c2fb82cd129507dcae5884cb20ab9b6a2961a6662e57aad9b43ad9041",
+      "transformation": "summary; synthetic counts/timing/receipt retained, raw sample arrays replaced with explicitly defined hashes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-RC--5d234-while-media-remains-pending-chromium-smoke/rc-retry.json",
+      "originalBytes": 68420,
+      "originalSha256": "168a964ca82f85a815c139754337264ff29904cdfb3966e979c388d3fa275f7d",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/rc-retry.json",
+      "reviewBytes": 1860,
+      "reviewSha256": "bf7bd0e903cb102fe9f891856978007bc516d92c7efd9a69e8ff390fcc0cb985",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-a-r-a0aad--the-underlying-file-closed-chromium-smoke/rejected-media.json",
+      "originalBytes": 149620,
+      "originalSha256": "f8a3d42e3fab15ab5bef301cc8ecd343da0fbab6989cfe5b2abbabeb2d1c4190",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/rejected-media.json",
+      "reviewBytes": 4062,
+      "reviewSha256": "6be2505fbe62151dd23387cb0a00a8b28030929f09f0ca76c365a49579e889c9",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-fai-e0ca5-her-recording-or-media-file-chromium-smoke/association-retry.json",
+      "originalBytes": 135910,
+      "originalSha256": "189c10db18a5ab0461b3d11d9ca3372d7f62c35bd8caf59020ce3f19c7392022",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/association-retry.json",
+      "reviewBytes": 3771,
+      "reviewSha256": "81d3968740be0b9890b6a4b965712fc0478398ec9936b465ec80d677fc84a42a",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-lat-8b0f8-ializes-early-final-exports-chromium-smoke/late-media-and-exports.json",
+      "originalBytes": 272035,
+      "originalSha256": "36b610924ddc33666a565a82a98ee3a1d8dc463ed1e710bc7bfcf0b3871ee038",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/late-media-and-exports.json",
+      "reviewBytes": 7509,
+      "reviewSha256": "a0a8f56b19390fb5fa5d6a1106d5c847d926bb454ddb9a3ca7834102fc7b3e05",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-nor-ae551--and-exactly-one-final-JSON-chromium-smoke/normal.json",
+      "originalBytes": 149255,
+      "originalSha256": "da8d4cd40137cc4374284ed06661bf9f67b8e69c533f563efed084b4a5f6663b",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/normal.json",
+      "reviewBytes": 4913,
+      "reviewSha256": "6fbc9458677aa8333946377c351ad75374b6fe41b1a0955cf728506bc66d5c65",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/full-smoke-projection-fixed/rc-finalization.e2e.ts-unc-cddce-xport-or-same-origin-reload-chromium-smoke/pending-reopened.json",
+      "originalBytes": 203978,
+      "originalSha256": "df830b0c0ba25cc9cd19c5f0e902bbf34454aed970f3b83182aa2b57cfe5a7df",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/pending-reopened.json",
+      "reviewBytes": 3920,
+      "reviewSha256": "7b32dfdeb0de3ee052d20d66376c875c2d91b69c78c92efd382ba5084a2a6bda",
+      "transformation": "summary; sample payload canonical hashes and exact semantic/receipt fields; no recorded media bytes",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/preflight/baseline-unit-red.log",
+      "originalBytes": 1553,
+      "originalSha256": "ec6937789abe69b1d2920d704d1e8011623fd1897ae790d0d6df6b87df0f13ca",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/baseline-unit-red.log",
+      "reviewBytes": 1498,
+      "reviewSha256": "e41743cdd5c54a9361e99378e1437663144c41471275c6296652896d4336319d",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/preflight/stale-termination-red.log",
+      "originalBytes": 1553,
+      "originalSha256": "8ac67ac889dd0a531a8372bf61c086259e733f8c75d410bd58cddf64db6409e1",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/stale-termination-red.log",
+      "reviewBytes": 1498,
+      "reviewSha256": "ad41be8700e9205b9b198b0fe679e14658a0049abe3dc24d19b90bbb7961f388",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/preflight/stale-termination-green.log",
+      "originalBytes": 248,
+      "originalSha256": "f35eba05fee2639dffa813de924f6d0983ba4254c7d6cabde0a2c3ed5bee0a44",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/stale-termination-green.log",
+      "reviewBytes": 193,
+      "reviewSha256": "a43ef0189d9ce7a8127f95541102d2d34535b4856490deb0c976a3e18a3bb84e",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/preflight/check-projection-fixed.log",
+      "originalBytes": 452,
+      "originalSha256": "9e56bf7d6a53e586e0224b911600b1f5621c5a7a59eb1b04d856bbb6a5613d3a",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/check-projection-fixed.log",
+      "reviewBytes": 397,
+      "reviewSha256": "09dcbc68a05cfd1336b02a907aadc87ee1314428bf2c135b63eb2f722ea8c4bf",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/preflight/full-smoke-projection-fixed.log",
+      "originalBytes": 6685,
+      "originalSha256": "402f291d89aa4e5e1fe2699c83371df4035fa82f1d831e7f0e0d389cdb991b9c",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/full-smoke-projection-fixed.log",
+      "reviewBytes": 6685,
+      "reviewSha256": "402f291d89aa4e5e1fe2699c83371df4035fa82f1d831e7f0e0d389cdb991b9c",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/final-gates/build.json",
+      "originalBytes": 622,
+      "originalSha256": "e7652570f6ee6b16a3114427d5d1bdffb1bf4657a8d1ae35ec906b827dd9583f",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/build.json",
+      "reviewBytes": 622,
+      "reviewSha256": "e7652570f6ee6b16a3114427d5d1bdffb1bf4657a8d1ae35ec906b827dd9583f",
+      "transformation": "path substitution only",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/final-gates/normal-isolation.json",
+      "originalBytes": 421,
+      "originalSha256": "5c1610d1146efac5a2048bf14775b7eee783781fd80c7cecdb243dabe6eecc73",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/normal-isolation.json",
+      "reviewBytes": 421,
+      "reviewSha256": "5c1610d1146efac5a2048bf14775b7eee783781fd80c7cecdb243dabe6eecc73",
+      "transformation": "path substitution only",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/parent-cua-baseline/receipt.json",
+      "originalBytes": 2511,
+      "originalSha256": "1c71e8da070b689f8311928fd30a1af0b2995164ae28c3d22d215813cf6f94e0",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/parent-cua-baseline.json",
+      "reviewBytes": 2511,
+      "reviewSha256": "1c71e8da070b689f8311928fd30a1af0b2995164ae28c3d22d215813cf6f94e0",
+      "transformation": "path substitution only; baseline CUA does not replace automated baseline IDB evidence",
+      "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
+    },
+    {
+      "originalLocalRelativePath": null,
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/retained-failures.json",
+      "reviewBytes": 6187,
+      "reviewSha256": "30c73ab96d74be89855dfd3328f86d5dc32245f1a81917c08ff7352d180e65c3",
+      "transformation": "curated exact failure excerpts and classifications; originals referenced per entry"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/final-gates/ordinary-build.log",
+      "originalBytes": 781,
+      "originalSha256": "8b61e9deab58acee8d53645ea29d41470a0600bfc22a1363e93963253c3b7909",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/ordinary-build.log",
+      "reviewBytes": 774,
+      "reviewSha256": "27094095ae2d8a91f52a86b0dad779301130821cc41df503c2239717b54b4862",
+      "transformation": "local path substitution; trailing line whitespace and extra EOF blank lines removed"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/parent-cua-final/receipt.json",
+      "originalBytes": 4306,
+      "originalSha256": "91061acdc7717ce4cf05c59a0515a6bc7e0778af769f9b286ca91a78031e942a",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/parent-cua-final.json",
+      "reviewBytes": 4306,
+      "reviewSha256": "91061acdc7717ce4cf05c59a0515a6bc7e0778af769f9b286ca91a78031e942a",
+      "transformation": "local path substitution only; parent-authored scoped receipt",
+      "originalScope": "local original; full review copy prepared for parent publication"
+    },
+    {
+      "originalLocalRelativePath": "output/playwright/phase2a/parent-cua-final/independent-data-review.json",
+      "originalBytes": 922,
+      "originalSha256": "10ac35e68f3292c50854ca30fadef6c94c07c31828b9dd850c716de46c32de95",
+      "reviewPath": "docs/evidence/phase2a-rc-finalization/independent-data-review.json",
+      "reviewBytes": 922,
+      "reviewSha256": "10ac35e68f3292c50854ca30fadef6c94c07c31828b9dd850c716de46c32de95",
+      "transformation": "local path substitution only; parent-authored scoped receipt",
+      "originalScope": "local original; full review copy prepared for parent publication"
+    }
+  ],
+  "publication": "prepared locally; parent owns push/stacked Draft PR; no GitHub accessibility claimed yet",
+  "notIncluded": [
+    "Full browser Profiles",
+    "Full synthetic sample arrays (local raw test receipts retained)",
+    "Actual recorded MP4/WebM bytes",
+    "Native CUA screenshot bytes (inline tool images only)",
+    "R1 historical ZIPs"
+  ]
+}

@@ -1,3 +1,4 @@
+import { applyTrainingSessionMetadataPatch } from "../lib/training-session-metadata";
 import { useEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -119,6 +120,13 @@ beforeEach(async () => {
     getStorageIntegrity: vi.fn(async () => ({ readableDraftCount: 0, readableSessionCount: records.size, quarantinedDraftCount: 0, quarantinedSessionCount: 0 })),
     saveSession: vi.fn(async (session) => { records.set(session.id, structuredClone(session)); }),
     completeSession: vi.fn(async (session) => { records.set(session.id, structuredClone(session)); persistedDraft = null; }),
+    patchSession: vi.fn(async (id, patch) => {
+      const current = records.get(id);
+      if (!current) throw new Error("Missing session");
+      const updated = applyTrainingSessionMetadataPatch(toTrainingSessionSummary(current), patch);
+      records.set(id, { ...current, ...updated });
+      return updated;
+    }),
     close: vi.fn(async () => undefined),
   };
   vi.spyOn(storage, "createTrainingSessionStore").mockReturnValue(store);
@@ -191,9 +199,9 @@ describe("recording progress publication", () => {
     now = 1261;
     await act(async () => { finishing = controller.stopRecording(); });
     expect(shown()).toEqual({ sessionId: id, sampleCount: 2, uniqueSampleCount: 2 });
-    expect(controller).toMatchObject({ isRecording: false, isFinishing: true, hasPendingSave: true, persistedSampleCount: 0 });
+    expect(controller).toMatchObject({ isRecording: false, isFinishing: false, hasPendingSave: false, hasPendingMedia: true, persistedSampleCount: 2 });
     expect(controller.lastSession?.samples.map((entry) => entry.sequence)).toEqual([1, 2]);
-    expect(store.completeSession).not.toHaveBeenCalled();
+    expect(store.completeSession).toHaveBeenCalledOnce();
     expect(activeIntervals.size).toBe(0);
     const publications = visibleProgress.length;
     await emit(3, 1270);
@@ -351,5 +359,59 @@ describe("recording progress publication", () => {
     expect(controller.hasPendingSave).toBe(false);
     expect(records.get(id)!.samples.map((entry) => entry.sequence)).toEqual([1]);
     expect(activeIntervals.size).toBe(0);
+  });
+});
+
+
+describe("independent RC finalization", () => {
+  it("commits post-checkpoint tail and terminal state while media remains pending", async () => {
+    const video = deferred<null>();
+    options = { ...options, finishCompanionRecording: vi.fn(() => video.promise) };
+    await act(async () => { renderer!.update(<Harness />); });
+    const id = await start();
+    await emit(1, 1010);
+    await tick(1000, 2000);
+    await tick(250, 2250);
+    await emit(2, 2251);
+    let stopping!: Promise<void>;
+    await act(async () => { stopping = controller.stopRecording(); });
+    try {
+      await act(async () => { await controller.retryPendingSave(); });
+      expect(records.get(id)?.samples.map((sample) => sample.sequence)).toEqual([1, 2]);
+      expect(records.get(id)?.interrupted).toBe(false);
+      expect(controller.hasPendingSave).toBe(false);
+      expect(controller.persistedSampleCount).toBe(2);
+    } finally {
+      await act(async () => { video.resolve(null); await stopping; });
+    }
+  });
+});
+
+
+describe("RC retries and terminal transaction facts", () => {
+  it("retries RC while video is pending and keeps the start guard", async () => {
+    const video = deferred<null>();
+    options = { ...options, finishCompanionRecording: () => video.promise };
+    await act(async () => renderer!.update(<Harness />));
+    const id = await start(); await emit(1,1010); await tick(1000,2000); await emit(2,2001);
+    vi.mocked(store.completeSession).mockRejectedValueOnce(new Error("RC transaction failed"));
+    await act(async () => controller.stopRecording());
+    expect(records.has(id)).toBe(false); expect(controller.rcConfirmedSessionId).toBeNull(); expect(controller.hasPendingSave).toBe(true);
+    await act(async () => controller.retryPendingSave());
+    expect(records.get(id)?.samples.map(s=>s.sequence)).toEqual([1,2]); expect(controller.rcConfirmedSessionId).toBe(id); expect(controller.hasPendingSave).toBe(false); expect(controller.hasPendingMedia).toBe(true);
+    await act(async () => {expect(await controller.startRecording()).toBeNull();});
+    await act(async () => {video.resolve(null);});
+  });
+  it("keeps confirmed sample count and separate termination retry after the terminal transaction succeeds", async () => {
+    const video=deferred<null>(),commit=deferred<void>();
+    options={...options,finishCompanionRecording:()=>video.promise};await act(async()=>renderer!.update(<Harness />));
+    const id=await start();await emit(1,1010);await tick(1000,2000);await tick(250,2250);await emit(2,2251);
+    vi.mocked(store.completeSession).mockImplementationOnce(async(session)=>{await commit.promise;records.set(id,structuredClone(session));persistedDraft=null;});
+    let stopping!:Promise<void>;await act(async()=>{stopping=controller.stopRecording();});
+    vi.mocked(store.patchSession).mockRejectedValueOnce(new Error("terminal metadata failed"));options={...options,linkState:"lost"};await act(async()=>renderer!.update(<Harness />));
+    await act(async()=>{commit.resolve();await stopping;});
+    expect(records.get(id)?.samples.map(s=>s.sequence)).toEqual([1,2]);expect(controller.persistedSampleCount).toBe(2);expect(controller.rcConfirmedSessionId).toBe(id);expect(controller.pendingTerminationSessionId).toBe(id);expect(controller.hasPendingSave).toBe(true);
+    await act(async()=>controller.retryPendingSave());expect(records.get(id)?.interruptionReason).toBe("rx_link_lost");expect(controller.pendingTerminationSessionId).toBeNull();expect(store.completeSession).toHaveBeenCalledOnce();
+    await act(async()=>{video.resolve(null);});
   });
 });

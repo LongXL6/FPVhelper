@@ -78,10 +78,19 @@ test("records every input while publishing paired DOM progress on a bounded cade
   await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
   await expect(page.locator(".session-detail-header")).toContainText("已保存到本机");
+  const initialRc = await readStoredTrainingRecords(page);
+  expect(initialRc.drafts).toHaveLength(0);
+  expect(initialRc.sessions).toHaveLength(1);
+  const frozenRc = initialRc.sessions[0];
+  expect(frozenRc.sampleCount).toBe(frozenRc.samples.length);
+  // Media runtime SAVED and RC saved are separate from association/export; wait for the same ID.
+  await expect.poll(async () => { const session = (await readStoredTrainingRecords(page)).sessions.find((entry) => entry.id === frozenRc.id); return Boolean(session?.video.recorded && session.exportCount > 0); }).toBe(true);
   const stored = await readStoredTrainingRecords(page);
   expect(stored.drafts).toHaveLength(0);
   expect(stored.sessions).toHaveLength(1);
-  const session = stored.sessions[0];
+  const session = stored.sessions.find((entry) => entry.id === frozenRc.id)!;
+  expect(session.samples).toEqual(frozenRc.samples);
+  expect(session.endedAt).toBe(frozenRc.endedAt);
   const uniqueCount = new Set(session.samples.map((sample) => sample.sequence)).size;
   const finalTotal = page.getByText("遥控样本", { exact: true }).locator("..").locator("dd");
   await expect(finalTotal).toBeVisible();

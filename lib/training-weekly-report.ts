@@ -1,3 +1,4 @@
+import { hasCurrentSessionExport } from "./training-session-metadata";
 import {
   assessTrainingAttemptCandidate,
   serializeTrainingSession,
@@ -126,7 +127,7 @@ function isLocalMondayStart(epochMs: number) {
 }
 
 function hasConfirmedBrowserFileEvidence(session: TrainingSession) {
-  return session.exportedAt !== null
+  return hasCurrentSessionExport(session) && session.exportedAt !== null
     && Number.isFinite(Date.parse(session.exportedAt))
     && Number.isInteger(session.exportCount)
     && session.exportCount > 0;

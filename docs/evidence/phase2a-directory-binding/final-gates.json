@@ -1,0 +1,27 @@
+{
+  "testedSha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+  "testedTree": "c4267b8fa5e9b2792b992e23a1aedb523e470b36",
+  "sourceCleanBefore": true,
+  "smokeBuildId": "g93Ixsi_cxsSl-GokkgsM",
+  "check": {
+    "passed": 762,
+    "files": 79,
+    "typecheck": "passed",
+    "lint": "passed"
+  },
+  "fullSmoke": {
+    "passed": 32,
+    "failed": 0
+  },
+  "node": "v25.8.1",
+  "lockfileSha256": "ea6b77a38f691ef7d6e51a36801fc3ab3aac104edc2d03ab5a67548870292f07",
+  "ordinaryBuildEnv": {
+    "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "FPV_MEASUREMENT_BUILD": "0"
+  },
+  "ordinaryBuildExitCode": 0,
+  "sourceCleanAfter": true,
+  "ordinaryBuildId": "Ug5KVuGzL2RqK2l5oq1iI",
+  "recordedAtUtc": "2026-09-06T15:53:03.459164+00:00"
+}
