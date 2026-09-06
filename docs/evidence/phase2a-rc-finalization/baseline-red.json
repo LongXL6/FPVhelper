@@ -1,0 +1,82 @@
+{
+  "sourceSha": "851ca2da59306178bcb4965e48474989e618a96e",
+  "buildId": "V6cINYwXAu4ghbu2DGoVE",
+  "classification": "controlled baseline RED; automated UI not Computer Use",
+  "status": "baseline_red_reproduced",
+  "checkpoint": {
+    "id": "3ee4f312-d418-43e4-ba3b-4153a5bfb7f8",
+    "samples": 86,
+    "sha256PythonCanonicalJson": "bd025d526a4feafeec95c05d9c1ddbc0a2ca26b81f7f3c7d65261fe55c5dd75d"
+  },
+  "pending": {
+    "sessions": 0,
+    "draftSamples": 86,
+    "ui": "LOCAL SESSION RECORDER\n记录待重试保存\nSAVING\n已满足开始条件\n本机存储已就绪 · 0 条可读记录\n保存与录像设置 视频＋摇杆 · 自动导出\nLOCAL PILOT VIDEO · MP4\n正在写完最后一段并关闭视频文件\nFINALIZING\n独立样本\n98\n持续时间\n00:01.2\n估算采样率\n84.6 Hz\n数据来源\nGROUND_RC\n炸机\n撞门\n漂亮\n油门过猛\nMARK\n漂亮\n\n已记 0 条 · 人工定位 DVR，不是自动计圈或正式计时\n\n已采集 98 帧 · 已保存 86 帧（至 00:01.0）\n\n切换页面会继续录制；结束前请保持浏览器打开。录像和原始打杆数据保存在同一文件夹。\n\n记录会自动暂存，结束后保存在本机。若页面意外关闭，下次打开可恢复最近暂存的记录，并标记为中断。\n\n重试保存 Session",
+    "gate": {
+      "mode": "before-close",
+      "events": [
+        {
+          "kind": "media-writable-created",
+          "filename": "fpv-video-20260906-161534-PHASE2A-RED-3ee4f312-full.mp4",
+          "atMs": 427.30000001192093
+        },
+        {
+          "kind": "media-close-entered",
+          "filename": "fpv-video-20260906-161534-PHASE2A-RED-3ee4f312-full.mp4",
+          "atMs": 1589.4000000059605
+        }
+      ]
+    }
+  },
+  "afterActualRetry": {
+    "sessions": 0,
+    "draftSamples": 86
+  },
+  "afterGateRelease": {
+    "id": "3ee4f312-d418-43e4-ba3b-4153a5bfb7f8",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-RED",
+    "notes": null,
+    "startedAt": "2026-09-06T13:15:34.463Z",
+    "endedAt": "2026-09-06T13:15:35.623Z",
+    "durationMs": 1160.6,
+    "sampleCount": 98,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T13:15:35.841Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": true,
+      "synchronized": false,
+      "receiptVersion": 1,
+      "receiptEvidence": "write_and_close_resolved",
+      "filename": "fpv-video-20260906-161534-PHASE2A-RED-3ee4f312-full.mp4",
+      "mimeType": "video/mp4;codecs=avc1",
+      "bytes": 83599,
+      "startedAtEpochMs": 1788700534517,
+      "finishedAtEpochMs": 1788700535829,
+      "overlay": "sticks",
+      "overlayTiming": "latest_available_host_sample"
+    },
+    "finalization": null,
+    "sampleEvidence": {
+      "count": 98,
+      "sha256PythonCanonicalJson": "8bf341cc13a1e2885a9c08ec587c548ebeeecf11f57d9a8d11402aa1f6694417",
+      "firstSequence": 15,
+      "lastSequence": 112,
+      "firstElapsedMs": 10.6,
+      "lastElapsedMs": 1157.5,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "networkViolations": [],
+  "cleanup": "gate released and owned context/browser closed; not a product cancellation claim"
+}

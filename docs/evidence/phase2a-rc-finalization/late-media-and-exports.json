@@ -1,0 +1,256 @@
+{
+  "case": "late-media-and-exports",
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "classification": "automated browser assertions; real IDB/OPFS/MediaRecorder with synthetic input",
+  "frozen": {
+    "id": "9778dd46-8cd2-47cf-b38b-64bd33206e35",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:06.541Z",
+    "endedAt": "2026-09-06T14:28:07.689Z",
+    "durationMs": 1148.6,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": null,
+    "exportCount": 0,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": null,
+      "media": {
+        "state": "pending",
+        "operationId": "6ffea73f-58d8-49b5-9f1b-b7e9614318c4"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "4564013cab97126e1482635501ac74200bbfe2b2370f087f6d10933c9f726fa5",
+      "firstSequence": 14,
+      "lastSequence": 127,
+      "firstElapsedMs": 11.2,
+      "lastElapsedMs": 1141.5,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "early": {
+    "id": "9778dd46-8cd2-47cf-b38b-64bd33206e35",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": "NOTE-BEFORE-LATE-MEDIA",
+    "startedAt": "2026-09-06T14:28:06.541Z",
+    "endedAt": "2026-09-06T14:28:07.689Z",
+    "durationMs": 1148.6,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:07.797Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 1,
+      "confirmedExportRevision": 1,
+      "media": {
+        "state": "pending",
+        "operationId": "6ffea73f-58d8-49b5-9f1b-b7e9614318c4"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "4564013cab97126e1482635501ac74200bbfe2b2370f087f6d10933c9f726fa5",
+      "firstSequence": 14,
+      "lastSequence": 127,
+      "firstElapsedMs": 11.2,
+      "lastElapsedMs": 1141.5,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "late": {
+    "id": "9778dd46-8cd2-47cf-b38b-64bd33206e35",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": "NOTE-BEFORE-LATE-MEDIA",
+    "startedAt": "2026-09-06T14:28:06.541Z",
+    "endedAt": "2026-09-06T14:28:07.689Z",
+    "durationMs": 1148.6,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:07.980Z",
+    "exportCount": 2,
+    "video": {
+      "recorded": true,
+      "synchronized": false,
+      "receiptVersion": 1,
+      "receiptEvidence": "write_and_close_resolved",
+      "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+      "mimeType": "video/mp4;codecs=avc1",
+      "bytes": 91270,
+      "startedAtEpochMs": 1788704886583,
+      "finishedAtEpochMs": 1788704887929,
+      "overlay": "sticks",
+      "overlayTiming": "latest_available_host_sample"
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 2,
+      "confirmedExportRevision": 2,
+      "media": {
+        "state": "recorded",
+        "operationId": "6ffea73f-58d8-49b5-9f1b-b7e9614318c4"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "4564013cab97126e1482635501ac74200bbfe2b2370f087f6d10933c9f726fa5",
+      "firstSequence": 14,
+      "lastSequence": 127,
+      "firstElapsedMs": 11.2,
+      "lastElapsedMs": 1141.5,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "final": {
+    "id": "9778dd46-8cd2-47cf-b38b-64bd33206e35",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": "NOTE-BEFORE-LATE-MEDIA",
+    "startedAt": "2026-09-06T14:28:06.541Z",
+    "endedAt": "2026-09-06T14:28:07.689Z",
+    "durationMs": 1148.6,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:07.980Z",
+    "exportCount": 2,
+    "video": {
+      "recorded": true,
+      "synchronized": false,
+      "receiptVersion": 1,
+      "receiptEvidence": "write_and_close_resolved",
+      "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+      "mimeType": "video/mp4;codecs=avc1",
+      "bytes": 91270,
+      "startedAtEpochMs": 1788704886583,
+      "finishedAtEpochMs": 1788704887929,
+      "overlay": "sticks",
+      "overlayTiming": "latest_available_host_sample"
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 2,
+      "confirmedExportRevision": 2,
+      "media": {
+        "state": "recorded",
+        "operationId": "6ffea73f-58d8-49b5-9f1b-b7e9614318c4"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "4564013cab97126e1482635501ac74200bbfe2b2370f087f6d10933c9f726fa5",
+      "firstSequence": 14,
+      "lastSequence": 127,
+      "firstElapsedMs": 11.2,
+      "lastElapsedMs": 1141.5,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "gate": {
+    "mode": "after-close",
+    "events": [
+      {
+        "kind": "media-writable-created",
+        "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+        "atMs": 289.2999999821186
+      },
+      {
+        "kind": "media-close-entered",
+        "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+        "atMs": 1434.9000000059605
+      },
+      {
+        "kind": "media-underlying-close-resolved",
+        "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+        "atMs": 1437.7999999821186
+      },
+      {
+        "kind": "json-writable-created",
+        "filename": "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46.json",
+        "atMs": 1535.5
+      },
+      {
+        "kind": "json-close-entered",
+        "filename": "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46.json",
+        "atMs": 1535.9000000059605
+      },
+      {
+        "kind": "gate-released",
+        "atMs": 1666.5999999940395
+      },
+      {
+        "kind": "media-close-returned",
+        "filename": "fpv-video-20260906-172806-PHASE2A-E2E-9778dd46-full.mp4",
+        "atMs": 1666.5999999940395
+      },
+      {
+        "kind": "json-gate-released",
+        "atMs": 1703.199999988079
+      },
+      {
+        "kind": "json-close-returned",
+        "filename": "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46.json",
+        "atMs": 1704.2999999821186
+      },
+      {
+        "kind": "json-writable-created",
+        "filename": "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46-v2.json",
+        "atMs": 1717.7999999821186
+      }
+    ]
+  },
+  "filenames": [
+    "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46.json",
+    "fpv-session-20260906-172806-PHASE2A-E2E-9778dd46-v2.json"
+  ]
+}

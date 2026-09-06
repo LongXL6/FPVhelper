@@ -1,0 +1,13 @@
+{
+  "compiledJsFilesChecked": 72,
+  "faultEntryMatches": [],
+  "ordinaryHtmlHasFixture": false,
+  "ordinaryHtmlSha256": "cec1f4b02299959f21f032caf1702902f2ec6a9c565719f2fa0bb0381ab604b5",
+  "proxyHealth": {
+    "ready": true,
+    "pid": 38190,
+    "upstream": "http://127.0.0.1:3138",
+    "buildId": "DPyUoeC8qHVHAWSNlDycX",
+    "injectionSha256": "9550dfb23a336c5cb493d1f149858869564e559c4b0181ebb8e9c0825c41ead6"
+  }
+}

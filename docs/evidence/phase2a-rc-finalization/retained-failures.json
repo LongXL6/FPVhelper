@@ -1,0 +1,39 @@
+{
+  "failures": [
+    {
+      "file": "output/playwright/phase2a/preflight/full-smoke-01.log",
+      "sourceAtFailure": "70216ba7bff949e0f66879866d11aa24d7bccb48",
+      "originalBytes": 17174,
+      "originalSha256": "fb76bc570678ae33b6802769b57681d0a8713175ac87a42cf0aab864cca82ae6",
+      "classification": "27/30: old save-button/RC-before-media coupling, hidden duplicate selector, and reading media association at initial RC terminal confirmation. Receipt assertions retained; later test contract separated.",
+      "excerpts": [
+        "  1) [chromium-smoke] › e2e/fpv-control-room.e2e.ts:453:5 › active pilot full and cropped video record to the authorized local folder \n\n    Error: expect(locator).toBeDisabled() failed\n\n    Locator: getByRole('button', { name: '保存记录…' })\n    Expected: disabled\n    Timeout: 5000ms\n    Error: element(s) not found\n\n    Call log:\n      - Expect \"toBeDisabled\" with timeout 5000ms\n      - waiting for getByRole('button', { name: '保存记录…' })\n\n",
+        "  2) [chromium-smoke] › e2e/rc-finalization.e2e.ts:47:5 › unclosed media does not block terminal RC, early export or same-origin reload \n\n    Error: expect(locator).toBeVisible() failed\n\n    Locator:  getByText('视频仍在收尾').first()\n    Expected: visible\n    Received: hidden\n    Timeout:  5000ms\n\n    Call log:\n      - Expect \"toBeVisible\" with timeout 5000ms\n      - waiting for getByText('视频仍在收尾').first()\n        14 × locator resolved to <p role=\"status\">视频仍在收尾；现在导出的 JSON 不含最终视频收据。</p>\n           - unexpected value \"hidden\"",
+        "  3) [chromium-smoke] › e2e/recording-progress.e2e.ts:7:5 › records every input while publishing paired DOM progress on a bounded cadence and exact final values \n\n    Error: expect(received).toMatchObject(expected)\n\n    - Expected  - 3\n    + Received  + 1\n\n      Object {\n    -   \"overlay\": \"sticks\",\n    -   \"receiptEvidence\": \"write_and_close_resolved\",\n    -   \"recorded\": true,\n    +   \"recorded\": false,\n        \"synchronized\": false,\n      }"
+      ]
+    },
+    {
+      "file": "output/playwright/phase2a/preflight/full-smoke-02.log",
+      "sourceAtFailure": "aa1680a",
+      "originalBytes": 10322,
+      "originalSha256": "d5860be91fa51ab16cf01f0b618c72fb4017b4bb509e33756f95dc5ec1649c63",
+      "classification": "29/30: OPFS NotFound during evidence read before export confirmation. Original log lacks exact file/stage; no specific temporary-file or directory-failure diagnosis is established. Later helper waits actual export transaction, reads only confirmed early JSON and reports read stages.",
+      "excerpts": [
+        "  1) [chromium-smoke] › e2e/rc-finalization.e2e.ts:36:5 › normal stop confirms RC, real video close and exactly one final JSON \n\n    Error: page.evaluate: NotFoundError: A requested file or directory could not be found at the time an operation was processed.\n\n      10 | const gateSnapshot=(page:Page)=>page.evaluate(()=> (window as unknown as {__phase2aMediaGate:{snapshot():{mode:string;events:Array<{kind:string}>}}}).__phase2aMediaGate.snapshot());\n      11 | async function release(page:Page,json=false){await page.evaluate((json)=>{const gate=(window as unknown as {__phase2aMediaGate:{release():void;releaseJson():void}}).__phase2aMediaGate;if(json)gate.releaseJson();else gate.release();},json);}\n    > 12 | async function files(page:Page){return page.evaluate(async()=>{\n         |                                             ^\n      13 |  const root=await navigator.storage.getDirectory();const directory=await root.getDirectoryHandle(\"phase2a-e2e\");const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];\n      14 |  for await(const [name,handle] of directory.entries())if(handle.kind===\"file\"){\n      15 |   const file=await(handle as FileSystemFileHandle).getFile();rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(\".json\")?{json:JSON.parse(await file.text())}: {})});\n        at files (<WORKTREE>/e2e/rc-finalization.e2e.ts:12:45)\n        at <WORKTREE>/e2e/rc-finalization.e2e.ts:38:37\n        at <WORKTREE>/e2e/rc-finalization.e2e.ts:38:2"
+      ]
+    },
+    {
+      "file": "output/playwright/phase2a/preflight/stale-termination-red.log",
+      "sourceAtFailure": "c9d236c",
+      "originalBytes": 1553,
+      "originalSha256": "8ac67ac889dd0a531a8372bf61c086259e733f8c75d410bd58cddf64db6409e1",
+      "classification": "2 deliberate RED regressions: full stale Session argument carries old fields. Pure helper wipes fields; notes-only fake-indexeddb case actually reads back lost note. Fixed via explicit two-field projections at both boundaries.",
+      "excerpts": [
+        " FAIL  lib/training-session-finalization.test.ts > complete stale Session is not a metadata patch > projects exactly termination fields and preserves notes/media/export from the latest summary\nAssertionError: expected null to be 'keep latest note' // Object.is equality\n\n- Expected:\n\"keep latest note\"\n\n+ Received:\nnull\n\n ❯ lib/training-session-finalization.test.ts:98:25\n\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n",
+        " FAIL  lib/training-session-finalization.test.ts > complete stale Session is not a metadata patch > does not actually overwrite a newly saved note when the caller passes the complete stale Session\nAssertionError: expected null to be 'confirmed current note' // Object.is equality\n\n- Expected:\n\"confirmed current note\"\n\n+ Received:\nnull\n\n ❯ lib/training-session-finalization.test.ts:107:25\n\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n"
+      ]
+    }
+  ],
+  "allOriginalFailureLogs": "retained in ignored local output; selected excerpts are reviewable, hashes do not substitute for omitted originals",
+  "nativeCuaGap": "Own Chrome for Testing start actions interrupted; ScreenCaptureKit -3811/-10005 capture failure. Not counted as successful start/stop CUA. Parent IAB channel subsequently worked."
+}

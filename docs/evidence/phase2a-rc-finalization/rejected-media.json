@@ -1,0 +1,152 @@
+{
+  "case": "rejected-media",
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "classification": "automated browser assertions; real IDB/OPFS/MediaRecorder with synthetic input",
+  "stored": {
+    "id": "48da13d7-cfb5-42f9-b574-77a8cb95f670",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:10.083Z",
+    "endedAt": "2026-09-06T14:28:11.239Z",
+    "durationMs": 1156.8,
+    "sampleCount": 115,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:11.286Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 1,
+      "confirmedExportRevision": 1,
+      "media": {
+        "state": "failed",
+        "operationId": "b8a2e9ea-0c0b-4563-85df-9bedd35a175e"
+      }
+    },
+    "sampleEvidence": {
+      "count": 115,
+      "sha256PythonCanonicalJson": "929e1874bab6ccdb290aca9dab498fab0e87e78c27ec0e42e9e9c51069f7baa8",
+      "firstSequence": 14,
+      "lastSequence": 128,
+      "firstElapsedMs": 10.5,
+      "lastElapsedMs": 1152.1,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "artifacts": [
+    {
+      "name": "fpv-video-20260906-172810-PHASE2A-E2E-48da13d7-full.mp4",
+      "bytes": 89637,
+      "header": [
+        0,
+        0,
+        0,
+        36,
+        102,
+        116,
+        121,
+        112,
+        105,
+        115,
+        111,
+        109
+      ]
+    },
+    {
+      "name": "fpv-session-20260906-172810-PHASE2A-E2E-48da13d7.json",
+      "bytes": 35591,
+      "header": [
+        123,
+        34,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        86,
+        101,
+        114,
+        115
+      ],
+      "json": {
+        "id": "48da13d7-cfb5-42f9-b574-77a8cb95f670",
+        "schemaVersion": 2,
+        "athleteCode": "PHASE2A-E2E",
+        "notes": null,
+        "startedAt": "2026-09-06T14:28:10.083Z",
+        "endedAt": "2026-09-06T14:28:11.239Z",
+        "durationMs": 1156.8,
+        "sampleCount": 115,
+        "interrupted": false,
+        "interruptionReason": null,
+        "validity": {
+          "valid": false,
+          "reasons": [
+            "too_short",
+            "too_few_unique_samples"
+          ]
+        },
+        "exportedAt": "2026-09-06T14:28:11.286Z",
+        "exportCount": 1,
+        "video": {
+          "recorded": false,
+          "synchronized": false
+        },
+        "finalization": {
+          "version": 1,
+          "contentRevision": 1,
+          "confirmedExportRevision": 1,
+          "media": {
+            "state": "failed",
+            "operationId": "b8a2e9ea-0c0b-4563-85df-9bedd35a175e"
+          }
+        },
+        "sampleEvidence": {
+          "count": 115,
+          "sha256PythonCanonicalJson": "929e1874bab6ccdb290aca9dab498fab0e87e78c27ec0e42e9e9c51069f7baa8",
+          "firstSequence": 14,
+          "lastSequence": 128,
+          "firstElapsedMs": 10.5,
+          "lastElapsedMs": 1152.1,
+          "strictlyIncreasingSequence": true,
+          "strictlyIncreasingTime": true
+        }
+      }
+    }
+  ],
+  "gate": {
+    "mode": "reject-after-close",
+    "events": [
+      {
+        "kind": "media-writable-created",
+        "filename": "fpv-video-20260906-172810-PHASE2A-E2E-48da13d7-full.mp4",
+        "atMs": 290.59999999403954
+      },
+      {
+        "kind": "media-close-entered",
+        "filename": "fpv-video-20260906-172810-PHASE2A-E2E-48da13d7-full.mp4",
+        "atMs": 1446.5999999940395
+      },
+      {
+        "kind": "media-underlying-close-resolved",
+        "filename": "fpv-video-20260906-172810-PHASE2A-E2E-48da13d7-full.mp4",
+        "atMs": 1448.300000011921
+      }
+    ]
+  },
+  "boundary": "Underlying real close resolved; test then rejected acknowledgement. File existence is not promoted into a success receipt."
+}

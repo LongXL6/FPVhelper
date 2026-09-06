@@ -1,0 +1,43 @@
+
+ RUN  v4.1.11 <WORKTREE>
+
+ ❯ lib/training-session-finalization.test.ts (10 tests | 2 failed | 8 skipped) 11ms
+     × projects exactly termination fields and preserves notes/media/export from the latest summary 5ms
+     × does not actually overwrite a newly saved note when the caller passes the complete stale Session 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  lib/training-session-finalization.test.ts > complete stale Session is not a metadata patch > projects exactly termination fields and preserves notes/media/export from the latest summary
+AssertionError: expected null to be 'keep latest note' // Object.is equality
+
+- Expected:
+"keep latest note"
+
++ Received:
+null
+
+ ❯ lib/training-session-finalization.test.ts:98:25
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  lib/training-session-finalization.test.ts > complete stale Session is not a metadata patch > does not actually overwrite a newly saved note when the caller passes the complete stale Session
+AssertionError: expected null to be 'confirmed current note' // Object.is equality
+
+- Expected:
+"confirmed current note"
+
++ Received:
+null
+
+ ❯ lib/training-session-finalization.test.ts:107:25
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 8 skipped (10)
+   Start at  17:21:31
+   Duration  219ms (transform 54ms, setup 0ms, import 85ms, tests 11ms, environment 0ms)
+

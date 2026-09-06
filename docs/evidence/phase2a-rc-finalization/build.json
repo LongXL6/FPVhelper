@@ -1,0 +1,22 @@
+{
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "treeSha": "a30ebfdb79776f0172c99361aa5c43e4b4ab3323",
+  "sourceCleanBefore": true,
+  "command": [
+    "npm",
+    "run",
+    "build"
+  ],
+  "environment": {
+    "FPV_MEASUREMENT_BUILD": "0",
+    "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+    "NEXT_TELEMETRY_DISABLED": "1"
+  },
+  "priorSmokeBuildId": "cyLU6TcO9kLbhK3gAOKRD",
+  "ordinaryBuildId": "DPyUoeC8qHVHAWSNlDycX",
+  "exitCode": 0,
+  "wallSeconds": 2.5740649700164795,
+  "sourceCleanAfter": true,
+  "node": "v25.8.1",
+  "lockSha256": "ea6b77a38f691ef7d6e51a36801fc3ab3aac104edc2d03ab5a67548870292f07"
+}
