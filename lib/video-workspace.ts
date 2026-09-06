@@ -5,6 +5,7 @@ export const VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v2";
 export const LEGACY_VIDEO_WORKSPACE_STORAGE_KEY = "fpvhelper.video-workspace.v1";
 
 export type VideoSourceLayout = "full" | "quad";
+export type VideoSourcePilotCount = 1 | 2 | 3 | 4;
 export type PilotVideoViewMode = "source-default" | "full" | "crop";
 
 export interface VideoCropRect {
@@ -21,6 +22,7 @@ export interface VideoSourceConfig {
   label: string;
   deviceId: string;
   layout: VideoSourceLayout;
+  pilotCount?: VideoSourcePilotCount;
 }
 
 export interface PilotChannelConfig {
@@ -74,6 +76,14 @@ const MIN_CROP_PERCENT = 10;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isVideoSourcePilotCount(value: unknown): value is VideoSourcePilotCount {
+  return value === 1 || value === 2 || value === 3 || value === 4;
+}
+
+export function videoSourcePilotCount(source: VideoSourceConfig): VideoSourcePilotCount {
+  return source.layout === "full" ? 1 : isVideoSourcePilotCount(source.pilotCount) ? source.pilotCount : 4;
 }
 
 function sourceId(index: number) {
@@ -151,8 +161,10 @@ export function activeVideoSource(workspace: VideoWorkspaceConfig) {
 }
 
 export function activePilotChannel(workspace: VideoWorkspaceConfig) {
-  return workspace.pilotChannels.find((channel) => channel.id === workspace.activePilotChannelId)
-    ?? workspace.pilotChannels.find((channel) => channel.sourceId === workspace.activeSourceId && channel.slot === 0)
+  const source = activeVideoSource(workspace);
+  return workspace.pilotChannels.find((channel) => channel.id === workspace.activePilotChannelId
+      && source && channel.sourceId === source.id && channel.slot < videoSourcePilotCount(source))
+    ?? workspace.pilotChannels.find((channel) => channel.sourceId === source?.id && channel.slot === 0)
     ?? workspace.pilotChannels[0];
 }
 
@@ -160,10 +172,9 @@ export function videoViewportsForSource(
   workspace: VideoWorkspaceConfig,
   source: VideoSourceConfig,
 ): VideoViewport[] {
-  const sourceChannels = workspace.pilotChannels
-    .filter((channel) => channel.sourceId === source.id)
+  const channels = workspace.pilotChannels
+    .filter((channel) => channel.sourceId === source.id && channel.slot < videoSourcePilotCount(source))
     .sort((left, right) => left.slot - right.slot);
-  const channels = source.layout === "quad" ? sourceChannels : sourceChannels.slice(0, 1);
 
   return channels.map((channel, index) => ({
     id: `${source.id}-viewport-${channel.slot + 1}`,
@@ -197,8 +208,23 @@ export function selectPilotChannel(workspace: VideoWorkspaceConfig, selectedChan
   const source = activeVideoSource(workspace);
   const channel = workspace.pilotChannels.find((candidate) => candidate.id === selectedChannelId);
   if (!source || !channel || channel.sourceId !== source.id) return workspace;
-  if (source.layout === "full" && channel.slot !== 0) return workspace;
+  if (channel.slot >= videoSourcePilotCount(source)) return workspace;
   return { ...workspace, activePilotChannelId: channel.id };
+}
+
+export function setVideoSourcePilotCount(workspace: VideoWorkspaceConfig, selectedSourceId: string, count: number) {
+  if (!isVideoSourcePilotCount(count)) return workspace;
+  const source = workspace.sources.find((candidate) => candidate.id === selectedSourceId);
+  if (!source) return workspace;
+  const nextSource = source.pilotCount === count ? source : { ...source, pilotCount: count };
+  const activeChannel = workspace.pilotChannels.find((channel) => channel.id === workspace.activePilotChannelId);
+  const shouldSelectFirst = workspace.activeSourceId === selectedSourceId
+    && (!activeChannel || activeChannel.sourceId !== selectedSourceId || activeChannel.slot >= videoSourcePilotCount(nextSource));
+  const firstChannel = workspace.pilotChannels.find((channel) => channel.sourceId === selectedSourceId && channel.slot === 0);
+  const activePilotChannelId = shouldSelectFirst && firstChannel ? firstChannel.id : workspace.activePilotChannelId;
+  if (nextSource === source && activePilotChannelId === workspace.activePilotChannelId) return workspace;
+  // Visibility changes only; hidden identities, names and per-pilot crops stay intact.
+  return { ...workspace, sources: workspace.sources.map((candidate) => candidate === source ? nextSource : candidate), activePilotChannelId };
 }
 
 export function setVideoSourceLayout(
@@ -209,8 +235,10 @@ export function setVideoSourceLayout(
   if (layout !== "full" && layout !== "quad") return workspace;
   const sources = workspace.sources.map((source) => source.id === selectedSourceId ? { ...source, layout } : source);
   if (sources.every((source, index) => source === workspace.sources[index])) return workspace;
-  const activeChannel = activePilotChannel(workspace);
-  const shouldSelectFirst = workspace.activeSourceId === selectedSourceId && layout === "full" && activeChannel?.slot !== 0;
+  const activeChannel = workspace.pilotChannels.find((channel) => channel.id === workspace.activePilotChannelId);
+  const nextSource = sources.find((source) => source.id === selectedSourceId)!;
+  const shouldSelectFirst = workspace.activeSourceId === selectedSourceId
+    && (!activeChannel || activeChannel.slot >= videoSourcePilotCount(nextSource));
   const firstChannel = workspace.pilotChannels.find(
     (channel) => channel.sourceId === selectedSourceId && channel.slot === 0,
   );
@@ -464,12 +492,14 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
     if (typeof rawSource.id !== "string" || !/^video-source-[1-9]\d*$/.test(rawSource.id) || sourceIds.has(rawSource.id)) return null;
     if (typeof rawSource.label !== "string" || typeof rawSource.deviceId !== "string") return null;
     if (rawSource.layout !== "full" && rawSource.layout !== "quad") return null;
+    if (rawSource.pilotCount !== undefined && !isVideoSourcePilotCount(rawSource.pilotCount)) return null;
     sourceIds.add(rawSource.id);
     sources.push({
       id: rawSource.id,
       label: rawSource.label.trim().slice(0, 40) || `视频输入 ${sources.length + 1}`,
       deviceId: rawSource.deviceId.length <= 512 ? rawSource.deviceId : "",
       layout: rawSource.layout,
+      ...(rawSource.pilotCount === undefined ? {} : { pilotCount: rawSource.pilotCount }),
     });
   }
 
@@ -517,13 +547,12 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
     ? value.activeSourceId
     : sources[0].id;
   const activeSource = sources.find((source) => source.id === activeSourceId) ?? sources[0];
-  const allowedSlots = activeSource.layout === "quad" ? [0, 1, 2, 3] : [0];
   const requestedChannel = typeof value.activePilotChannelId === "string"
     ? pilotChannels.find((channel) => channel.id === value.activePilotChannelId)
     : null;
   const activePilotChannelId = requestedChannel
     && requestedChannel.sourceId === activeSource.id
-    && allowedSlots.includes(requestedChannel.slot)
+    && requestedChannel.slot < videoSourcePilotCount(activeSource)
     ? requestedChannel.id
     : pilotChannelId(activeSource.id, 0);
 

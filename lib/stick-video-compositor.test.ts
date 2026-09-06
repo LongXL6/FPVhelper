@@ -113,9 +113,43 @@ describe("burned-in stick video compositor", () => {
     result.dispose();
   });
 
-  it("bounds rendering when both frame callbacks and fallback timers fire", async () => {
+  it("renders pure cropped video without reading telemetry or painting any OSD when disabled", async () => {
+    const { options, video, context, canvas, sourceTrack, outputTrack } = setup();
+    const unavailable = () => { throw new Error("DVR must not read telemetry"); };
+    const getTelemetry = vi.fn(unavailable);
+    const getLinkState = vi.fn(unavailable);
+    const getConnection = vi.fn(unavailable);
+    const result = await startStickVideoCompositor({
+      ...options, drawOverlay: false, frameRate: 25,
+      crop: { xPercent: 50, yPercent: 0, widthPercent: 50, heightPercent: 50 },
+      getTelemetry, getLinkState, getConnection,
+    });
+    expect(result).toMatchObject({ width: 640, height: 360 });
+    expect(canvas.captureStream).toHaveBeenCalledWith(25);
+    expect(context.drawImage).toHaveBeenCalledWith(video, 640, 0, 640, 360, 0, 0, 640, 360);
+    context.drawImage.mockClear();
+    video.currentTime = 0.1;
+    await vi.advanceTimersByTimeAsync(120);
+    expect(context.drawImage).toHaveBeenCalledTimes(3);
+    expect(getTelemetry).not.toHaveBeenCalled();
+    expect(getLinkState).not.toHaveBeenCalled();
+    expect(getConnection).not.toHaveBeenCalled();
+    expect(context.save).not.toHaveBeenCalled();
+    expect(context.fillText).not.toHaveBeenCalled();
+    expect(context.strokeRect).not.toHaveBeenCalled();
+    expect(context.arc).not.toHaveBeenCalled();
+    expect(context.fillRect.mock.calls.every((args) => JSON.stringify(args) === JSON.stringify([0, 0, 640, 360]))).toBe(true);
+    result.dispose(); result.dispose();
+    expect(outputTrack.stop).toHaveBeenCalledOnce();
+    expect(sourceTrack.stop).not.toHaveBeenCalled();
+    expect(video.srcObject).toBeNull();
+    expect(video.callbacks.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([true, false])("bounds rendering when both frame callbacks and fallback timers fire with drawOverlay=%s", async (drawOverlay) => {
     const { options, video, context } = setup();
-    const result = await startStickVideoCompositor(options);
+    const result = await startStickVideoCompositor({ ...options, drawOverlay });
     context.drawImage.mockClear();
     for (let index = 0; index < 100; index += 1) {
       video.currentTime += 0.01;
@@ -196,11 +230,11 @@ describe("burned-in stick video compositor", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("aborts a pending start and cannot be revived by a later video frame", async () => {
+  it.each([true, false])("aborts a pending start and cannot be revived by a later frame with drawOverlay=%s", async (drawOverlay) => {
     const { options, video, canvas, sourceTrack } = setup();
     video.readyState = 0;
     const controller = new AbortController();
-    const start = startStickVideoCompositor({ ...options, signal: controller.signal });
+    const start = startStickVideoCompositor({ ...options, drawOverlay, signal: controller.signal });
     controller.abort();
     await expect(start).rejects.toMatchObject({ name: "AbortError" });
     video.readyState = 2;
@@ -220,10 +254,10 @@ describe("burned-in stick video compositor", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("reports a source disconnect exactly once and releases its output", async () => {
+  it.each([true, false])("reports a source disconnect once and releases its output with drawOverlay=%s", async (drawOverlay) => {
     const { options, sourceTrack, outputTrack } = setup();
     const onError = vi.fn();
-    await startStickVideoCompositor({ ...options, onError });
+    await startStickVideoCompositor({ ...options, drawOverlay, onError });
     sourceTrack.end();
     sourceTrack.end();
     expect(onError).toHaveBeenCalledOnce();
@@ -233,10 +267,10 @@ describe("burned-in stick video compositor", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("stops a frozen video instead of silently recording its last frame indefinitely", async () => {
+  it.each([true, false])("stops a frozen video instead of recording its last frame indefinitely with drawOverlay=%s", async (drawOverlay) => {
     const { options, outputTrack } = setup();
     const onError = vi.fn();
-    await startStickVideoCompositor({ ...options, onError });
+    await startStickVideoCompositor({ ...options, drawOverlay, onError });
     await vi.advanceTimersByTimeAsync(5_100);
     expect(onError).toHaveBeenCalledOnce();
     expect(onError.mock.calls[0][0].message).toContain("连续 5 秒未更新");

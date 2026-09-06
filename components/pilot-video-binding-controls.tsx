@@ -6,6 +6,7 @@ import { PilotNameField } from "@/components/pilot-name-field";
 import type { BetaflightDeviceNames } from "@/lib/betaflight-device-name";
 import {
   resolvedPilotVideoViewMode,
+  videoSourcePilotCount,
   transformVideoCrop,
   type PilotChannelConfig,
   type VideoCropInteraction,
@@ -25,6 +26,7 @@ interface PilotVideoBindingControlsProps {
   onSourceChange: (sourceId: string) => void;
   onSourceLabelChange: (label: string) => void;
   onSourceLayoutChange: (layout: VideoSourceLayout) => void;
+  onPilotCountChange: (count: number) => void;
   onChannelChange: (channelId: string) => void;
   onAthleteCodeChange: (athleteCode: string) => void;
   deviceNames?: BetaflightDeviceNames;
@@ -211,6 +213,7 @@ export function PilotVideoBindingControls({
   onSourceChange,
   onSourceLabelChange,
   onSourceLayoutChange,
+  onPilotCountChange,
   onChannelChange,
   onAthleteCodeChange,
   deviceNames,
@@ -291,7 +294,7 @@ export function PilotVideoBindingControls({
             <button
               className={source.layout === "quad" ? "is-selected" : ""}
               type="button"
-              aria-label="输入布局：四分屏"
+              aria-label="输入布局：共享画面"
               aria-pressed={source.layout === "quad"}
               disabled={disabled}
               onClick={() => onSourceLayoutChange("quad")}
@@ -299,18 +302,35 @@ export function PilotVideoBindingControls({
           </div>
 
           {source.layout === "quad" ? (
-            <div className="video-viewport-tabs" aria-label="共享输入的选手位置">
-              {sourceChannels.map((sourceChannel) => (
-                <button
-                  key={sourceChannel.id}
-                  className={`mini-button ${sourceChannel.id === channel.id ? "mini-button--active" : ""}`}
-                  type="button"
-                  aria-pressed={sourceChannel.id === channel.id}
-                  disabled={disabled}
-                  onClick={() => onChannelChange(sourceChannel.id)}
-                >{sourceChannel.athleteCode.trim() || `位置 ${sourceChannel.slot + 1}`}</button>
-              ))}
-            </div>
+            <>
+              <div className="pilot-count-picker" role="group" aria-label="共享画面的选手人数">
+                <span>添加选手</span>
+                {([1, 2, 3, 4] as const).map((count) => (
+                  <button
+                    key={count}
+                    className={`mini-button ${videoSourcePilotCount(source) === count ? "mini-button--active" : ""}`}
+                    type="button"
+                    aria-label={`添加 ${count} 名选手`}
+                    aria-pressed={videoSourcePilotCount(source) === count}
+                    disabled={disabled}
+                    onClick={() => onPilotCountChange(count)}
+                  >{count} 人</button>
+                ))}
+                <small>每人单独裁切；减少人数会保留已有设置。</small>
+              </div>
+              <div className="video-viewport-tabs" aria-label="共享输入的选手位置">
+                {sourceChannels.map((sourceChannel) => (
+                  <button
+                    key={sourceChannel.id}
+                    className={`mini-button ${sourceChannel.id === channel.id ? "mini-button--active" : ""}`}
+                    type="button"
+                    aria-pressed={sourceChannel.id === channel.id}
+                    disabled={disabled}
+                    onClick={() => onChannelChange(sourceChannel.id)}
+                  >{sourceChannel.athleteCode.trim() || `位置 ${sourceChannel.slot + 1}`}</button>
+                ))}
+              </div>
+            </>
           ) : null}
         </section>
 
@@ -327,7 +347,7 @@ export function PilotVideoBindingControls({
               aria-pressed={viewMode === "full"}
               disabled={disabled}
               onClick={() => onViewModeChange("full")}
-            ><b>完整输入</b><small>直接把整路画面放入工作区</small></button>
+            ><b>完整输入</b><small>{source.layout === "quad" ? "包含整路输入中的所有画面" : "直接把整路画面放入工作区"}</small></button>
             <button
               className={viewMode === "crop" ? "is-selected" : ""}
               type="button"

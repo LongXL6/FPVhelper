@@ -22,6 +22,7 @@ describe("local training and overlay preferences", () => {
       preferences: {
         autoExport: false,
         recordPilotVideo: true,
+        videoOnly: false,
         showStickOverlays: true,
         stickOverlayMode: "trail",
       },
@@ -35,7 +36,7 @@ describe("local training and overlay preferences", () => {
 
     expect(saveTrainingSessionPreferences(storage, preferences)).toBeNull();
     const reloadedStorage = memoryStorage(storage.getItem(TRAINING_SESSION_PREFERENCES_KEY));
-    expect(loadTrainingSessionPreferences(reloadedStorage)).toEqual({ preferences, error: null });
+    expect(loadTrainingSessionPreferences(reloadedStorage)).toEqual({ preferences: { ...preferences, videoOnly: false }, error: null });
   });
 
   it("enables video for an older record without changing its other preferences", () => {
@@ -43,7 +44,7 @@ describe("local training and overlay preferences", () => {
     const migrated = loadTrainingSessionPreferences(storage);
 
     expect(migrated).toEqual({
-      preferences: { autoExport: true, recordPilotVideo: true, showStickOverlays: false, stickOverlayMode: "simple" },
+      preferences: { autoExport: true, recordPilotVideo: true, videoOnly: false, showStickOverlays: false, stickOverlayMode: "simple" },
       error: null,
     });
     expect(saveTrainingSessionPreferences(storage, migrated.preferences)).toBeNull();
@@ -54,7 +55,52 @@ describe("local training and overlay preferences", () => {
   it("keeps an existing explicit data-only choice when loading older preferences", () => {
     const preferences = { autoExport: false, recordPilotVideo: false, showStickOverlays: true, stickOverlayMode: "trail" };
 
-    expect(loadTrainingSessionPreferences(memoryStorage(JSON.stringify(preferences)))).toEqual({ preferences, error: null });
+    expect(loadTrainingSessionPreferences(memoryStorage(JSON.stringify(preferences)))).toEqual({ preferences: { ...preferences, videoOnly: false }, error: null });
+  });
+
+  it.each([true, false])("round-trips an explicit videoOnly choice of %s without changing other preferences", (videoOnly) => {
+    const preferences = { autoExport: true, recordPilotVideo: true, videoOnly, showStickOverlays: false, stickOverlayMode: "simple" as const };
+    const storage = memoryStorage();
+
+    expect(saveTrainingSessionPreferences(storage, preferences)).toBeNull();
+    expect(JSON.parse(storage.getItem(TRAINING_SESSION_PREFERENCES_KEY)!)).toEqual(preferences);
+    expect(loadTrainingSessionPreferences(storage)).toEqual({ preferences, error: null });
+  });
+
+  it("loads videoOnly with the legacy default video choice when recordPilotVideo is absent", () => {
+    const storage = memoryStorage(JSON.stringify({ autoExport: false, videoOnly: true, showStickOverlays: true, stickOverlayMode: "trail" }));
+
+    expect(loadTrainingSessionPreferences(storage)).toEqual({
+      preferences: { ...DEFAULT_TRAINING_SESSION_PREFERENCES, videoOnly: true },
+      error: null,
+    });
+  });
+
+  it("disables videoOnly for data-only preferences both on load and save", () => {
+    const preferences = { ...DEFAULT_TRAINING_SESSION_PREFERENCES, recordPilotVideo: false, videoOnly: true };
+    const storage = memoryStorage(JSON.stringify(preferences));
+
+    expect(loadTrainingSessionPreferences(storage)).toEqual({ preferences: { ...preferences, videoOnly: false }, error: null });
+    expect(saveTrainingSessionPreferences(storage, preferences)).toBeNull();
+    expect(JSON.parse(storage.getItem(TRAINING_SESSION_PREFERENCES_KEY)!)).toMatchObject({ recordPilotVideo: false, videoOnly: false });
+    expect(preferences.videoOnly).toBe(true);
+  });
+
+  it.each(["true", "false", null, 0, 1, {}, []])("reports an invalid videoOnly preference %j instead of coercing it", (videoOnly) => {
+    const storage = memoryStorage(JSON.stringify({ ...DEFAULT_TRAINING_SESSION_PREFERENCES, videoOnly }));
+
+    expect(loadTrainingSessionPreferences(storage)).toEqual({
+      preferences: DEFAULT_TRAINING_SESSION_PREFERENCES,
+      error: "本机偏好格式无效，已恢复默认设置",
+    });
+  });
+
+  it("does not save a malformed runtime videoOnly value", () => {
+    const storage = memoryStorage();
+    const preferences = { ...DEFAULT_TRAINING_SESSION_PREFERENCES, videoOnly: "true" as unknown as boolean };
+
+    expect(saveTrainingSessionPreferences(storage, preferences)).toBe("本机偏好格式无效，已恢复默认设置");
+    expect(storage.getItem(TRAINING_SESSION_PREFERENCES_KEY)).toBeNull();
   });
 
   it("falls back explicitly when stored preferences are malformed", () => {

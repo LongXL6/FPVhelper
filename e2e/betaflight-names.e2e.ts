@@ -109,7 +109,7 @@ test("Betaflight names remain per pilot when responses arrive after selection ch
 test("the visible crop-and-binding action opens the selected pilot in a four-up workspace", async ({ page }) => {
   await page.goto("/");
   await openBindings(page);
-  await page.getByRole("button", { name: "输入布局：四分屏", exact: true }).click();
+  await page.getByRole("button", { name: "输入布局：共享画面", exact: true }).click();
   const third = page.locator('.video-viewport[data-pilot-channel-id="video-source-1-pilot-3"]');
   await page.locator(".video-setup-details > summary").click();
   await third.getByRole("button", { name: /^配置 .* 的裁切与绑定$/ }).click();
