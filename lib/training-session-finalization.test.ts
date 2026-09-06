@@ -1,8 +1,9 @@
+import { toTrainingSessionSummary } from "./training-session-index";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { createTrainingSessionStore } from "./training-session-store";
-import { appendTrainingSessionSample, createTrainingSessionDraft, finishTrainingSession, parseTrainingSession, serializeTrainingSession, type TrainingSession } from "./training-session";
-import { hasCurrentSessionExport, sessionFinalization } from "./training-session-metadata";
+import { appendTrainingSessionSample, createTrainingSessionDraft, finishTrainingSession, parseTrainingSession, resolveTrainingSessionTermination, serializeTrainingSession, type TrainingSession } from "./training-session";
+import { applyTrainingSessionMetadataPatch, hasCurrentSessionExport, sessionFinalization } from "./training-session-metadata";
 import { EMPTY_TELEMETRY } from "./telemetry";
 
 function terminal(id="terminal"): TrainingSession {
@@ -81,5 +82,28 @@ describe("terminal metadata and old-writer protection",()=>{
   const spy=vi.spyOn(factory,"open").mockImplementation((name,version)=>{const request=open(name,version);const index=++ordinal;request.addEventListener("blocked",()=>events.push(`${index}:blocked`));request.addEventListener("success",()=>events.push(`${index}:success`));return request;});
   const blocked=createTrainingSessionStore(factory,"blocked-upgrade");await expect(blocked.getActiveDraft()).rejects.toThrow("阻塞");events.push("old:close");old.close();await expect(blocked.close()).rejects.toThrow("阻塞");
   const retry=createTrainingSessionStore(factory,"blocked-upgrade");expect((await retry.listSessions())[0].id).toBe(session.id);expect(events).toEqual(["1:blocked","old:close","1:success","2:success"]);spy.mockRestore();await retry.close();
+ });
+});
+
+
+describe("complete stale Session is not a metadata patch", () => {
+ it("projects exactly termination fields and preserves notes/media/export from the latest summary", () => {
+  const stale=terminal();let latest=toTrainingSessionSummary(stale);
+  latest=applyTrainingSessionMetadataPatch(latest,{kind:"notes",notes:"keep latest note"});
+  latest=applyTrainingSessionMetadataPatch(latest,{kind:"media",operationId:"operation-1",receipt});
+  latest=applyTrainingSessionMetadataPatch(latest,{kind:"export",exportedAtEpochMs:1800000002000,snapshotRevision:2});
+  latest=applyTrainingSessionMetadataPatch(latest,{kind:"export",exportedAtEpochMs:1800000003000,snapshotRevision:2});
+  const fullOldArgument={...stale,interrupted:true,interruptionReason:"rx_link_lost" as const};
+  const changed=applyTrainingSessionMetadataPatch(latest,{kind:"termination",termination:fullOldArgument});
+  expect(changed.notes).toBe("keep latest note");expect(changed.exportCount).toBe(2);expect(changed.exportedAt).toBe(latest.exportedAt);expect(changed.video).toEqual(latest.video);expect(changed).not.toHaveProperty("samples");
+  expect(changed.finalization).toMatchObject({contentRevision:3,confirmedExportRevision:2,media:latest.finalization!.media});
+  expect(resolveTrainingSessionTermination(latest,fullOldArgument)).toEqual({interrupted:true,interruptionReason:"rx_link_lost"});
+ });
+ it("does not actually overwrite a newly saved note when the caller passes the complete stale Session",async()=>{
+  const store=createTrainingSessionStore(new IDBFactory(),"stale-full-argument");const stale=terminal();await store.completeSession(stale);
+  await store.patchSession(stale.id,{kind:"notes",notes:"confirmed current note"});
+  const summary=await store.patchSession(stale.id,{kind:"termination",termination:{...stale,interrupted:true,interruptionReason:"rx_link_lost"}});
+  const actual=await store.getSession(stale.id);
+  expect(actual?.notes).toBe("confirmed current note");expect(actual?.samples).toEqual(stale.samples);expect(actual?.endedAt).toBe(stale.endedAt);expect(actual?.interruptionReason).toBe("rx_link_lost");expect(summary).not.toHaveProperty("samples");await store.close();
  });
 });

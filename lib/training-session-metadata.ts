@@ -33,7 +33,7 @@ export function applyTrainingSessionMetadataPatch(current: TrainingSessionSummar
     const reasons: TrainingSession["validity"]["reasons"] = current.validity.reasons.filter((reason) => reason !== "rx_link_lost" && reason !== "interrupted");
     if (termination.interruptionReason === "rx_link_lost") reasons.push("rx_link_lost");
     else if (termination.interrupted) reasons.push("interrupted");
-    next = { ...current, ...termination, validity: { valid: reasons.length === 0, reasons } };
+    next = { ...current, interrupted: termination.interrupted, interruptionReason: termination.interruptionReason, validity: { valid: reasons.length === 0, reasons } };
   } else if (patch.kind === "media") {
     if (!patch.operationId || f.media.operationId !== patch.operationId) throw new Error("视频回执的 Session / 操作身份不匹配");
     const video = patch.receipt === null ? { recorded: false as const, synchronized: false as const }

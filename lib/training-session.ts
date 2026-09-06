@@ -470,8 +470,8 @@ export function resolveTrainingSessionTermination(
   current: TrainingSessionTermination | null,
   next: TrainingSessionTermination,
 ): TrainingSessionTermination {
-  const normalizedNext = { ...next, interrupted: next.interrupted || next.interruptionReason !== null };
-  const normalizedCurrent = current ? { ...current, interrupted: current.interrupted || current.interruptionReason !== null } : null;
+  const normalizedNext = { interrupted: next.interrupted || next.interruptionReason !== null, interruptionReason: next.interruptionReason };
+  const normalizedCurrent = current ? { interrupted: current.interrupted || current.interruptionReason !== null, interruptionReason: current.interruptionReason } : null;
   if (!normalizedCurrent || terminationPriority(normalizedNext) > terminationPriority(normalizedCurrent)) return normalizedNext;
   return normalizedCurrent;
 }
