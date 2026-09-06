@@ -677,10 +677,11 @@ test("a delayed video file open cannot start after its Training Session has ende
   await expect(page.getByRole("heading", { name: "正在记录 RACE-01" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as Window & { __videoFileOpenPending?: boolean }).__videoFileOpenPending)).toBe(true);
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expectSavedSession(page, "RACE-01");
+  await expect(page.getByRole("button", { name: "保存记录…", exact: true })).toBeVisible();
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile?.();
   });
+  await expectSavedSession(page, "RACE-01");
   await expect.poll(() => page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];
