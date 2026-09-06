@@ -353,3 +353,28 @@ describe("recording progress publication", () => {
     expect(activeIntervals.size).toBe(0);
   });
 });
+
+
+describe("independent RC finalization", () => {
+  it("commits post-checkpoint tail and terminal state while media remains pending", async () => {
+    const video = deferred<null>();
+    options = { ...options, finishCompanionRecording: vi.fn(() => video.promise) };
+    await act(async () => { renderer!.update(<Harness />); });
+    const id = await start();
+    await emit(1, 1010);
+    await tick(1000, 2000);
+    await tick(250, 2250);
+    await emit(2, 2251);
+    let stopping!: Promise<void>;
+    await act(async () => { stopping = controller.stopRecording(); });
+    try {
+      await act(async () => { await controller.retryPendingSave(); });
+      expect(records.get(id)?.samples.map((sample) => sample.sequence)).toEqual([1, 2]);
+      expect(records.get(id)?.interrupted).toBe(false);
+      expect(controller.hasPendingSave).toBe(false);
+      expect(controller.persistedSampleCount).toBe(2);
+    } finally {
+      await act(async () => { video.resolve(null); await stopping; });
+    }
+  });
+});
