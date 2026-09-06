@@ -156,6 +156,7 @@ interface MediaFinalizationOperation {
   associating: Promise<void> | null;
   autoExport: boolean;
   autoExportRequested: boolean;
+  exportDirectory: TrainingSessionDirectoryHandle | null;
 }
 
 function uniqueLocalId(prefix: string) {
@@ -359,16 +360,16 @@ export function useTrainingSession({
   const exportStoredSessionToDirectory = useCallback(async (
     session: TrainingSession,
     store: TrainingSessionStore,
+    handle: TrainingSessionDirectoryHandle | null,
   ): Promise<{ confirmed: boolean; reason: string | null; filename?: string; localStateSaved: boolean }> => {
-    const handle = directoryHandleRef.current;
     if (!handle) {
       return { confirmed: false, reason: "尚未选择自动保存文件夹", localStateSaved: true };
     }
 
     const permission = await getTrainingSessionDirectoryPermission(handle);
     if (permission !== "granted") {
-      setExportDirectoryState("permission_required");
-      return { confirmed: false, reason: "自动保存文件夹需要重新授权", localStateSaved: true };
+      if (directoryHandleRef.current === handle) setExportDirectoryState("permission_required");
+      return { confirmed: false, reason: `自动保存文件夹“${handle.name}”需要重新授权`, localStateSaved: true };
     }
 
     const exportedAtEpochMs = Date.now();
@@ -378,15 +379,15 @@ export function useTrainingSession({
       receipt = await saveTrainingSessionToDirectory(exportedSession, handle);
     } catch (exportError) {
       const permissionAfterFailure = await getTrainingSessionDirectoryPermission(handle);
-      setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
+      if (directoryHandleRef.current === handle) setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
       return {
         confirmed: false,
-        reason: `自动保存文件夹写入失败：${storageErrorMessage(exportError)}`,
+        reason: `自动保存文件夹“${handle.name}”写入失败：${storageErrorMessage(exportError)}`,
         localStateSaved: true,
       };
     }
 
-    setExportDirectoryState("ready");
+    if (directoryHandleRef.current === handle) setExportDirectoryState("ready");
     setLastExport({
       receiptId: createTrainingSessionExportReceiptId(exportedSession.id, exportedAtEpochMs),
       session: exportedSession,
@@ -782,7 +783,7 @@ export function useTrainingSession({
         try {
           const latest = await store.getSession(operation.sessionId);
           if (!latest) { setExportWarning("遥控记录已保存，自动导出前无法读取记录；可在记录页重试导出"); return; }
-          const result = await exportStoredSessionToDirectory(latest, store);
+          const result = await exportStoredSessionToDirectory(latest, store, operation.exportDirectory);
           if (!result.confirmed && result.reason) {
             const feedback = combineTrainingSessionExportFailures(result.reason, requestUnconfirmedTrainingSessionDownload(latest));
             setExportNotice(feedback.notice); setExportWarning(feedback.warning);
@@ -844,7 +845,9 @@ export function useTrainingSession({
     });
     const operation: MediaFinalizationOperation = { sessionId: frozen.id, operationId: uniqueLocalId("media"),
       expected: companionRecordingStarted?.() ?? Boolean(finishCompanionRecording), inputKey, pendingTermination: null, settled: !finishCompanionRecording,
-      receipt: null, associated: false, associating: null, autoExport, autoExportRequested: false };
+      receipt: null, associated: false, associating: null, autoExport, autoExportRequested: false,
+      // Capture while recording controls still own this folder, before late media/export waits.
+      exportDirectory: directoryHandleRef.current };
     mediaOperationRef.current = operation;
     const session: TrainingSession = { ...frozen, finalization: { version: 1, contentRevision: 0, confirmedExportRevision: null,
       media: { state: operation.expected ? "pending" : "not_requested", operationId: operation.expected ? operation.operationId : null } } };
@@ -1064,6 +1067,7 @@ export function useTrainingSession({
   }, [hasPendingSave, updateSessionNotes]);
 
   const exportSession = useCallback(async (targetSessionId: string, notesOverride?: string): Promise<TrainingSessionExportResult> => {
+    const exportDirectory = directoryHandleRef.current;
     const store = storeRef.current;
     const summary = sessionsRef.current.find((candidate) => candidate.id === targetSessionId)
       ?? ((!pendingSessionRef.current || rcConfirmedSessionIdRef.current === targetSessionId) && lastSession?.id === targetSessionId ? lastSession : null);
@@ -1084,12 +1088,12 @@ export function useTrainingSession({
     const waiter = new Promise<void>((resolve) => { finishExport = resolve; });
     exportWaitersRef.current.set(targetSessionId, waiter);
     try {
-      if (directoryHandleRef.current) {
+      if (exportDirectory) {
         if (notesOverride !== undefined) await store.patchSession(targetSessionId, { kind: "notes", notes: notesOverride });
         const session = await loadSession(targetSessionId);
         if (!session) throw new Error("记录样本无法完整读取，请检查本机存储或归档文件");
         const snapshot = session;
-        const result = await exportStoredSessionToDirectory(snapshot, store);
+        const result = await exportStoredSessionToDirectory(snapshot, store, exportDirectory);
         if (!result.confirmed) {
           const message = `${result.reason}；已有文件与本机记录保留。`;
           setExportNotice(null);

@@ -9,17 +9,17 @@ test.setTimeout(45000);
 const networkViolations = new WeakMap<Page, string[]>();
 const gateSnapshot=(page:Page)=>page.evaluate(()=> (window as unknown as {__phase2aMediaGate:{snapshot():{mode:string;events:Array<{kind:string}>}}}).__phase2aMediaGate.snapshot());
 async function release(page:Page,json=false){await page.evaluate((json)=>{const gate=(window as unknown as {__phase2aMediaGate:{release():void;releaseJson():void}}).__phase2aMediaGate;if(json)gate.releaseJson();else gate.release();},json);}
-async function files(page:Page,jsonOnly=false){return page.evaluate(async(jsonOnly)=>{
+async function files(page:Page,jsonOnly=false,directoryName="phase2a-e2e"){return page.evaluate(async({jsonOnly,directoryName})=>{
  let stage="open OPFS root";
  try {
   const root=await navigator.storage.getDirectory();stage="open phase2a-e2e directory";
-  const directory=await root.getDirectoryHandle("phase2a-e2e");const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
+  const directory=await root.getDirectoryHandle(directoryName);const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
   for await(const [name,handle] of directory.entries())if(handle.kind==="file"&&(jsonOnly?name.endsWith(".json"):/\.(json|mp4|webm)$/.test(name))){
    stage=`getFile ${name}`;const file=await(handle as FileSystemFileHandle).getFile();stage=`read confirmed contents ${name}`;
    rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
   }return rows;
  }catch(error){throw new Error(`OPFS evidence read failed at ${stage}: ${String(error)}`);}
-},jsonOnly);}
+},{jsonOnly,directoryName});}
 
 async function attach(info:TestInfo,name:string,value:unknown){const path=info.outputPath(name);await mkdir(info.outputDir,{recursive:true});await writeFile(path,JSON.stringify(value,null,2));await info.attach(name,{path,contentType:"application/json"});}
 async function prepare(page:Page,mode:string,extra=""){
@@ -109,4 +109,35 @@ test("a rejected media result never fabricates a receipt even when the underlyin
  await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
  const artifacts=await files(page);expect(artifacts.some(f=>/\.(mp4|webm)$/.test(f.name)&&f.bytes>0)).toBe(true);expect(artifacts.find(f=>f.json)!.json!.video.recorded).toBe(false);
  await attach(info,"rejected-media.json",{stored,artifacts,gate:await gateSnapshot(page),boundary:"Underlying real close resolved; test then rejected acknowledgement. File existence is not promoted into a success receipt."});
+});
+
+
+test("automatic final JSON stays with its original video directory while the user switches folders",async({page},info)=>{
+ await prepare(page,"after-close","&jsonGate=first");const frozen=await terminal(page);
+ await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("media-underlying-close-resolved");
+ await page.getByRole("button",{name:"导出 JSON",exact:true}).click();
+ await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("json-close-entered");
+ await release(page);await expect.poll(async()=> (await terminal(page)).video.recorded).toBe(true);
+ // Only the browser picker boundary is substituted; actual product controls change the selected folder.
+ await page.evaluate(()=>Object.defineProperty(window,"showDirectoryPicker",{configurable:true,value:async()=> (await navigator.storage.getDirectory()).getDirectoryHandle("phase2a-d2",{create:true})}));
+ await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"飞行工作台",exact:true}).click();
+ await page.locator(".recording-options > summary").click();
+ await page.getByRole("button",{name:"更换文件夹",exact:true}).click();
+ await expect(page.locator(".session-export-directory")).toContainText("phase2a-d2");
+ expect((await gateSnapshot(page)).events.filter(e=>e.kind==="json-writable-created")).toHaveLength(1);
+ await release(page,true);await expect.poll(async()=> (await terminal(page)).exportCount).toBe(2);
+ const final=await terminal(page),d1=await files(page),d2=await files(page,false,"phase2a-d2");
+ await attach(info,"directory-binding.json",{frozen,final,d1,d2,gate:await gateSnapshot(page)});
+ expect(d2).toHaveLength(0);expect(d1.filter(f=>f.json)).toHaveLength(2);
+ const early=d1.find(f=>f.json&&!f.json.video.recorded)!.json!,late=d1.find(f=>f.json?.video.recorded)!.json!;
+ expect(early.exportCount).toBe(1);expect(late.exportCount).toBe(2);expect(late.id).toBe(frozen.id);
+ expect(late.samples).toEqual(frozen.samples);expect(late.endedAt).toBe(frozen.endedAt);expect(late.video).toEqual(final.video);
+ expect(late.finalization?.confirmedExportRevision).toBe(final.finalization?.contentRevision);
+ if(!final.video.recorded)throw new Error("missing video receipt");const video=final.video;
+ expect(d1.find(f=>f.name===video.filename)?.bytes).toBe(video.bytes);
+ await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"训练记录",exact:true}).click();
+ await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=> (await terminal(page)).exportCount).toBe(3);
+ const manual=await files(page,true,"phase2a-d2");expect(manual).toHaveLength(1);expect(manual[0].json?.id).toBe(frozen.id);expect(manual[0].json?.exportCount).toBe(3);expect(manual[0].json?.samples).toEqual(frozen.samples);
+ expect(await files(page)).toEqual(d1);
+ await attach(info,"directory-binding-final.json",{frozen,stored:await terminal(page),d1,automaticD2:d2,manualD2:manual,gate:await gateSnapshot(page)});
 });

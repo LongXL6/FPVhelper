@@ -138,6 +138,36 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it.each(["replace", "clear"] as const)("keeps the selected directory state after %s while an old export settles", async (action) => {
+    for (const outcome of ["success", "permission", "write-error"] as const) {
+      let settle!: () => void;
+      const gate = new Promise<void>((resolve) => { settle = resolve; });
+      const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => "granted", getFileHandle: vi.fn() };
+      const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2" };
+      await mountWithExportDirectory(d1);
+      const permission = vi.spyOn(directoryModule, "getTrainingSessionDirectoryPermission").mockImplementation(async (handle) => {
+        if (handle === d1 && outcome === "permission") { await gate; return "denied"; }
+        return "granted";
+      });
+      const save = vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session, handle) => {
+        expect(handle).toBe(d1); await gate;
+        if (outcome === "write-error") throw new Error("D1 write failed");
+        return { filename: trainingSessionFilename(session), bytes: 100 };
+      });
+      let pending!: Promise<TrainingSessionExportResult>;
+      await act(async () => { pending = controller.exportSession("older"); });
+      vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2);
+      await act(async () => { if (action === "clear") await controller.clearExportDirectory(); else await controller.configureExportDirectory(); });
+      const state = controller.exportDirectoryState, name = controller.exportDirectoryName;
+      await act(async () => { settle(); await pending; });
+      expect(controller.exportDirectoryState).toBe(state);
+      expect(controller.exportDirectoryName).toBe(name);
+      if (outcome === "success") expect(controller.exportNotice).toContain("D1");
+      else expect(controller.exportWarning).toContain("D1");
+      permission.mockRestore(); save.mockRestore();
+    }
+  });
+
   it("exports to the configured folder with its actual versioned filename only after close completes", async () => {
     const baseFilename = trainingSessionFilename(records.get("older")!);
     const filename = baseFilename.replace(/\.json$/, "-v2.json");
