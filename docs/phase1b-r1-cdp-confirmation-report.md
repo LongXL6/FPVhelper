@@ -132,3 +132,11 @@ Sharing excludes raw host process-list bytes and removes unrelated process names
 No push, PR, merge, deploy, Promote, tag, cloud/database operation, real device or user media access occurred. Only authorized coordination messages were sent. RC persistence waiting for video, unbounded video queue, whole-vision-history rewrite, hardware/endurance/physical synchronization and media cleanup limits remain open.
 
 **One next step:** return this partial package to ChatGPT/coordination for independent review and a decision on the missing S1/P1 diagnostic. Do not automatically start another batch, optimize, revert products or publish.
+
+## Final failure-log clarification
+
+Index 1 retains the original orchestrator `KeyboardInterrupt` stopping reason. Its runner log additionally contains a launch-time fixture error, `Cannot read properties of undefined (reading 'getUserMedia')`, associated by the coordinator's audit with the initial `about:blank` stage, followed by context/browser shutdown errors. The log is preserved; this is not evidence of a product failure or a successful network/media check. Do not reduce this failed item to a clean context shutdown.
+
+Both index 1 and index 30 have only runner/server logs, host-load bytes and a batch-clock file; **neither has raw nor summary output**. Their input integrity, network outcomes, media/recording behavior, CDP endpoints and Profiler results are **unavailable**, not zero and not passed. Index 30 also logs the context/browser closure while the original global deadline interrupts execution. Process-group disappearance is independently confirmed, and is distinct from these unavailable checks.
+
+The already-verified full evidence ZIP is retained unchanged. A small final amendment archive supplies this clarification, the authoritative updated HANDOFF/handoff.json and exact report-only diff, linked to the original ZIP's SHA-256. Rebuilding and retaining another full ZIP would exceed the cumulative evidence ceiling; no old evidence is deleted. The two-part delivery is an immutable base evidence package plus a report amendment, not a new performance batch. All performance numbers, 32-slot states and zero formal diagnostic items are unchanged.
