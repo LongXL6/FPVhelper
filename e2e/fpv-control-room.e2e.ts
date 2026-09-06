@@ -527,6 +527,10 @@ test("active pilot full and cropped video record to the authorized local folder"
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
 
   await expectSavedSession(page, "VIDEO-01");
+  // Media file close and the later metadata/export transactions are separate confirmations.
+  await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.filter(
+    (session) => session.video.recorded && session.exportCount === 1,
+  ).length).toBe(2);
   const recordings = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];

@@ -30,6 +30,7 @@ let sampleListener: TelemetrySampleListener | null;
 let subscribeSamples: SubscribeTelemetrySamples;
 let finishCompanionRecording: (() => Promise<LocalVideoRecordingReceipt | null>) | undefined;
 let linkState: LinkState;
+let autoExport: boolean;
 
 function makeSession(id: string, startedAtEpochMs: number) {
   const draft = createTrainingSessionDraft({
@@ -56,7 +57,7 @@ function Harness() {
     connection: "live",
     linkState,
     athleteCode: "PILOT-07",
-    autoExport: false,
+    autoExport,
     inputKey: "pilot-channel-1",
     subscribeSamples,
     finishCompanionRecording,
@@ -80,6 +81,7 @@ async function mountWithExportDirectory(handle: directoryModule.TrainingSessionD
 }
 
 beforeEach(async () => {
+  autoExport = false;
   finishCompanionRecording = undefined;
   linkState = "ok";
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -138,6 +140,46 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it.each(["clear", "revoke-D1"] as const)("preserves the queued automatic target after %s", async (action) => {
+    autoExport = true;
+    let mediaDone!: (receipt: LocalVideoRecordingReceipt) => void;
+    finishCompanionRecording = () => new Promise((resolve) => { mediaDone = resolve; });
+    let permission: directoryModule.TrainingSessionDirectoryPermission = "granted";
+    const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => permission, getFileHandle: vi.fn() };
+    const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2", queryPermission: async () => "granted" };
+    await mountWithExportDirectory(d1);
+    let earlyDone!: () => void;
+    const earlyClose = new Promise<void>((resolve) => { earlyDone = resolve; });
+    const save = vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session) => {
+      if (session.exportCount === 1) await earlyClose;
+      return { filename: trainingSessionFilename(session), bytes: 123 };
+    });
+    const fallback = vi.spyOn(exportFeedbackModule, "requestUnconfirmedTrainingSessionDownload").mockReturnValue({ notice: null, warning: "unconfirmed fallback" });
+    let id!: string;
+    await act(async () => { id = (await controller.startRecording())!; });
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: performance.now() }, "serial"));
+    await act(async () => { await controller.stopRecording(); });
+    const frozen = records.get(id)!;
+    let early!: Promise<TrainingSessionExportResult>;
+    await act(async () => { early = controller.exportSession(id); });
+    await act(async () => { mediaDone({ filename: "S1.webm", mimeType: "video/webm", bytes: 123, startedAtEpochMs: Date.now()-100, finishedAtEpochMs: Date.now() }); });
+    expect(controller.hasPendingMedia).toBe(false);expect(save).toHaveBeenCalledOnce();
+    await act(async () => {
+      if (action === "clear") await controller.clearExportDirectory();
+      else { vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2); await controller.configureExportDirectory(); permission = "denied"; }
+    });
+    if (action === "clear") expect(controller.exportNotice).toContain("待完成导出仍使用原文件夹");
+    await act(async () => { earlyDone(); await early; });
+    expect(records.get(id)?.samples).toEqual(frozen.samples);expect(records.get(id)?.endedAt).toBe(frozen.endedAt);expect(records.get(id)?.video.recorded).toBe(true);
+    if (action === "clear") {
+      expect(save).toHaveBeenCalledTimes(2);expect(save.mock.calls.every(([,handle])=>handle===d1)).toBe(true);expect(records.get(id)?.exportCount).toBe(2);
+      expect(controller.exportDirectoryState).toBe("unconfigured");expect(controller.exportNotice).toContain("D1");expect(fallback).not.toHaveBeenCalled();
+    } else {
+      expect(save).toHaveBeenCalledOnce();expect(records.get(id)?.exportCount).toBe(1);expect(controller.exportDirectoryState).toBe("ready");expect(controller.exportDirectoryName).toBe("D2");expect(controller.exportWarning).toContain(id.slice(0,8));expect(controller.exportWarning).toContain("D1");
+      await act(async () => { await controller.exportSession(id); });expect(save.mock.calls[1][1]).toBe(d2);expect(records.get(id)?.exportCount).toBe(2);
+    }
+  });
+
   it.each(["replace", "clear"] as const)("keeps the selected directory state after %s while an old export settles", async (action) => {
     for (const outcome of ["success", "permission", "write-error"] as const) {
       let settle!: () => void;

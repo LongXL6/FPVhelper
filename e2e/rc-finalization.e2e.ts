@@ -13,10 +13,11 @@ async function files(page:Page,jsonOnly=false,directoryName="phase2a-e2e"){retur
  let stage="open OPFS root";
  try {
   const root=await navigator.storage.getDirectory();stage="open phase2a-e2e directory";
-  const directory=await root.getDirectoryHandle(directoryName);const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
+  const directory=await root.getDirectoryHandle(directoryName);const rows:Array<{name:string;bytes:number;sha256:string;json?:TrainingSession;header:number[]}>=[];
   for await(const [name,handle] of directory.entries())if(handle.kind==="file"&&(jsonOnly?name.endsWith(".json"):/\.(json|mp4|webm)$/.test(name))){
    stage=`getFile ${name}`;const file=await(handle as FileSystemFileHandle).getFile();stage=`read confirmed contents ${name}`;
-   rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
+   const sha256=[...new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer()))].map(b=>b.toString(16).padStart(2,"0")).join("");
+   rows.push({name,bytes:file.size,sha256,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
   }return rows;
  }catch(error){throw new Error(`OPFS evidence read failed at ${stage}: ${String(error)}`);}
 },{jsonOnly,directoryName});}
@@ -115,6 +116,7 @@ test("a rejected media result never fabricates a receipt even when the underlyin
 test("automatic final JSON stays with its original video directory while the user switches folders",async({page},info)=>{
  await prepare(page,"after-close","&jsonGate=first");const frozen=await terminal(page);
  await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("media-underlying-close-resolved");
+ await page.getByRole("textbox",{name:"留给下一次训练",exact:true}).fill("DIRECTORY-BINDING-NOTE");await page.getByRole("button",{name:"保存备注",exact:true}).click();
  await page.getByRole("button",{name:"导出 JSON",exact:true}).click();
  await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("json-close-entered");
  await release(page);await expect.poll(async()=> (await terminal(page)).video.recorded).toBe(true);
@@ -131,6 +133,7 @@ test("automatic final JSON stays with its original video directory while the use
  expect(d2).toHaveLength(0);expect(d1.filter(f=>f.json)).toHaveLength(2);
  const early=d1.find(f=>f.json&&!f.json.video.recorded)!.json!,late=d1.find(f=>f.json?.video.recorded)!.json!;
  expect(early.exportCount).toBe(1);expect(late.exportCount).toBe(2);expect(late.id).toBe(frozen.id);
+ expect(early.notes).toBe("DIRECTORY-BINDING-NOTE");expect(late.notes).toBe(early.notes);expect(final.notes).toBe(early.notes);
  expect(late.samples).toEqual(frozen.samples);expect(late.endedAt).toBe(frozen.endedAt);expect(late.video).toEqual(final.video);
  expect(late.finalization?.confirmedExportRevision).toBe(final.finalization?.contentRevision);
  if(!final.video.recorded)throw new Error("missing video receipt");const video=final.video;
@@ -140,4 +143,36 @@ test("automatic final JSON stays with its original video directory while the use
  const manual=await files(page,true,"phase2a-d2");expect(manual).toHaveLength(1);expect(manual[0].json?.id).toBe(frozen.id);expect(manual[0].json?.exportCount).toBe(3);expect(manual[0].json?.samples).toEqual(frozen.samples);
  expect(await files(page)).toEqual(d1);
  await attach(info,"directory-binding-final.json",{frozen,stored:await terminal(page),d1,automaticD2:d2,manualD2:manual,gate:await gateSnapshot(page)});
+});
+
+
+test("a second Session uses D2 while S1 automatic export is still waiting for its early JSON",async({page},info)=>{
+ await prepare(page,"after-close","&jsonGate=first");const s1=await terminal(page);
+ await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("json-close-entered");
+ await release(page);await expect.poll(async()=> (await terminal(page)).video.recorded).toBe(true);
+ await page.evaluate(()=>Object.defineProperty(window,"showDirectoryPicker",{configurable:true,value:async()=> (await navigator.storage.getDirectory()).getDirectoryHandle("phase2a-s2",{create:true})}));
+ await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"飞行工作台",exact:true}).click();
+ await page.locator(".recording-options > summary").click();await page.getByRole("button",{name:"更换文件夹",exact:true}).click();
+ await expect(page.getByRole("button",{name:"● 开始记录",exact:true})).toBeEnabled();
+ await page.getByRole("button",{name:"● 开始记录",exact:true}).click();
+ await expect.poll(async()=> (await readStoredTrainingRecords(page)).drafts[0]?.samples.length??0).toBeGreaterThan(30);
+ const draft=(await readStoredTrainingRecords(page)).drafts[0];expect(draft.id).not.toBe(s1.id);
+ await release(page,true);await expect.poll(async()=> (await terminal(page)).exportCount).toBe(2);
+ expect((await readStoredTrainingRecords(page)).drafts[0].id).toBe(draft.id);
+ await expect(page.getByRole("button",{name:"■ 结束记录",exact:true})).toBeEnabled();
+ expect(await files(page,true,"phase2a-s2")).toHaveLength(0);
+ await page.getByRole("button",{name:"■ 结束记录",exact:true}).click();
+ await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.filter(s=>s.id===draft.id&&s.video.recorded&&s.exportCount===1).length).toBe(1);
+ const stored=(await readStoredTrainingRecords(page)).sessions,d1=await files(page),d2=await files(page,false,"phase2a-s2");
+ expect(stored).toHaveLength(2);expect(d1.filter(f=>f.json)).toHaveLength(2);expect(d2.filter(f=>f.json)).toHaveLength(1);
+ expect(d1.filter(f=>f.json).every(f=>f.json!.id===s1.id)).toBe(true);expect(d2.find(f=>f.json)?.json?.id).toBe(draft.id);
+ const finalS1=stored.find(s=>s.id===s1.id)!,finalS2=stored.find(s=>s.id===draft.id)!;
+ expect(finalS1.samples).toEqual(s1.samples);expect(finalS1.endedAt).toBe(s1.endedAt);expect(finalS1.exportCount).toBe(2);expect(finalS2.interruptionReason).toBeNull();
+ expect(finalS2.samples.slice(0,draft.samples.length)).toEqual(draft.samples);
+ for(const [session,artifacts] of [[finalS1,d1],[finalS2,d2]] as const){
+  if(!session.video.recorded)throw new Error("missing Session video receipt");const video=session.video;
+  expect(artifacts.find(f=>f.name===video.filename)?.bytes).toBe(video.bytes);
+  const exported=artifacts.find(f=>f.json?.video.recorded)!.json!;expect(exported.samples).toEqual(session.samples);expect(exported.video).toEqual(session.video);expect(exported.finalization?.confirmedExportRevision).toBe(session.finalization?.contentRevision);
+ }
+ await attach(info,"two-session-directories.json",{s1,draft,stored,d1,d2,gate:await gateSnapshot(page)});
 });

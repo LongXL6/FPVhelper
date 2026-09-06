@@ -369,7 +369,7 @@ export function useTrainingSession({
     const permission = await getTrainingSessionDirectoryPermission(handle);
     if (permission !== "granted") {
       if (directoryHandleRef.current === handle) setExportDirectoryState("permission_required");
-      return { confirmed: false, reason: `自动保存文件夹“${handle.name}”需要重新授权`, localStateSaved: true };
+      return { confirmed: false, reason: `记录 ${session.id.slice(0, 8)} 的自动保存文件夹“${handle.name}”需要重新授权`, localStateSaved: true };
     }
 
     const exportedAtEpochMs = Date.now();
@@ -382,7 +382,7 @@ export function useTrainingSession({
       if (directoryHandleRef.current === handle) setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
       return {
         confirmed: false,
-        reason: `自动保存文件夹“${handle.name}”写入失败：${storageErrorMessage(exportError)}`,
+        reason: `记录 ${session.id.slice(0, 8)} 的自动保存文件夹“${handle.name}”写入失败：${storageErrorMessage(exportError)}`,
         localStateSaved: true,
       };
     }
@@ -527,7 +527,7 @@ export function useTrainingSession({
       setExportDirectoryName(null);
       setExportDirectoryState("unconfigured");
       setExportWarning(null);
-      setExportNotice("已清除自动保存文件夹；需要时可重新选择。");
+      setExportNotice("已清除后续记录的自动保存文件夹；已停止记录的待完成导出仍使用原文件夹，需要时可重新选择。");
     } catch (directoryError) {
       setExportDirectoryState("error");
       setExportWarning(`清除自动保存文件夹失败：${storageErrorMessage(directoryError)}`);
