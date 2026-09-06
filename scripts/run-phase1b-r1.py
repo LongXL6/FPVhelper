@@ -3,14 +3,22 @@ import argparse,gzip,importlib.util,json,os,signal,socket,subprocess,time,urllib
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('common',Path(__file__).with_name('phase1b-r1-common.py'));c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
 root=Path(__file__).resolve().parent.parent
-parser=argparse.ArgumentParser();parser.add_argument('--exploratory',action='store_true');parser.add_argument('--exploration-id',default='exploration-02');opts=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--continuation');parser.add_argument('--exploratory',action='store_true');parser.add_argument('--exploration-id',default='exploration-02');opts=parser.parse_args()
 planpath=root/'benchmarks/capture/phase1b-r1-plan.json';p=json.loads(planpath.read_text());c.validate_plan(p)
 if not opts.exploratory: assert p['status']=='frozen' and not c.git(root,'status','--porcelain')
 buildpath=root/'output/playwright/phase1b-r1/preflight/builds.json';builds=json.loads(buildpath.read_text())
+continuation=json.loads(Path(opts.continuation).read_text()) if opts.continuation else None
+if continuation:
+ assert continuation['remainingIndices']==list(range(2,32)) and continuation['absoluteDeadlineEpochMs']==1788694765581
+ assert c.digest(Path(continuation['priorReceipt']).read_bytes())==continuation['priorReceiptSha256']
+ assert c.digest(planpath.read_bytes())==continuation['originalPlanSha256']
 child=root/'benchmarks/capture/phase1b-r1-child.json';planhash=c.digest(planpath.read_bytes());childhash=c.digest(child.read_bytes());driver=c.git(root,'rev-parse','HEAD')
-out=root/'output/playwright/phase1b-r1'/(opts.exploration_id if opts.exploratory else p['run_id']);out.mkdir(exist_ok=False)
+out=root/'output/playwright/phase1b-r1'/(opts.exploration_id if opts.exploratory else (continuation['run_id'] if continuation else p['run_id']));out.mkdir(exist_ok=False)
 receipt={'status':'running','driverTestedSha':driver,'driverTree':c.git(root,'rev-parse','HEAD^{tree}'),'planSha256':planhash,'childPlanSha256':childhash,'buildReceiptSha256':c.digest(buildpath.read_bytes()),'driverDiffSha256':c.digest(subprocess.check_output(['git','diff','HEAD'],cwd=root)),'driverFiles':{str(f.relative_to(root)):c.digest(f.read_bytes()) for f in sorted((root/'scripts').glob('*phase1b*r1*')) if f.is_file()},'products':builds,'startedEpochMs':int(time.time()*1000),'runs':[],'diagnosticTriggers':[],'externalOperations':[]}
-started=time.monotonic();server=None;runner=None
+started=time.monotonic()-(time.time()-continuation['originalStartedEpochMs']/1000 if continuation else 0);server=None;runner=None
+receipt['continuation']=continuation
+receipt['invocationStartedEpochMs']=receipt['startedEpochMs']
+if continuation:receipt['startedEpochMs']=continuation['originalStartedEpochMs']
 def deadline_signal(signum,frame): raise TimeoutError('Global deadline interrupted synchronous work')
 signal.signal(signal.SIGALRM,deadline_signal)
 signal.setitimer(signal.ITIMER_REAL,c.remaining_seconds(started,p['maxBatchMs'],p['cleanupMs']))
@@ -34,12 +42,14 @@ def verify():
   if c.digest((root/f).read_bytes())!=h:raise RuntimeError('Driver tool bytes changed')
  if not opts.exploratory and c.git(root,'status','--porcelain'):raise RuntimeError('Driver no longer clean')
  for a,r in p['roots'].items():
-  b=builds[a]
+  b=builds[a];frozen=p['products'][a]
+  c.validate_build_binding(b,frozen)
   if c.git(r,'rev-parse','HEAD')!=b['sourceSha'] or c.git(r,'rev-parse','HEAD^{tree}')!=b['treeSha'] or c.git(r,'status','--porcelain'):raise RuntimeError('Product source changed')
   if c.source_inventory(r)!=source_before[a]:raise RuntimeError('Product byte mismatch')
   for mode,m in b['modes'].items():
-   d=Path(m['directory'])
-   for f in json.loads(Path(m['inventory']).read_text()):
+   d=Path(m['directory']);inventoryBytes=Path(m['inventory']).read_bytes()
+   if c.digest(inventoryBytes)!=m['inventorySha256'] or m['inventorySha256']!=frozen['modes'][mode]['inventorySha256']:raise RuntimeError('Build inventory digest mismatch')
+   for f in json.loads(inventoryBytes):
     path=d/f['path']
     if not path.is_file() or c.digest(path.read_bytes())!=f['sha256']:raise RuntimeError('Build content mismatch: '+str(path))
 stop=c.stop_owned
@@ -48,7 +58,7 @@ def metrics(raw):
  return {k:c.interval(m[x]['metrics'],m[y]['metrics']) for k,x,y in [('steady','before','steadyEnd'),('drain','steadyEnd','after'),('full','before','after')]}
 def execute(pair,position,arm,diagnostic=False):
  global server,runner
- index=len(receipt['runs']);rout=out/f'{index:02}-{pair["pairId"]}-{position}-{arm}';rout.mkdir()
+ index=len(receipt['runs'])+(2 if continuation else 0);rout=out/f'{index:02}-{pair["pairId"]}-{position}-{arm}';rout.mkdir()
  run={'index':index,'pairId':pair['pairId'],'kind':'diagnostic' if diagnostic else pair['kind'],'condition':pair['condition'],'mode':pair['mode'],'order':pair['order'],'position':position,'arm':arm,'sourceSha':builds[arm]['sourceSha'],'buildId':builds[arm]['modes'][pair['mode']]['buildId'],'status':'running','startedEpochMs':int(time.time()*1000)}
  receipt['runs'].append(run);save();verify();run['budgetBefore']=budget()
  load=subprocess.check_output(['ps','-Ao','pid,comm,pcpu,pmem']);(rout/'host-load.bin').write_bytes(load)
@@ -91,7 +101,7 @@ try:
   for condition,mode,trace in [('S1-100','N',False),('S1-100','P1',True),('S2','P1',False)]:
    execute(dict(pairId='explore-'+condition+'-'+mode,kind='exploratory',condition=condition,mode=mode,order='B'),1,'B',trace)
  else:
-  for pair in p['pairs']:
+  for pair in p['pairs'][1:] if continuation else p['pairs']:
    for pos,arm in enumerate(pair['order']):execute(pair,pos+1,arm)
  if not opts.exploratory:
   for condition in ['S1-100','S2']:

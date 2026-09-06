@@ -23,7 +23,7 @@ class Tests(unittest.TestCase):
  def test_source_and_driver_separate(self):
   text=Path('scripts/measure-phase1b-r1.mts').read_text();self.assertIn('cwd: productRoot',text);self.assertIn('driverSha, productRoot, servedBuildId',text)
  def test_bounded_trace(self):
-  text=Path('scripts/measure-phase1b-r1.mts').read_text();self.assertIn('bytes.length > traceSettings.maxEncodedBytes',text);self.assertIn('truncated || !positiveControl',text);self.assertIn('Profiler.disable',text)
+  text=Path('scripts/measure-phase1b-r1.mts').read_text();self.assertIn('checkCpuProfile(profile, bytes.length',text);self.assertIn('truncated || !positiveControl',text);self.assertIn('Profiler.disable',text)
  def test_generated_declaration_exact(self):
   original=b'import "./.next/types/routes.d.ts";\nimport "./.next/types/root-params.d.ts";\n'
   expected=b'import "./.next-measurement/types/routes.d.ts";\nimport "./.next-measurement/types/root-params.d.ts";\n'
@@ -60,4 +60,15 @@ class Tests(unittest.TestCase):
    signal.setitimer(signal.ITIMER_REAL,.02)
    with self.assertRaises(TimeoutError):time.sleep(1)
   finally:signal.setitimer(signal.ITIMER_REAL,0);signal.signal(signal.SIGALRM,old)
+ def test_frozen_build_binding(self):
+  import copy
+  b=dict(root='r',sourceSha='a',treeSha='t',modes={m:dict(buildId=m,inventorySha256='hash') for m in ['N','P1']})
+  c.validate_build_binding(b,copy.deepcopy(b))
+  for field in ['root','sourceSha','treeSha']:
+   bad=copy.deepcopy(b);bad[field]='wrong'
+   with self.assertRaises(ValueError):c.validate_build_binding(bad,b)
+  for mode in ['N','P1']:
+   for field in ['buildId','inventorySha256']:
+    bad=copy.deepcopy(b);bad['modes'][mode][field]='wrong'
+    with self.assertRaises(ValueError):c.validate_build_binding(bad,b)
 if __name__=='__main__':unittest.main()

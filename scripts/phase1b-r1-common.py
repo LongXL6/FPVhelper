@@ -67,3 +67,9 @@ def record_elapsed(receipt,elapsed,limit_ms):
     receipt['wallSeconds']=elapsed
     if elapsed*1000>=limit_ms:
         receipt['status']='partial';receipt.setdefault('stopReason','Global deadline exceeded including finalization')
+def validate_build_binding(build,frozen):
+    for key in ['root','sourceSha','treeSha']:
+        if build[key]!=frozen[key]:raise ValueError('Frozen product mismatch: '+key)
+    for mode in ['N','P1']:
+        for key in ['buildId','inventorySha256']:
+            if build['modes'][mode][key]!=frozen['modes'][mode][key]:raise ValueError('Frozen build mismatch: '+mode+'/'+key)

@@ -1,3 +1,4 @@
+import { checkCpuProfile } from "./phase1b-r1-profile.ts";
 import { mkdir, readFile, writeFile, readdir, stat, statfs } from "node:fs/promises";
 import { resolve, relative, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,10 +87,9 @@ async function endTrace(page: Page, label: string) {
   const { profile } = await cdp.send("Profiler.stop");
   await cdp.send("Profiler.disable");
   const bytes = Buffer.from(JSON.stringify(profile));
-  const truncated = bytes.length > traceSettings.maxEncodedBytes || (profile.samples?.length ?? 0) > traceSettings.maxSamples;
+  const { truncated, positiveControl } = checkCpuProfile(profile, bytes.length, traceSettings.maxEncodedBytes, traceSettings.maxSamples);
   const path = join(output, `${label}.cpuprofile.json.gz`);
   await writeFile(path, gzipSync(bytes.subarray(0, traceSettings.maxEncodedBytes)), {flag: "wx"});
-  const positiveControl = !!profile.nodes.length && !!profile.samples?.length && profile.timeDeltas?.length === profile.samples.length && profile.endTime > profile.startTime;
   traceReceipt = { path, bytes: bytes.length, samples: profile.samples?.length, truncated, positiveControl, settings: traceSettings, overhead: "Diagnostic CPU sampling only, excluded from formal no-trace matrix. No exhaustive timeline/layout/GC attribution or peak-memory claim." };
   if (truncated || !positiveControl) throw new Error("CPU profile truncated or positive control missing");
 }
