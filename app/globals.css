@@ -1469,6 +1469,7 @@ input[type="date"], input[type="number"] { color-scheme: light; }
 .overlay-options > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .recording-options { margin-top: 17px; background: #fcfcfd; }
 .recording-options > .session-identity { margin: 0; padding: 16px; }
+.session-identity > .arm-recording-settings:has(details[open]) { grid-column: 1 / -1; }
 .review-tool { overflow: hidden; margin-top: 15px; }
 .review-tool > .session-file-validator, .review-tool > .training-weekly-report { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .video-workspace-bar { padding: 13px 16px; flex-wrap: wrap; gap: 9px; background: #f9fafb; }

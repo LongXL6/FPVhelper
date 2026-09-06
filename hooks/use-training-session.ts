@@ -70,6 +70,7 @@ interface UseTrainingSessionOptions {
   inputKey: string;
   subscribeSamples?: SubscribeTelemetrySamples;
   finishCompanionRecording?: () => Promise<LocalVideoRecordingReceipt | null>;
+  stopOnTelemetryLoss?: boolean;
 }
 
 export interface TrainingSessionExportResult {
@@ -124,7 +125,7 @@ interface TrainingSessionController {
   exportDirectoryName: string | null;
   canStart: boolean;
   startRecording: () => Promise<string | null>;
-  stopRecording: () => Promise<void>;
+  stopRecording: (interruptionReason?: TrainingSessionInterruptionReason) => Promise<void>;
   isSessionRecording: (sessionId: string) => boolean;
   createExportFileWritable: (filename: string) => Promise<TrainingSessionDirectoryWritable>;
   retryPendingSave: () => Promise<void>;
@@ -160,6 +161,7 @@ export function useTrainingSession({
   inputKey,
   subscribeSamples,
   finishCompanionRecording,
+  stopOnTelemetryLoss = true,
 }: UseTrainingSessionOptions): TrainingSessionController {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -199,6 +201,7 @@ export function useTrainingSession({
   const companionFinishingRef = useRef(false);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
+  const finishRecordingPromiseRef = useRef<Promise<void> | null>(null);
   const workstationIdRef = useRef<string | null>(null);
   const terminationRef = useRef<TrainingSessionTermination | null>(null);
   const noteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -677,7 +680,7 @@ export function useTrainingSession({
     setIsFinishing(false);
   }, [autoExport, exportStoredSessionToDirectory, persistDraft, refreshSessions]);
 
-  const finishRecording = useCallback(async (
+  const finishRecordingWork = useCallback(async (
     interrupted: boolean,
     interruptionReason: TrainingSessionInterruptionReason | null = null,
   ) => {
@@ -729,7 +732,25 @@ export function useTrainingSession({
     await persistPendingSession();
   }, [finishCompanionRecording, persistPendingSession]);
 
-  const stopRecording = useCallback(() => linkState === "lost"
+  const finishRecording = useCallback((
+    interrupted: boolean,
+    interruptionReason: TrainingSessionInterruptionReason | null = null,
+  ): Promise<void> => {
+    const previous = finishRecordingPromiseRef.current;
+    // A concurrent stop may upgrade the interruption reason, but must still wait
+    // for the original companion video and storage writes to finish.
+    const operation = Promise.all([previous, finishRecordingWork(interrupted, interruptionReason)])
+      .then(() => undefined)
+      .finally(() => {
+        if (finishRecordingPromiseRef.current === operation) finishRecordingPromiseRef.current = null;
+      });
+    finishRecordingPromiseRef.current = operation;
+    return operation;
+  }, [finishRecordingWork]);
+
+  const stopRecording = useCallback((interruptionReason?: TrainingSessionInterruptionReason) => interruptionReason
+    ? finishRecording(true, interruptionReason)
+    : linkState === "lost"
     ? finishRecording(true, "rx_link_lost")
     : finishRecording(false), [finishRecording, linkState]);
   const retryPendingSave = useCallback(() => persistPendingSession(), [persistPendingSession]);
@@ -781,19 +802,19 @@ export function useTrainingSession({
   }, [finishRecording, inputKey, isRecording]);
 
   useEffect(() => {
-    if (!isRecording) return;
+    if (!isRecording || !stopOnTelemetryLoss) return;
     if (recordingInputKeyRef.current !== inputKey) return;
     if (source !== "serial" || connection !== "live") {
       void finishRecording(true, "telemetry_unavailable");
     }
-  }, [connection, finishRecording, inputKey, isRecording, source]);
+  }, [connection, finishRecording, inputKey, isRecording, source, stopOnTelemetryLoss]);
 
   useEffect(() => {
-    if (recordingInputKeyRef.current !== inputKey) return;
+    if (!stopOnTelemetryLoss || recordingInputKeyRef.current !== inputKey) return;
     if (linkState === "lost" && (isRecording || draftRef.current || pendingSessionRef.current)) {
       void finishRecording(true, "rx_link_lost");
     }
-  }, [finishRecording, inputKey, isRecording, linkState]);
+  }, [finishRecording, inputKey, isRecording, linkState, stopOnTelemetryLoss]);
 
   useEffect(() => {
     if (!isRecording) return;
