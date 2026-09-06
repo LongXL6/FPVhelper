@@ -1,0 +1,57 @@
+{
+  "classification": "Actual Computer Use product UI and separate test fault-control UI; not independent raw filesystem/IDB audit",
+  "sourceSha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+  "treeSha": "c4267b8fa5e9b2792b992e23a1aedb523e470b36",
+  "ordinaryBuildId": "Ug5KVuGzL2RqK2l5oq1iI",
+  "directoryInjectionSha256": "41f1c8c44870883b17b1c889c49c4a61c0924534d6d531aaa5f4306de77d5350",
+  "recordedAtUtc": "2026-09-06T16:02:36.693907+00:00",
+  "tool": "mcp__cua_repl.js",
+  "surface": "Codex IAB",
+  "productTab": "8",
+  "controlTab": "9",
+  "origin": "http://127.0.0.1:3140",
+  "scenario": "mediaGate=after-close, jsonGate=first, directoryFixture=phase2a-r1",
+  "pilot": "PHASE2A-R1-CUA",
+  "recordIdPrefix": "2ce24394",
+  "samplesShown": 2169,
+  "durationShown": "00:25 / live card00:25.5",
+  "actions": [
+    "open dedicated product page",
+    "open save settings and click Choose folder; observed D1",
+    "fill synthetic pilot; connect synthetic bridge and video via product buttons",
+    "click Start then Stop; observe independently saved RC and pending video",
+    "click Export JSON; observe saving button while media pending",
+    "open separate fault controls; click Release media; receive test ack and independently observe product confirmed media with JSON still saving",
+    "return to live product settings; click Change folder; observe D2 while early JSON remains pending",
+    "control page click Release JSON; receive test ack; independently observe product automatic final -v2 JSON written to D1",
+    "open Training Records; observe same ID/count and confirmed video/latest export",
+    "explicit product Export JSON; observe write to D2",
+    "close both owned tabs and verify absent"
+  ],
+  "observedAutomaticExport": {
+    "filename": "fpv-session-20260906-185741-PHASE2A-R1-CUA-2ce24394-v2.json",
+    "directory": "D1",
+    "writeAndCloseConfirmedShown": true
+  },
+  "observedLaterManualExport": {
+    "filename": "fpv-session-20260906-185741-PHASE2A-R1-CUA-2ce24394.json",
+    "directory": "D2",
+    "writeAndCloseConfirmedShown": true
+  },
+  "inputAndFaultBoundary": "Only pre-navigation synthetic transport/canvas and test-only gate controls. No product refs/state/DOM altered; no Session reseeding. Separate control page does not load product or own capture lock. Acks alone are not business result proof; product state was read afterward.",
+  "screenshots": {
+    "inlineActualImages": 3,
+    "pngFilesExported": false
+  },
+  "limits": [
+    "Filesystem directory contents/bytes/hashes and full samples were not independently read by these CUA actions; rely on separately identified automated native-browser evidence for those claims",
+    "Previous Phase2A original-tab reload/dialog and error-tab4 cleanup gaps remain; no native app or URL policy bypass attempted in this new scenario",
+    "Synthetic capture only, no physical device/endurance/synchronization claim"
+  ],
+  "cleanup": {
+    "tabs8and9ClosedAndAbsent": true,
+    "existingChatGPTTabsAndUserLocalhost3101TabUntouched": true,
+    "databaseAndFilesNotDeleted": true,
+    "serversReleasedToExecutorForCleanup": true
+  }
+}

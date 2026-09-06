@@ -1,0 +1,37 @@
+[
+  {
+    "classification": "Confirmed D1 to D2 wrong destination, original product0ee plus test addition; build y_m1dY8QsQl-yJexWGtbM",
+    "originalLocalPath": "output/playwright/phase2a-directory-binding/red.log",
+    "originalSha256": "bb410755b45a49ea9a1889386e44652f29ecf0790fe304a665845361bcd81b0e",
+    "excerpt": [
+      "    Error: expect(received).toHaveLength(expected)",
+      "    Expected length: 0",
+      "    Received length: 1",
+      "      132 |  const early=d1.find(f=>f.json&&!f.json.video.recorded)!.json!,late=d1.find(f=>f.json?.video.recorded)!.json!;",
+      "    output/playwright/phase2a-directory-binding/red/rc-finalization.e2e.ts-aut-e9743-e-the-user-switches-folders-chromium-smoke/test-failed-1.png",
+      "  1 failed"
+    ]
+  },
+  {
+    "classification": "a42f0e3 candidate30/31: full/crop saved Session snapshot read before its media association transaction. Added explicit media/export transaction handshake; retained original assertions.",
+    "originalLocalPath": "output/playwright/phase2a-directory-binding/full-smoke.log",
+    "originalSha256": "18ef9d83a389c507290dfa309ecbb0498c0d1923d6577ec302d0b6b8e8c7a27b",
+    "excerpt": [
+      "    Error: expect(received).toMatchObject(expected)",
+      "    -   \"recorded\": true,",
+      "    +   \"recorded\": false,",
+      "    > 557 |     expect(session.video).toMatchObject({ recorded: true, synchronized: false, overlay: \"sticks\" });",
+      "      558 |     if (!session.video.recorded) throw new Error(`Missing confirmed video receipt for ${session.id}`);",
+      "    output/playwright/phase2a-directory-binding/full-smoke/fpv-control-room.e2e.ts-ac-75e08-the-authorized-local-folder-chromium-smoke/test-failed-1.png",
+      "[25/31] [chromium-smoke] \u203a e2e/rc-finalization.e2e.ts:96:5 \u203a failed media association retries the receipt without another recording or media file",
+      "  1 failed",
+      "  30 passed (56.4s)"
+    ]
+  },
+  {
+    "classification": "CUA proxy first launch failed before serving; no source/build mutation. Node default strip-only rejected self-test class parameter property. Relaunch using --experimental-transform-types succeeded.",
+    "evidence": "Executor tool output; no standalone first-launch log captured",
+    "error": "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: TypeScript parameter property is not supported in strip-only mode",
+    "failedCommand": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/phase2a-cua-proxy.mts --output output/playwright/phase2a-directory-binding/cua-proxy"
+  }
+]

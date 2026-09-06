@@ -1,0 +1,967 @@
+{
+  "s1": {
+    "schemaVersion": 2,
+    "id": "7043869a-1b32-4a95-baad-aa9b9ade433a",
+    "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+    "build": "0.6.1+local",
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "exportedAt": null,
+    "exportCount": 0,
+    "startedAt": "2026-09-06T15:52:15.772Z",
+    "endedAt": "2026-09-06T15:52:16.913Z",
+    "durationMs": 1141.1,
+    "initialSource": "ground_rc",
+    "dataSources": [
+      "ground_rc"
+    ],
+    "sampleCount": 114,
+    "estimatedRcSampleRateHz": 100.11,
+    "interrupted": false,
+    "interruptionReason": null,
+    "timing": {
+      "clock": "performance.now",
+      "wallClockStartedAt": "2026-09-06T18:52:15.772+03:00",
+      "videoOffsetCalibrated": false
+    },
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": null,
+      "media": {
+        "state": "pending",
+        "operationId": "51d0d0fb-47dd-4d84-87c7-1763ae0ff7fd"
+      }
+    },
+    "captureQuality": {
+      "version": 1,
+      "basis": "stored_host_receive_timestamps",
+      "targetPollHz": 100,
+      "source": "ground_rc",
+      "sampleCount": 114,
+      "positiveIntervalCount": 113,
+      "zeroIntervalCount": 0,
+      "negativeIntervalCount": 0,
+      "invalidIntervalCount": 0,
+      "intervalStatsBasis": "positive_adjacent_intervals_only",
+      "quantileMethod": "linear_interpolation",
+      "intervalStatsMs": {
+        "median": 10.1,
+        "p95": 11.8,
+        "p99": 12.776,
+        "max": 12.8
+      },
+      "gapThresholdMs": 50,
+      "gaps": [],
+      "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+      "usablePeriods": [
+        {
+          "source": "ground_rc",
+          "startSampleIndex": 0,
+          "endSampleIndex": 113,
+          "startElapsedMs": 7.8,
+          "endElapsedMs": 1136.6,
+          "durationMs": 1128.8
+        }
+      ],
+      "rfPacketLossMeasured": false
+    },
+    "captureContext": {
+      "version": 1,
+      "timestamp": {
+        "field": "samples.elapsedMs",
+        "clock": "performance.now",
+        "unit": "ms",
+        "origin": "session_start",
+        "meaning": "host_rc_frame_decode_time",
+        "resolution": "browser_dependent",
+        "batchingPossible": true
+      },
+      "sequence": {
+        "field": "samples.sequence",
+        "meaning": "host_generated_frame_counter",
+        "airPacketSequence": false
+      },
+      "channels": {
+        "field": "samples.channelsUs",
+        "unit": "us",
+        "order": "roll_pitch_yaw_throttle_then_aux",
+        "origin": "msp_rc_payload_or_demo_generator"
+      },
+      "normalization": {
+        "axisMidpointUs": 1500,
+        "axisHalfRangeUs": 500,
+        "axisPercentMinimum": -100,
+        "axisPercentMaximum": 100,
+        "throttleMinimumUs": 1000,
+        "throttleMaximumUs": 2000,
+        "throttlePercentMinimum": 0,
+        "throttlePercentMaximum": 100,
+        "clamped": true
+      },
+      "deviceSampleRateHz": null,
+      "rfPacketLossMeasured": false
+    },
+    "markers": [],
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "samplePayload": {
+      "count": 114,
+      "canonicalSha256": "d0b521507e0963fbe4703db84b56bb9c994b83499389af6c265a80eb224afa77",
+      "firstSequence": 13,
+      "lastSequence": 126
+    }
+  },
+  "draft": {
+    "schemaVersion": 2,
+    "id": "9edcf505-d37f-4fc0-903d-cf1813d8d27c",
+    "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+    "build": "0.6.1+local",
+    "athleteCode": "PHASE2A-E2E",
+    "startedAt": "2026-09-06T15:52:17.220Z",
+    "wallClockStartedAt": "2026-09-06T18:52:17.220+03:00",
+    "startedMonotonicMs": 1712.7999999821186,
+    "initialSource": "ground_rc",
+    "markers": [],
+    "samplePayload": {
+      "count": 101,
+      "canonicalSha256": "c8e4736db40940cb7e48689887c0d7d47b64f473e64d46576a23d7f6122339d1",
+      "firstSequence": 158,
+      "lastSequence": 258
+    }
+  },
+  "stored": [
+    {
+      "schemaVersion": 2,
+      "id": "7043869a-1b32-4a95-baad-aa9b9ade433a",
+      "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+      "build": "0.6.1+local",
+      "athleteCode": "PHASE2A-E2E",
+      "notes": null,
+      "exportedAt": "2026-09-06T15:52:19.197Z",
+      "exportCount": 2,
+      "startedAt": "2026-09-06T15:52:15.772Z",
+      "endedAt": "2026-09-06T15:52:16.913Z",
+      "durationMs": 1141.1,
+      "initialSource": "ground_rc",
+      "dataSources": [
+        "ground_rc"
+      ],
+      "sampleCount": 114,
+      "estimatedRcSampleRateHz": 100.11,
+      "interrupted": false,
+      "interruptionReason": null,
+      "timing": {
+        "clock": "performance.now",
+        "wallClockStartedAt": "2026-09-06T18:52:15.772+03:00",
+        "videoOffsetCalibrated": false
+      },
+      "video": {
+        "recorded": true,
+        "synchronized": false,
+        "receiptVersion": 1,
+        "receiptEvidence": "write_and_close_resolved",
+        "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+        "mimeType": "video/mp4;codecs=avc1",
+        "bytes": 92784,
+        "startedAtEpochMs": 1788709935814,
+        "finishedAtEpochMs": 1788709937086,
+        "overlay": "sticks",
+        "overlayTiming": "latest_available_host_sample"
+      },
+      "finalization": {
+        "version": 1,
+        "contentRevision": 1,
+        "confirmedExportRevision": 1,
+        "media": {
+          "state": "recorded",
+          "operationId": "51d0d0fb-47dd-4d84-87c7-1763ae0ff7fd"
+        }
+      },
+      "captureQuality": {
+        "version": 1,
+        "basis": "stored_host_receive_timestamps",
+        "targetPollHz": 100,
+        "source": "ground_rc",
+        "sampleCount": 114,
+        "positiveIntervalCount": 113,
+        "zeroIntervalCount": 0,
+        "negativeIntervalCount": 0,
+        "invalidIntervalCount": 0,
+        "intervalStatsBasis": "positive_adjacent_intervals_only",
+        "quantileMethod": "linear_interpolation",
+        "intervalStatsMs": {
+          "median": 10.1,
+          "p95": 11.8,
+          "p99": 12.776,
+          "max": 12.8
+        },
+        "gapThresholdMs": 50,
+        "gaps": [],
+        "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+        "usablePeriods": [
+          {
+            "source": "ground_rc",
+            "startSampleIndex": 0,
+            "endSampleIndex": 113,
+            "startElapsedMs": 7.8,
+            "endElapsedMs": 1136.6,
+            "durationMs": 1128.8
+          }
+        ],
+        "rfPacketLossMeasured": false
+      },
+      "captureContext": {
+        "version": 1,
+        "timestamp": {
+          "field": "samples.elapsedMs",
+          "clock": "performance.now",
+          "unit": "ms",
+          "origin": "session_start",
+          "meaning": "host_rc_frame_decode_time",
+          "resolution": "browser_dependent",
+          "batchingPossible": true
+        },
+        "sequence": {
+          "field": "samples.sequence",
+          "meaning": "host_generated_frame_counter",
+          "airPacketSequence": false
+        },
+        "channels": {
+          "field": "samples.channelsUs",
+          "unit": "us",
+          "order": "roll_pitch_yaw_throttle_then_aux",
+          "origin": "msp_rc_payload_or_demo_generator"
+        },
+        "normalization": {
+          "axisMidpointUs": 1500,
+          "axisHalfRangeUs": 500,
+          "axisPercentMinimum": -100,
+          "axisPercentMaximum": 100,
+          "throttleMinimumUs": 1000,
+          "throttleMaximumUs": 2000,
+          "throttlePercentMinimum": 0,
+          "throttlePercentMaximum": 100,
+          "clamped": true
+        },
+        "deviceSampleRateHz": null,
+        "rfPacketLossMeasured": false
+      },
+      "markers": [],
+      "validity": {
+        "valid": false,
+        "reasons": [
+          "too_short",
+          "too_few_unique_samples"
+        ]
+      },
+      "samplePayload": {
+        "count": 114,
+        "canonicalSha256": "d0b521507e0963fbe4703db84b56bb9c994b83499389af6c265a80eb224afa77",
+        "firstSequence": 13,
+        "lastSequence": 126
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "id": "9edcf505-d37f-4fc0-903d-cf1813d8d27c",
+      "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+      "build": "0.6.1+local",
+      "athleteCode": "PHASE2A-E2E",
+      "notes": null,
+      "exportedAt": "2026-09-06T15:52:19.314Z",
+      "exportCount": 1,
+      "startedAt": "2026-09-06T15:52:17.220Z",
+      "endedAt": "2026-09-06T15:52:19.274Z",
+      "durationMs": 2053.6,
+      "initialSource": "ground_rc",
+      "dataSources": [
+        "ground_rc"
+      ],
+      "sampleCount": 205,
+      "estimatedRcSampleRateHz": 99.95,
+      "interrupted": false,
+      "interruptionReason": null,
+      "timing": {
+        "clock": "performance.now",
+        "wallClockStartedAt": "2026-09-06T18:52:17.220+03:00",
+        "videoOffsetCalibrated": false
+      },
+      "video": {
+        "recorded": true,
+        "synchronized": false,
+        "receiptVersion": 1,
+        "receiptEvidence": "write_and_close_resolved",
+        "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+        "mimeType": "video/mp4;codecs=avc1",
+        "bytes": 155799,
+        "startedAtEpochMs": 1788709937259,
+        "finishedAtEpochMs": 1788709939282,
+        "overlay": "sticks",
+        "overlayTiming": "latest_available_host_sample"
+      },
+      "finalization": {
+        "version": 1,
+        "contentRevision": 1,
+        "confirmedExportRevision": 1,
+        "media": {
+          "state": "recorded",
+          "operationId": "915826f8-d1ba-4d6d-a663-89708c887de9"
+        }
+      },
+      "captureQuality": {
+        "version": 1,
+        "basis": "stored_host_receive_timestamps",
+        "targetPollHz": 100,
+        "source": "ground_rc",
+        "sampleCount": 205,
+        "positiveIntervalCount": 204,
+        "zeroIntervalCount": 0,
+        "negativeIntervalCount": 0,
+        "invalidIntervalCount": 0,
+        "intervalStatsBasis": "positive_adjacent_intervals_only",
+        "quantileMethod": "linear_interpolation",
+        "intervalStatsMs": {
+          "median": 10,
+          "p95": 11.5,
+          "p99": 12.382,
+          "max": 13.2
+        },
+        "gapThresholdMs": 50,
+        "gaps": [],
+        "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+        "usablePeriods": [
+          {
+            "source": "ground_rc",
+            "startSampleIndex": 0,
+            "endSampleIndex": 204,
+            "startElapsedMs": 8.3,
+            "endElapsedMs": 2049.4,
+            "durationMs": 2041.1
+          }
+        ],
+        "rfPacketLossMeasured": false
+      },
+      "captureContext": {
+        "version": 1,
+        "timestamp": {
+          "field": "samples.elapsedMs",
+          "clock": "performance.now",
+          "unit": "ms",
+          "origin": "session_start",
+          "meaning": "host_rc_frame_decode_time",
+          "resolution": "browser_dependent",
+          "batchingPossible": true
+        },
+        "sequence": {
+          "field": "samples.sequence",
+          "meaning": "host_generated_frame_counter",
+          "airPacketSequence": false
+        },
+        "channels": {
+          "field": "samples.channelsUs",
+          "unit": "us",
+          "order": "roll_pitch_yaw_throttle_then_aux",
+          "origin": "msp_rc_payload_or_demo_generator"
+        },
+        "normalization": {
+          "axisMidpointUs": 1500,
+          "axisHalfRangeUs": 500,
+          "axisPercentMinimum": -100,
+          "axisPercentMaximum": 100,
+          "throttleMinimumUs": 1000,
+          "throttleMaximumUs": 2000,
+          "throttlePercentMinimum": 0,
+          "throttlePercentMaximum": 100,
+          "clamped": true
+        },
+        "deviceSampleRateHz": null,
+        "rfPacketLossMeasured": false
+      },
+      "markers": [],
+      "validity": {
+        "valid": false,
+        "reasons": [
+          "too_short",
+          "too_few_unique_samples"
+        ]
+      },
+      "samplePayload": {
+        "count": 205,
+        "canonicalSha256": "734467e048bc42f8d614617376251e3bbc30c30183753f013d0ca24b0190edca",
+        "firstSequence": 158,
+        "lastSequence": 362
+      }
+    }
+  ],
+  "d1": [
+    {
+      "name": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+      "bytes": 92784,
+      "sha256": "f782d64a291ec83ea9e7524b6037a2a8a14a71c7835a9dc9b7651e2231fe6b51",
+      "header": [
+        0,
+        0,
+        0,
+        36,
+        102,
+        116,
+        121,
+        112,
+        105,
+        115,
+        111,
+        109
+      ]
+    },
+    {
+      "name": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a.json",
+      "bytes": 35279,
+      "sha256": "1230cfec4eefad46c431d7df0855983d1ffec39ab388755707489e551ff72cc3",
+      "header": [
+        123,
+        34,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        86,
+        101,
+        114,
+        115
+      ],
+      "json": {
+        "schemaVersion": 2,
+        "id": "7043869a-1b32-4a95-baad-aa9b9ade433a",
+        "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+        "build": "0.6.1+local",
+        "athleteCode": "PHASE2A-E2E",
+        "notes": null,
+        "exportedAt": "2026-09-06T15:52:16.985Z",
+        "exportCount": 1,
+        "startedAt": "2026-09-06T15:52:15.772Z",
+        "endedAt": "2026-09-06T15:52:16.913Z",
+        "durationMs": 1141.1,
+        "initialSource": "ground_rc",
+        "dataSources": [
+          "ground_rc"
+        ],
+        "sampleCount": 114,
+        "estimatedRcSampleRateHz": 100.11,
+        "interrupted": false,
+        "interruptionReason": null,
+        "timing": {
+          "clock": "performance.now",
+          "wallClockStartedAt": "2026-09-06T18:52:15.772+03:00",
+          "videoOffsetCalibrated": false
+        },
+        "video": {
+          "recorded": false,
+          "synchronized": false
+        },
+        "finalization": {
+          "version": 1,
+          "contentRevision": 0,
+          "confirmedExportRevision": 0,
+          "media": {
+            "state": "pending",
+            "operationId": "51d0d0fb-47dd-4d84-87c7-1763ae0ff7fd"
+          }
+        },
+        "captureQuality": {
+          "version": 1,
+          "basis": "stored_host_receive_timestamps",
+          "targetPollHz": 100,
+          "source": "ground_rc",
+          "sampleCount": 114,
+          "positiveIntervalCount": 113,
+          "zeroIntervalCount": 0,
+          "negativeIntervalCount": 0,
+          "invalidIntervalCount": 0,
+          "intervalStatsBasis": "positive_adjacent_intervals_only",
+          "quantileMethod": "linear_interpolation",
+          "intervalStatsMs": {
+            "median": 10.1,
+            "p95": 11.8,
+            "p99": 12.776,
+            "max": 12.8
+          },
+          "gapThresholdMs": 50,
+          "gaps": [],
+          "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+          "usablePeriods": [
+            {
+              "source": "ground_rc",
+              "startSampleIndex": 0,
+              "endSampleIndex": 113,
+              "startElapsedMs": 7.8,
+              "endElapsedMs": 1136.6,
+              "durationMs": 1128.8
+            }
+          ],
+          "rfPacketLossMeasured": false
+        },
+        "captureContext": {
+          "version": 1,
+          "timestamp": {
+            "field": "samples.elapsedMs",
+            "clock": "performance.now",
+            "unit": "ms",
+            "origin": "session_start",
+            "meaning": "host_rc_frame_decode_time",
+            "resolution": "browser_dependent",
+            "batchingPossible": true
+          },
+          "sequence": {
+            "field": "samples.sequence",
+            "meaning": "host_generated_frame_counter",
+            "airPacketSequence": false
+          },
+          "channels": {
+            "field": "samples.channelsUs",
+            "unit": "us",
+            "order": "roll_pitch_yaw_throttle_then_aux",
+            "origin": "msp_rc_payload_or_demo_generator"
+          },
+          "normalization": {
+            "axisMidpointUs": 1500,
+            "axisHalfRangeUs": 500,
+            "axisPercentMinimum": -100,
+            "axisPercentMaximum": 100,
+            "throttleMinimumUs": 1000,
+            "throttleMaximumUs": 2000,
+            "throttlePercentMinimum": 0,
+            "throttlePercentMaximum": 100,
+            "clamped": true
+          },
+          "deviceSampleRateHz": null,
+          "rfPacketLossMeasured": false
+        },
+        "markers": [],
+        "validity": {
+          "valid": false,
+          "reasons": [
+            "too_short",
+            "too_few_unique_samples"
+          ]
+        },
+        "samplePayload": {
+          "count": 114,
+          "canonicalSha256": "d0b521507e0963fbe4703db84b56bb9c994b83499389af6c265a80eb224afa77",
+          "firstSequence": 13,
+          "lastSequence": 126
+        }
+      }
+    },
+    {
+      "name": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a-v2.json",
+      "bytes": 35594,
+      "sha256": "a1c8c6d10d91d12e9ac6bdaf5a40bd642c3b59a4694559c335d7d5b7098acc8d",
+      "header": [
+        123,
+        34,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        86,
+        101,
+        114,
+        115
+      ],
+      "json": {
+        "schemaVersion": 2,
+        "id": "7043869a-1b32-4a95-baad-aa9b9ade433a",
+        "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+        "build": "0.6.1+local",
+        "athleteCode": "PHASE2A-E2E",
+        "notes": null,
+        "exportedAt": "2026-09-06T15:52:19.197Z",
+        "exportCount": 2,
+        "startedAt": "2026-09-06T15:52:15.772Z",
+        "endedAt": "2026-09-06T15:52:16.913Z",
+        "durationMs": 1141.1,
+        "initialSource": "ground_rc",
+        "dataSources": [
+          "ground_rc"
+        ],
+        "sampleCount": 114,
+        "estimatedRcSampleRateHz": 100.11,
+        "interrupted": false,
+        "interruptionReason": null,
+        "timing": {
+          "clock": "performance.now",
+          "wallClockStartedAt": "2026-09-06T18:52:15.772+03:00",
+          "videoOffsetCalibrated": false
+        },
+        "video": {
+          "recorded": true,
+          "synchronized": false,
+          "receiptVersion": 1,
+          "receiptEvidence": "write_and_close_resolved",
+          "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+          "mimeType": "video/mp4;codecs=avc1",
+          "bytes": 92784,
+          "startedAtEpochMs": 1788709935814,
+          "finishedAtEpochMs": 1788709937086,
+          "overlay": "sticks",
+          "overlayTiming": "latest_available_host_sample"
+        },
+        "finalization": {
+          "version": 1,
+          "contentRevision": 1,
+          "confirmedExportRevision": 1,
+          "media": {
+            "state": "recorded",
+            "operationId": "51d0d0fb-47dd-4d84-87c7-1763ae0ff7fd"
+          }
+        },
+        "captureQuality": {
+          "version": 1,
+          "basis": "stored_host_receive_timestamps",
+          "targetPollHz": 100,
+          "source": "ground_rc",
+          "sampleCount": 114,
+          "positiveIntervalCount": 113,
+          "zeroIntervalCount": 0,
+          "negativeIntervalCount": 0,
+          "invalidIntervalCount": 0,
+          "intervalStatsBasis": "positive_adjacent_intervals_only",
+          "quantileMethod": "linear_interpolation",
+          "intervalStatsMs": {
+            "median": 10.1,
+            "p95": 11.8,
+            "p99": 12.776,
+            "max": 12.8
+          },
+          "gapThresholdMs": 50,
+          "gaps": [],
+          "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+          "usablePeriods": [
+            {
+              "source": "ground_rc",
+              "startSampleIndex": 0,
+              "endSampleIndex": 113,
+              "startElapsedMs": 7.8,
+              "endElapsedMs": 1136.6,
+              "durationMs": 1128.8
+            }
+          ],
+          "rfPacketLossMeasured": false
+        },
+        "captureContext": {
+          "version": 1,
+          "timestamp": {
+            "field": "samples.elapsedMs",
+            "clock": "performance.now",
+            "unit": "ms",
+            "origin": "session_start",
+            "meaning": "host_rc_frame_decode_time",
+            "resolution": "browser_dependent",
+            "batchingPossible": true
+          },
+          "sequence": {
+            "field": "samples.sequence",
+            "meaning": "host_generated_frame_counter",
+            "airPacketSequence": false
+          },
+          "channels": {
+            "field": "samples.channelsUs",
+            "unit": "us",
+            "order": "roll_pitch_yaw_throttle_then_aux",
+            "origin": "msp_rc_payload_or_demo_generator"
+          },
+          "normalization": {
+            "axisMidpointUs": 1500,
+            "axisHalfRangeUs": 500,
+            "axisPercentMinimum": -100,
+            "axisPercentMaximum": 100,
+            "throttleMinimumUs": 1000,
+            "throttleMaximumUs": 2000,
+            "throttlePercentMinimum": 0,
+            "throttlePercentMaximum": 100,
+            "clamped": true
+          },
+          "deviceSampleRateHz": null,
+          "rfPacketLossMeasured": false
+        },
+        "markers": [],
+        "validity": {
+          "valid": false,
+          "reasons": [
+            "too_short",
+            "too_few_unique_samples"
+          ]
+        },
+        "samplePayload": {
+          "count": 114,
+          "canonicalSha256": "d0b521507e0963fbe4703db84b56bb9c994b83499389af6c265a80eb224afa77",
+          "firstSequence": 13,
+          "lastSequence": 126
+        }
+      }
+    }
+  ],
+  "d2": [
+    {
+      "name": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+      "bytes": 155799,
+      "sha256": "326a8f8187c4602a5634f18a47b179d1d9b329b825f89ba75db78487666b330a",
+      "header": [
+        0,
+        0,
+        0,
+        36,
+        102,
+        116,
+        121,
+        112,
+        105,
+        115,
+        111,
+        109
+      ]
+    },
+    {
+      "name": "fpv-session-20260906-185217-PHASE2A-E2E-9edcf505.json",
+      "bytes": 62793,
+      "sha256": "a6473769590bd1019544fc4c4d3b179d3f17960e2953454a543f5f244eda7a26",
+      "header": [
+        123,
+        34,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        86,
+        101,
+        114,
+        115
+      ],
+      "json": {
+        "schemaVersion": 2,
+        "id": "9edcf505-d37f-4fc0-903d-cf1813d8d27c",
+        "workstationId": "d766e8e9-e3af-4fda-a8f8-14a976beec8b",
+        "build": "0.6.1+local",
+        "athleteCode": "PHASE2A-E2E",
+        "notes": null,
+        "exportedAt": "2026-09-06T15:52:19.314Z",
+        "exportCount": 1,
+        "startedAt": "2026-09-06T15:52:17.220Z",
+        "endedAt": "2026-09-06T15:52:19.274Z",
+        "durationMs": 2053.6,
+        "initialSource": "ground_rc",
+        "dataSources": [
+          "ground_rc"
+        ],
+        "sampleCount": 205,
+        "estimatedRcSampleRateHz": 99.95,
+        "interrupted": false,
+        "interruptionReason": null,
+        "timing": {
+          "clock": "performance.now",
+          "wallClockStartedAt": "2026-09-06T18:52:17.220+03:00",
+          "videoOffsetCalibrated": false
+        },
+        "video": {
+          "recorded": true,
+          "synchronized": false,
+          "receiptVersion": 1,
+          "receiptEvidence": "write_and_close_resolved",
+          "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+          "mimeType": "video/mp4;codecs=avc1",
+          "bytes": 155799,
+          "startedAtEpochMs": 1788709937259,
+          "finishedAtEpochMs": 1788709939282,
+          "overlay": "sticks",
+          "overlayTiming": "latest_available_host_sample"
+        },
+        "finalization": {
+          "version": 1,
+          "contentRevision": 1,
+          "confirmedExportRevision": 1,
+          "media": {
+            "state": "recorded",
+            "operationId": "915826f8-d1ba-4d6d-a663-89708c887de9"
+          }
+        },
+        "captureQuality": {
+          "version": 1,
+          "basis": "stored_host_receive_timestamps",
+          "targetPollHz": 100,
+          "source": "ground_rc",
+          "sampleCount": 205,
+          "positiveIntervalCount": 204,
+          "zeroIntervalCount": 0,
+          "negativeIntervalCount": 0,
+          "invalidIntervalCount": 0,
+          "intervalStatsBasis": "positive_adjacent_intervals_only",
+          "quantileMethod": "linear_interpolation",
+          "intervalStatsMs": {
+            "median": 10,
+            "p95": 11.5,
+            "p99": 12.382,
+            "max": 13.2
+          },
+          "gapThresholdMs": 50,
+          "gaps": [],
+          "usablePeriodDefinition": "same_source_positive_intervals_at_or_below_gap_threshold",
+          "usablePeriods": [
+            {
+              "source": "ground_rc",
+              "startSampleIndex": 0,
+              "endSampleIndex": 204,
+              "startElapsedMs": 8.3,
+              "endElapsedMs": 2049.4,
+              "durationMs": 2041.1
+            }
+          ],
+          "rfPacketLossMeasured": false
+        },
+        "captureContext": {
+          "version": 1,
+          "timestamp": {
+            "field": "samples.elapsedMs",
+            "clock": "performance.now",
+            "unit": "ms",
+            "origin": "session_start",
+            "meaning": "host_rc_frame_decode_time",
+            "resolution": "browser_dependent",
+            "batchingPossible": true
+          },
+          "sequence": {
+            "field": "samples.sequence",
+            "meaning": "host_generated_frame_counter",
+            "airPacketSequence": false
+          },
+          "channels": {
+            "field": "samples.channelsUs",
+            "unit": "us",
+            "order": "roll_pitch_yaw_throttle_then_aux",
+            "origin": "msp_rc_payload_or_demo_generator"
+          },
+          "normalization": {
+            "axisMidpointUs": 1500,
+            "axisHalfRangeUs": 500,
+            "axisPercentMinimum": -100,
+            "axisPercentMaximum": 100,
+            "throttleMinimumUs": 1000,
+            "throttleMaximumUs": 2000,
+            "throttlePercentMinimum": 0,
+            "throttlePercentMaximum": 100,
+            "clamped": true
+          },
+          "deviceSampleRateHz": null,
+          "rfPacketLossMeasured": false
+        },
+        "markers": [],
+        "validity": {
+          "valid": false,
+          "reasons": [
+            "too_short",
+            "too_few_unique_samples"
+          ]
+        },
+        "samplePayload": {
+          "count": 205,
+          "canonicalSha256": "734467e048bc42f8d614617376251e3bbc30c30183753f013d0ca24b0190edca",
+          "firstSequence": 158,
+          "lastSequence": 362
+        }
+      }
+    }
+  ],
+  "gate": {
+    "mode": "after-close",
+    "events": [
+      {
+        "kind": "media-writable-created",
+        "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+        "atMs": 274.2999999821186
+      },
+      {
+        "kind": "media-close-entered",
+        "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+        "atMs": 1415.699999988079
+      },
+      {
+        "kind": "media-underlying-close-resolved",
+        "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+        "atMs": 1418
+      },
+      {
+        "kind": "json-writable-created",
+        "filename": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a.json",
+        "atMs": 1478
+      },
+      {
+        "kind": "json-close-entered",
+        "filename": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a.json",
+        "atMs": 1478.2999999821186
+      },
+      {
+        "kind": "gate-released",
+        "atMs": 1578
+      },
+      {
+        "kind": "media-close-returned",
+        "filename": "fpv-video-20260906-185215-PHASE2A-E2E-7043869a-full.mp4",
+        "atMs": 1578
+      },
+      {
+        "kind": "media-writable-created",
+        "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+        "atMs": 1722.699999988079
+      },
+      {
+        "kind": "json-gate-released",
+        "atMs": 3673.2999999821186
+      },
+      {
+        "kind": "json-close-returned",
+        "filename": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a.json",
+        "atMs": 3674.199999988079
+      },
+      {
+        "kind": "json-writable-created",
+        "filename": "fpv-session-20260906-185215-PHASE2A-E2E-7043869a-v2.json",
+        "atMs": 3689.9000000059605
+      },
+      {
+        "kind": "media-close-entered",
+        "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+        "atMs": 3773.5999999940395
+      },
+      {
+        "kind": "media-underlying-close-resolved",
+        "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+        "atMs": 3774.5
+      },
+      {
+        "kind": "media-close-returned",
+        "filename": "fpv-video-20260906-185217-PHASE2A-E2E-9edcf505-full.mp4",
+        "atMs": 3774.5
+      },
+      {
+        "kind": "json-writable-created",
+        "filename": "fpv-session-20260906-185217-PHASE2A-E2E-9edcf505.json",
+        "atMs": 3807.2999999821186
+      }
+    ]
+  }
+}
