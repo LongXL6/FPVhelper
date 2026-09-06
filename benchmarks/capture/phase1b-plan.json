@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "protocol": "fpvhelper-phase1b-ab/v1",
-  "status": "draft_pending_checks",
-  "formalMeasurementAllowed": false,
+  "status": "frozen",
+  "formalMeasurementAllowed": true,
   "baselineSha": "9ab7d90b6d4a8f3eac3c0c2e7825fc6a75846b84",
   "baselinePhase1ATestedSha": "62d757e1144d9dc93060d4f3243a52301fbcd4d0",
   "baselinePhase1APlanSha256": "419ef43b9d54d759cea4cfe4abeab34343ad8040e43a0664d03447e20fd73159",
@@ -210,5 +210,166 @@
     "sha256": "36289edfca36d906a8617fd3472f08d260e7f5ed118439e50e07dcf9c19702d9",
     "selfTest": "11 mathematical/edge checks passed; real-input execution occurs only after formal batch",
     "percentiles": "Per-boundary render duration uses linear interpolation; do not equate these values with different percentile methods or sum nested durations."
-  }
+  },
+  "preFreezeEvidence": {
+    "prototypeSourceShas": [
+      "d8fd8f4e20471b0823563c1e9599ac0b7285e514",
+      "86398a00bc55413d5d30c3fbfa8d4e20c484955e"
+    ],
+    "sourceDelta": "Only browser evidence retention and plan environment metadata changed after initial lifecycle controls; production hook unchanged. Final gates/builds bind the frozen tested commit separately.",
+    "files": [
+      {
+        "path": "output/playwright/phase1b-prerequisites/candidate-check-01.json",
+        "bytes": 282,
+        "sha256": "1827c344f1f4fe4f84b7b6b36ca0311fda4039b3233309ea8321e91072f877da"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/candidate-check-01.log",
+        "bytes": 455,
+        "sha256": "25b4c41e5ca54925fd85bb225d874e017eff7757bb7b7bf8d90e86a6a80680c6"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/recording-progress-red.json",
+        "bytes": 406,
+        "sha256": "019feb6deee4ce18a45cc4a19280d133d26f59003d54e9080106ff193139d955"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/recording-progress-red.log",
+        "bytes": 1826,
+        "sha256": "69f5ff97d997ca9c3361bc17b3a0a3003584ae0f81706a859614fe8b13e15354"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/recording-progress-candidate-01.json",
+        "bytes": 654,
+        "sha256": "af17047c9fa198f1e15267d62c3aa75b9c712395531ac929a8b2a3e225b03a64"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/recording-progress-candidate-01.log",
+        "bytes": 252,
+        "sha256": "720067dda3c59b85d5b51f00394f8d66e54ed104338c918ee2633feb3fb67509"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-validation-plan.json",
+        "bytes": 1175,
+        "sha256": "6bfd95e4429d59325bdac473b8bcfb6eb9337666dd6869a6369d502fff4f5de8"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-driver-01.log",
+        "bytes": 1334,
+        "sha256": "c744e4553c74744896135415795fb2c85306ae415c22ffcf1d2a2b4b55a3671b"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/ui-prototype-01.log",
+        "bytes": 2270,
+        "sha256": "1fcf44160af80949c54381e391461d346ffd8aefe644056326522490336ef519"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/ui-prototype-02.log",
+        "bytes": 2270,
+        "sha256": "d70b8fb49e14654c7ae3cc4d1189d01688a29d93220dadad5e6b7d4b28139814"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/ui-prototype-02/recording-progress.e2e.ts--733e0-ence-and-exact-final-values-chromium-smoke/recording-progress-dom-observation.json",
+        "bytes": 1772,
+        "sha256": "e60057dfc12d3f141e1d268253461ef0ee0859a4c7a255c83355b1503871467a"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/ui-prototype-02/recording-progress.e2e.ts--733e0-ence-and-exact-final-values-chromium-smoke/recording-progress-final-values.json",
+        "bytes": 879,
+        "sha256": "b60315f9feaef8e33985bbbb0ba5b96aa0ff385fa401de688903cab0306894df"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/summarize_phase1b.py",
+        "bytes": 23449,
+        "sha256": "36289edfca36d906a8617fd3472f08d260e7f5ed118439e50e07dcf9c19702d9"
+      },
+      {
+        "path": "output/playwright/phase1b-builds/prototype-01/builds.json",
+        "bytes": 1650,
+        "sha256": "69819128eaaf8c1dc2b47aca4c2b819109ce6bd0ec885ef1974aeb0556deb9ed"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-02-S4-P1-r1.summary.json",
+        "bytes": 43537,
+        "sha256": "943d075b8ab5f49e9df9d4479b28b951b499de24bac040e7bdc60be974a28959"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-01-S3-P1-r1.summary.json",
+        "bytes": 44467,
+        "sha256": "6f0bbf94b4f486e40b50123d413c03e4648de9c0aa446aac0823ef6f03dcb089"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/invocation-1788682874467.json",
+        "bytes": 50631,
+        "sha256": "ea5def802a5c36017e9a0a6abceab662687f1adca742224080b444c24b5313da"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-00-S2-P0-r1.summary.json",
+        "bytes": 5718,
+        "sha256": "7f577260a58ab0635ec5f2f501f0224df1d171798c8323d2f03b1b595bd5a633"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-02-S4-P1-r1.json.gz",
+        "bytes": 145341,
+        "sha256": "d79d5127abda390eebaf1006291379ef6ef4cf26610eccf3a0963c84985259c2"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-01-S3-P1-r1.json.gz",
+        "bytes": 342911,
+        "sha256": "5d4792a319313303b8122dda2e9ae12f949e613d94359b5ee1aee620020b28ea"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/formal-00-S2-P0-r1.json.gz",
+        "bytes": 17292,
+        "sha256": "cef050e024a13e2b85fa85c3ffe85ac837a0559abe47ba8a749712b0d359c993"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/invocation-1788682865654.json",
+        "bytes": 6710,
+        "sha256": "cb23dd5f05465aa8e56fffcca74d68a3d708b861587eef9f2978d034c3e1cee1"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/orchestrator.json",
+        "bytes": 3180,
+        "sha256": "962c6194d327884d7e614dfc7c1b86f747d912b039504bc59a741f53613aca7c"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/server-0-P.log",
+        "bytes": 153,
+        "sha256": "449cdb6365ddc8c73f88b1d2a3b27775c429358e966b65d53bf2c2d1cb05de88"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/batch-clock.json",
+        "bytes": 132,
+        "sha256": "31ddb577024d53ce856e504c14eec0c9d9f246b8163167fbd0a431f63bbda150"
+      },
+      {
+        "path": "output/playwright/phase1b-prerequisites/lifecycle-01/invocation-1788682882879.json",
+        "bytes": 49641,
+        "sha256": "07aaadbe75fdb10ca72c2d74b81e49c64d35ae9c2f164d50b80f1a569e71561d"
+      }
+    ],
+    "uiObservation": {
+      "observationMs": 2201.7000000178814,
+      "ordinaryChangedPairs": 8,
+      "observedUpdateGapsMs": [
+        211.40000000596046,
+        256.2999999821186
+      ],
+      "syntheticResponsesDuringWindow": 220,
+      "finalShownCounts": [
+        228,
+        228
+      ],
+      "storedSamples": 228,
+      "container": "mp4",
+      "videoBytes": 175417,
+      "limits": "DOM publication observation, not state setter count, paint latency, video FPS, physical timing or formal A/B performance. Boundary phase affects the observed frequency."
+    },
+    "lifecycleOutcome": "3/3 valid; owned server process closed; P0 disabled with zero events; P1 genuine mount/update/nested-update observed.",
+    "unitOutcome": "742 tests/typecheck/lint at prototype; 16 controlled progress tests plus 28 legacy tests passed; final exact-source gates required before formal launch.",
+    "retentionCorrection": "ui-prototype-01 passed but body attachments were not retained by line reporter; ui-prototype-02 writes actual JSON files; first log preserved."
+  },
+  "frozenAtUtc": "2026-09-06T08:32:06.264567+00:00",
+  "finalGateRequirement": "Before formal run, exact clean frozen tested B HEAD must pass full check and complete smoke suite; A/B canonical normal/profile builds must be analytics-disabled, with actual BUILD_ID receipts. Smoke builds have a separate analytics-test configuration and are not reused for the formal comparison."
 }
