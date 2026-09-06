@@ -1,0 +1,374 @@
+{
+  "warmupMs": 5000,
+  "windowMs": 20000,
+  "drainMs": 3000,
+  "cleanupMs": 20000,
+  "maxRunMs": 120000,
+  "maxBatchMs": 1800000,
+  "maxEvents": 200000,
+  "fixtureMaxFrames": 30000,
+  "maxTraceBytes": 67108864,
+  "maxOutputBytes": 262144000,
+  "minDiskFreeBytes": 2147483648,
+  "protocol": "fpvhelper-phase1b-r1/v1",
+  "run_id": "formal-r1-b6a3849-20260906-01",
+  "status": "frozen",
+  "productChangesAllowed": false,
+  "priorRun": "formal-b6a3849-01",
+  "priorParentPlanSha256": "627f333f7d94490d31cca02b8919b4746f393d4f02a4ed8b6850b661b6476ac0",
+  "priorChildPlanSha256": "05a64380b0338a074e63d1d821f6f52513d6da892de9ea5b274576e2d91a9283",
+  "port": 3134,
+  "pairs": [
+    {
+      "pairId": "p01",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "AB",
+      "kind": "main",
+      "block": 1
+    },
+    {
+      "pairId": "p02",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "BA",
+      "kind": "main",
+      "block": 1
+    },
+    {
+      "pairId": "p03",
+      "condition": "S2",
+      "mode": "P1",
+      "order": "AB",
+      "kind": "main",
+      "block": 1
+    },
+    {
+      "pairId": "p04",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "AA",
+      "kind": "control",
+      "block": 1
+    },
+    {
+      "pairId": "p05",
+      "condition": "S2",
+      "mode": "P1",
+      "order": "BA",
+      "kind": "main",
+      "block": 2
+    },
+    {
+      "pairId": "p06",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "BA",
+      "kind": "main",
+      "block": 2
+    },
+    {
+      "pairId": "p07",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "AB",
+      "kind": "main",
+      "block": 2
+    },
+    {
+      "pairId": "p08",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "AA",
+      "kind": "control",
+      "block": 2
+    },
+    {
+      "pairId": "p09",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "AB",
+      "kind": "main",
+      "block": 3
+    },
+    {
+      "pairId": "p10",
+      "condition": "S2",
+      "mode": "P1",
+      "order": "BA",
+      "kind": "main",
+      "block": 3
+    },
+    {
+      "pairId": "p11",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "BA",
+      "kind": "main",
+      "block": 3
+    },
+    {
+      "pairId": "p12",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "BB",
+      "kind": "control",
+      "block": 3
+    },
+    {
+      "pairId": "p13",
+      "condition": "S1-100",
+      "mode": "N",
+      "order": "AB",
+      "kind": "main",
+      "block": 4
+    },
+    {
+      "pairId": "p14",
+      "condition": "S2",
+      "mode": "P1",
+      "order": "AB",
+      "kind": "main",
+      "block": 4
+    },
+    {
+      "pairId": "p15",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "BA",
+      "kind": "main",
+      "block": 4
+    },
+    {
+      "pairId": "p16",
+      "condition": "S1-100",
+      "mode": "P1",
+      "order": "BB",
+      "kind": "control",
+      "block": 4
+    }
+  ],
+  "roots": {
+    "A": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a",
+    "B": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b"
+  },
+  "budgetRoots": [
+    "/Users/longxl/.codex/worktrees/fpvhelper-phase1a-measurement/output/playwright",
+    "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-control/output/playwright",
+    "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-recording-progress/output/playwright",
+    "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a/output/playwright",
+    "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b/output/playwright",
+    "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright"
+  ],
+  "execution": "Serial; new server process for EVERY run (including controls), readiness GET then new headless bundled chromium browser/context 1440x1100. Fresh browser cache; OS file cache uncontrolled, builds prepared once P1 then N per arm. No cache flush, user process termination, formal-window builds/smokes/analysis. Disk check once per second; initial per-run host load snapshot only pid,comm,pcpu,pmem.",
+  "endpoints": "Performance.enable timeDomain=timeTicks on fresh page target CDP session. Three getMetrics calls: before page steady start, immediately after page steady end, after bounded live-source drain. Record runner epoch and monotonic bracket for every getMetrics and page timing call; no cross-realm subtraction. Original cohort t0<=delivery<t1, drainEnd=t1+3000; midpoint overhead inside drain. Full endpoint ratio independently computed, not mean/sum of percentages.",
+  "diagnostics": {
+    "trigger": "After all 32 valid formal items, for each of S1-100/P1 then S2/P1 with ANY paired full TaskDuration B-A > 0, run one AB trace pair. No threshold or extra matrix.",
+    "maxRuns": 4,
+    "maxEncodedTraceBytesPerRun": 8388608,
+    "window": "CPU sampling begins after warmup, ends after full endpoint; identical20s+3s timing. Profiling overhead separate from no-trace formal.",
+    "truncation": "8MiB encoded or50000sample cap; invalid on excess, no valid profile claim; retain bounded first bytes. Positive control nonempty nodes/samples,matching timeDeltas and positive interval.",
+    "additionalOverhead": "Excluded from formal data; settings and positive control retained.",
+    "method": "CDP Profiler.enable/setSamplingInterval(interval=1000)/start/stop/disable",
+    "maxSamples": 50000,
+    "format": "Chrome DevTools CPU profile, nodes/callFrames/samples/timeDeltas/startTime/endTime",
+    "limitation": "CPU sampling supports sampled stacks including native/GC labels when present, not complete task/layout/GC timeline. Incidental GC not causation proof."
+  },
+  "resourceReservation": {
+    "initialHistoricalBytes": 155841724,
+    "formalRawCompressedAllowanceBytes": 33554432,
+    "traceAllowanceBytes": 33554432,
+    "reportsAndSharingAllowanceBytes": 36000000,
+    "projectedTotalBytes": 258950588,
+    "remainingBytesAtProjection": 3193412,
+    "temporaryTracePeak": "CPU profile arrives as CDP object then JSON Buffer (cap8MiB) and gzip; 50000 samples cap. Over-cap encoded object may transiently exceed cap before invalidation. Total renderer/driver peak memory unknown; limits not peak guarantee."
+  },
+  "analysis": "Each pair all raw metrics/seconds/percent, B-A percentage points (controls second-first signed and abs), actual RC rate, per-boundary callbacks/s, callbacks/RC and durations, N null. Per condition median/range/direction count descriptive only. If all four positive in a condition observed_regression_signal; none positive across P1 and no stable N rise not_reproduced_in_bounded_check; mixed otherwise measurement_sensitive_or_inconclusive. No causal regression or noise proof; controls single-pair insufficient noise bound. Trace association only unless convincing causal evidence; ordinary and profiling not subtracted as probe overhead.",
+  "stops": "Any source/build drift, invalid raw reconciliation/save/Profiler positive control, overflow, external request/device/user-data access, deadline, <2GiB free, >250MiB cumulative, own process cleanup failure stops batch preserving all runs. No replacement runs. Obvious observed host interference flagged, not deleted; no idle/thermal/GC assumptions. 120s per item,20s cleanup,30min total including traces; preflight excluded.",
+  "externalOperations": "none: no push/PR/merge/deploy/tag/cloud/user data; local synthetic fixtures only. CUA separate preflight own page.",
+  "generatedDeclarationRule": "Preflight only: P1 may regenerate exactly two next-env.d.ts type imports from .next to .next-measurement; all other tracked bytes must match Git. N build must restore ALL tracked bytes including next-env exactly before serving. Never exempt next-env from inventory. No generated drift allowed during formal run.",
+  "preflightTraceCorrection": "exploration-02 timeline exceeded8MiB at5s and was retained invalid; CPU sampling selected before any formal results.",
+  "products": {
+    "A": {
+      "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a",
+      "sourceSha": "9ab7d90b6d4a8f3eac3c0c2e7825fc6a75846b84",
+      "treeSha": "701d6191fac682c64d77286886e1b71d71cb9e31",
+      "lockSha256": "ea6b77a38f691ef7d6e51a36801fc3ab3aac104edc2d03ab5a67548870292f07",
+      "modes": {
+        "P1": {
+          "arm": "A",
+          "mode": "P1",
+          "label": "A-P1",
+          "command": [
+            "node",
+            "node_modules/next/dist/bin/next",
+            "build",
+            "--profile"
+          ],
+          "env": {
+            "FPV_MEASUREMENT_BUILD": "1",
+            "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+            "NEXT_TELEMETRY_DISABLED": "1"
+          },
+          "status": "completed",
+          "beforeNextEnvSha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+          "startedEpochMs": 1788692405956,
+          "exitCode": 0,
+          "afterNextEnvSha256": "8c69119ae62df73ae3e8c79bfd607c7f68dbac51b5dc4eb13608f792b58aa10f",
+          "generatedDifferences": [
+            "next-env.d.ts"
+          ],
+          "buildId": "flDCQ0gQBK6VoqcRnCM91",
+          "inventory": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/A-P1-inventory.json",
+          "inventorySha256": "f531cf2fc1575b6dc5e8200411a72519db89eada4b9c3f3a56f02b05f2d5a155",
+          "directory": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a/.next-measurement",
+          "log": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/A-P1.log",
+          "seconds": 8.516660374996718
+        },
+        "N": {
+          "arm": "A",
+          "mode": "N",
+          "label": "A-N",
+          "command": [
+            "node",
+            "node_modules/next/dist/bin/next",
+            "build"
+          ],
+          "env": {
+            "FPV_MEASUREMENT_BUILD": "0",
+            "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+            "NEXT_TELEMETRY_DISABLED": "1"
+          },
+          "status": "completed",
+          "beforeNextEnvSha256": "8c69119ae62df73ae3e8c79bfd607c7f68dbac51b5dc4eb13608f792b58aa10f",
+          "startedEpochMs": 1788692414474,
+          "exitCode": 0,
+          "afterNextEnvSha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+          "generatedDifferences": [],
+          "buildId": "a8gWhSSDDz8LOc-tbUctK",
+          "inventory": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/A-N-inventory.json",
+          "inventorySha256": "a062f585cc68ba595391d4467a2f0ae3e875f72064585e94d042b775a9a6e301",
+          "directory": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a/.next",
+          "log": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/A-N.log",
+          "seconds": 8.711471584014362
+        }
+      },
+      "sourceCleanAfterBuilds": true
+    },
+    "B": {
+      "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b",
+      "sourceSha": "b6a3849df7d712e704ba340b7891c3158b54caed",
+      "treeSha": "1990a5e56a5ecaf78b898ba0c766240a7ce57bfb",
+      "lockSha256": "ea6b77a38f691ef7d6e51a36801fc3ab3aac104edc2d03ab5a67548870292f07",
+      "modes": {
+        "P1": {
+          "arm": "B",
+          "mode": "P1",
+          "label": "B-P1",
+          "command": [
+            "node",
+            "node_modules/next/dist/bin/next",
+            "build",
+            "--profile"
+          ],
+          "env": {
+            "FPV_MEASUREMENT_BUILD": "1",
+            "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+            "NEXT_TELEMETRY_DISABLED": "1"
+          },
+          "status": "completed",
+          "beforeNextEnvSha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+          "startedEpochMs": 1788692437376,
+          "exitCode": 0,
+          "afterNextEnvSha256": "8c69119ae62df73ae3e8c79bfd607c7f68dbac51b5dc4eb13608f792b58aa10f",
+          "generatedDifferences": [
+            "next-env.d.ts"
+          ],
+          "buildId": "MMVk5Ybhfea361ESdorf4",
+          "inventory": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/B-P1-inventory.json",
+          "inventorySha256": "94fcd36cb3cfd9bd532df28cd5403f56822c5e9d6f6e049605f6a94696472a0c",
+          "directory": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b/.next-measurement",
+          "log": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/B-P1.log",
+          "seconds": 13.726467750006123
+        },
+        "N": {
+          "arm": "B",
+          "mode": "N",
+          "label": "B-N",
+          "command": [
+            "node",
+            "node_modules/next/dist/bin/next",
+            "build"
+          ],
+          "env": {
+            "FPV_MEASUREMENT_BUILD": "0",
+            "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+            "NEXT_TELEMETRY_DISABLED": "1"
+          },
+          "status": "completed",
+          "beforeNextEnvSha256": "8c69119ae62df73ae3e8c79bfd607c7f68dbac51b5dc4eb13608f792b58aa10f",
+          "startedEpochMs": 1788692451103,
+          "exitCode": 0,
+          "afterNextEnvSha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+          "generatedDifferences": [],
+          "buildId": "VF_8ZNwcc2RFaUVo7cekB",
+          "inventory": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/B-N-inventory.json",
+          "inventorySha256": "5f37813d3dc0e460b7f6de7d6512be3808149b733b3f64ed70cac160c284dc7a",
+          "directory": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b/.next",
+          "log": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright/phase1b-r1/preflight/build-attempt-02/B-N.log",
+          "seconds": 12.402031375007937
+        }
+      },
+      "sourceCleanAfterBuilds": true
+    }
+  },
+  "frozenAtUtc": "2026-09-06T11:07:31.622685+00:00",
+  "childPlanSha256": "fc5fb56a1abeb4b06a10afa63d24369bc5cd70c3bd39d7c61002b084b7256945",
+  "toolGate": "10 Python targeted regressions; npm check742 tests/typecheck/lint; exploration-03 N/P1/S2 all3 valid, CPU profile positive3745 samples225303 bytes; CUA product N UI separate. A/B existing accepted count/tail regression evidence preserved, not applied as A behavior expectation.",
+  "resourceBeforeFreeze": {
+    "rows": [
+      {
+        "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1a-measurement/output/playwright",
+        "bytes": 88081770
+      },
+      {
+        "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-control/output/playwright",
+        "bytes": 7808974
+      },
+      {
+        "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-recording-progress/output/playwright",
+        "bytes": 57291315
+      },
+      {
+        "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-a/output/playwright",
+        "bytes": 0
+      },
+      {
+        "root": "/Users/longxl/.codex/worktrees/fpvhelper-phase1b-r1-b/output/playwright",
+        "bytes": 0
+      },
+      {
+        "root": "/Users/longxl/.codex/worktrees/03b4/fpvhelper/output/playwright",
+        "bytes": 2659665
+      }
+    ],
+    "totalBytes": 155841724,
+    "limitBytes": 262144000,
+    "freeDiskBytes": 3901667344384
+  },
+  "runtime": {
+    "node": "v25.8.1",
+    "browser": "151.0.7922.34 (exploration raw browser.version; same existing bundled binary)",
+    "profilingRuntimeReactVersion": "19.3.0-canary-cbb046ab-20260731 (exploration raw React commit event)",
+    "normalRuntimeReactVersion": null,
+    "normalRuntimeReason": "Not exposed; installed package version not substituted",
+    "headless": true,
+    "viewport": {
+      "width": 1440,
+      "height": 1100
+    },
+    "cache": "fresh browser/context per item; OS filesystem cache uncontrolled",
+    "gpuBackend": null,
+    "backgroundActivity": "User apps remain running; pre-run ps snapshot records observable point-in-time load only. No full-window load or idle guarantee."
+  }
+}
