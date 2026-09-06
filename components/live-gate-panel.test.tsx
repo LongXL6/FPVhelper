@@ -43,6 +43,11 @@ function metric(label: string) {
   return textOf(renderer!.root.findAllByType("dt").find((node) => textOf(node) === label)!.parent!.findByType("dd"));
 }
 
+function reviewInput(label: string) {
+  const editor = renderer!.root.findByProps({ "aria-label": "实时穿越复核" });
+  return editor.findAllByType("label").find((node) => textOf(node).includes(label))!.findByType("input");
+}
+
 async function renderPanel(options: LiveVisionOptions = initialOptions, onSummaryChange?: (summary: LiveGateSummaryData) => void) {
   await act(async () => {
     const element = <LiveGatePanel {...options} onProfileChange={onProfileChange} onSummaryChange={onSummaryChange} />;
@@ -180,6 +185,63 @@ describe("live gate panel interaction boundaries", () => {
     expect(textOf(renderer!.root.findByProps({ "data-testid": "live-gate-lap-clock" }))).toBe("—");
     expect(button("确认穿越").props.disabled).toBe(true);
     expect(live.reviewEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([342.5, 1000.5])("preserves untouched half-millisecond event %s when confirming or rejecting", async (timeMs) => {
+    live = { ...live, state: "stopped", elapsedMs: 5000, events: [{
+      id: "candidate", timeMs, startMs: timeMs - 100, endMs: timeMs + 100,
+      status: "pending", origin: "model", similarity: 0.8, reason: "模型候选",
+    }] };
+    await renderPanel();
+    expect(reviewInput("穿越时刻").props.value).toBe((timeMs / 1000).toFixed(3));
+    expect(button("确认穿越").props.disabled).toBe(true);
+    await act(async () => { reviewInput("复核理由").props.onChange({ target: { value: "  人工查看原录像  " } }); });
+    expect(button("改时刻并确认").props.disabled).toBe(true);
+    for (const [label, action] of [["确认穿越", "confirm"], ["排除候选", "reject"]] as const) {
+      expect(button(label).props.disabled).toBe(false);
+      await act(async () => { button(label).props.onClick(); });
+      expect(live.reviewEvent).toHaveBeenLastCalledWith("candidate", action, timeMs, "人工查看原录像");
+    }
+  });
+
+  it("validates actual time edits and restores the original event when its displayed value is restored", async () => {
+    live = { ...live, state: "stopped", elapsedMs: 5000, events: [{
+      id: "candidate", timeMs: 1000.5, startMs: 900, endMs: 1100,
+      status: "pending", origin: "model", similarity: 0.8, reason: "模型候选",
+    }] };
+    await renderPanel();
+    await act(async () => { reviewInput("复核理由").props.onChange({ target: { value: "校准穿越时刻" } }); });
+    await act(async () => { reviewInput("穿越时刻").props.onChange({ target: { value: "1.250" } }); });
+    expect(button("确认穿越").props.disabled).toBe(true);
+    expect(button("排除候选").props.disabled).toBe(true);
+    expect(button("改时刻并确认").props.disabled).toBe(false);
+    await act(async () => { button("改时刻并确认").props.onClick(); });
+    expect(live.reviewEvent).toHaveBeenLastCalledWith("candidate", "adjust", 1250, "校准穿越时刻");
+    for (const value of ["", "-1", "6", "NaN"]) {
+      await act(async () => { reviewInput("穿越时刻").props.onChange({ target: { value } }); });
+      for (const label of ["确认穿越", "排除候选", "改时刻并确认"]) expect(button(label).props.disabled).toBe(true);
+    }
+    await act(async () => { reviewInput("穿越时刻").props.onChange({ target: { value: "1.0000" } }); });
+    expect(button("改时刻并确认").props.disabled).toBe(true);
+    expect(button("确认穿越").props.disabled).toBe(false);
+    await act(async () => { button("确认穿越").props.onClick(); });
+    expect(live.reviewEvent).toHaveBeenLastCalledWith("candidate", "confirm", 1000.5, "校准穿越时刻");
+    await act(async () => { reviewInput("复核理由").props.onChange({ target: { value: "  " } }); });
+    expect(button("确认穿越").props.disabled).toBe(true);
+    expect(button("排除候选").props.disabled).toBe(true);
+  });
+
+  it("keeps an untouched final event valid when its displayed milliseconds round past the run end", async () => {
+    live = { ...live, state: "stopped", elapsedMs: 342.5, events: [{
+      id: "final-candidate", timeMs: 342.5, startMs: 200, endMs: 342.5,
+      status: "pending", origin: "model", similarity: 0.8, reason: "模型候选",
+    }] };
+    await renderPanel();
+    expect(reviewInput("穿越时刻").props.value).toBe("0.343");
+    await act(async () => { reviewInput("复核理由").props.onChange({ target: { value: "复核最后一帧" } }); });
+    expect(button("确认穿越").props.disabled).toBe(false);
+    await act(async () => { button("确认穿越").props.onClick(); });
+    expect(live.reviewEvent).toHaveBeenLastCalledWith("final-candidate", "confirm", 342.5, "复核最后一帧");
   });
 
   it("passes a changed source and pilot to the same mounted engine hook", async () => {

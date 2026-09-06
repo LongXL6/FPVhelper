@@ -527,6 +527,10 @@ test("active pilot full and cropped video record to the authorized local folder"
   await expect(page.getByTestId("local-video-recording-status")).toContainText("SAVED");
 
   await expectSavedSession(page, "VIDEO-01");
+  // Media file close and the later metadata/export transactions are separate confirmations.
+  await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.filter(
+    (session) => session.video.recorded && session.exportCount === 1,
+  ).length).toBe(2);
   const recordings = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const files: Array<{ name: string; size: number }> = [];
@@ -592,9 +596,11 @@ test("active pilot full and cropped video record to the authorized local folder"
   const stopButton = page.getByRole("button", { name: "■ 结束记录" });
   await expect(stopButton).toBeEnabled();
   await stopButton.click();
-  await expect(page.getByRole("button", { name: "保存记录…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "等待视频完成…" })).toBeDisabled();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("FINALIZING");
-  expect((await readStoredTrainingRecords(page)).sessions).toHaveLength(2);
+  // RC terminal confirmation is now independent of the still-open media stream.
+  await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.length).toBe(3);
+  expect((await readStoredTrainingRecords(page)).sessions.filter((session) => !session.video.recorded)).toHaveLength(1);
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoClose?: () => void }).__releaseDelayedVideoClose?.();
   });
@@ -677,7 +683,10 @@ test("a delayed video file open cannot start after its Training Session has ende
   await expect(page.getByRole("heading", { name: "正在记录 RACE-01" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as Window & { __videoFileOpenPending?: boolean }).__videoFileOpenPending)).toBe(true);
   await page.getByRole("button", { name: "■ 结束记录" }).click();
-  await expect(page.getByRole("button", { name: "保存记录…", exact: true })).toBeVisible();
+  await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
+  const frozen = (await readStoredTrainingRecords(page)).sessions[0];
+  expect((await readStoredTrainingRecords(page)).drafts).toHaveLength(0);
+  await expect(page.getByRole("button", { name: "等待视频完成…", exact: true })).toBeDisabled();
   await page.evaluate(() => {
     (window as Window & { __releaseDelayedVideoFile?: () => void }).__releaseDelayedVideoFile?.();
   });
@@ -694,6 +703,9 @@ test("a delayed video file open cannot start after its Training Session has ende
   const stopped = (await readStoredTrainingRecords(page)).sessions;
   expect(stopped).toHaveLength(1);
   expect(stopped[0].video.recorded).toBe(false);
+  expect(stopped[0].id).toBe(frozen.id);
+  expect(stopped[0].samples).toEqual(frozen.samples);
+  expect(stopped[0].endedAt).toBe(frozen.endedAt);
   await expect(page.getByTestId("local-video-recording-status")).not.toContainText("SAVED");
 });
 

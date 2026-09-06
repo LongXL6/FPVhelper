@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_TELEMETRY, type ConnectionState, type LinkState, type TelemetrySource } from "../lib/telemetry";
+import { EMPTY_TELEMETRY, type ConnectionState, type LinkState, type TelemetrySource, type SubscribeTelemetrySamples, type TelemetrySampleListener } from "../lib/telemetry";
 import type { TrainingSession, TrainingSessionDraft } from "../lib/training-session";
 import type { LocalVideoRecordingReceipt } from "../lib/local-video-recording";
 import { toTrainingSessionSummary } from "../lib/training-session-index";
+import { applyTrainingSessionMetadataPatch } from "../lib/training-session-metadata";
 import * as storeModule from "../lib/training-session-store";
 import * as directoryModule from "../lib/training-session-export-directory";
 import * as workstationModule from "../lib/workstation-id";
@@ -24,7 +25,12 @@ let connection: ConnectionState;
 let linkState: LinkState;
 let source: TelemetrySource;
 let stopOnTelemetryLoss: boolean | undefined;
-const subscribeSamples = () => () => undefined;
+let sampleListener: TelemetrySampleListener | null;
+let clockMs: number;
+const subscribeSamples: SubscribeTelemetrySamples = (listener) => {
+  sampleListener = listener;
+  return () => { if (sampleListener === listener) sampleListener = null; };
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -55,6 +61,9 @@ beforeEach(async () => {
   linkState = "ok";
   source = "serial";
   stopOnTelemetryLoss = undefined;
+  sampleListener = null;
+  clockMs = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => clockMs);
   finishCompanion = vi.fn(async () => RECEIPT);
   store = {
     getActiveDraft: vi.fn(async () => null),
@@ -74,6 +83,13 @@ beforeEach(async () => {
     })),
     saveSession: vi.fn(async (session) => { records.set(session.id, session); }),
     completeSession: vi.fn(async (session) => { records.set(session.id, session); drafts.delete(session.id); }),
+    patchSession: vi.fn(async (id, patch) => {
+      const current = records.get(id);
+      if (!current) throw new Error("Cannot patch an uncommitted Session");
+      const updated = applyTrainingSessionMetadataPatch(toTrainingSessionSummary(current), patch);
+      records.set(id, { ...current, ...updated, samples: current.samples });
+      return updated;
+    }),
     close: vi.fn(async () => undefined),
   };
   vi.spyOn(storeModule, "createTrainingSessionStore").mockReturnValue(store);
@@ -98,8 +114,14 @@ async function start() {
   return id!;
 }
 
+function emit(sequence: number) {
+  clockMs += 10;
+  act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: clockMs,
+    rcChannelsUs: [1600, 1500, 1500, 1250, 1000, 1000, 1000, 1000] }, "serial"));
+}
+
 describe("training Session completion promises", () => {
-  it("keeps both concurrent stops pending through companion and storage completion and preserves the upgraded reason", async () => {
+  it("keeps concurrent stops pending for RC commit but resolves both while companion close is still pending", async () => {
     const videoClosed = deferred<LocalVideoRecordingReceipt>();
     const storageCommitted = deferred<void>();
     finishCompanion.mockReturnValue(videoClosed.promise);
@@ -109,6 +131,7 @@ describe("training Session completion promises", () => {
       drafts.delete(session.id);
     });
     const id = await start();
+    emit(1); emit(2);
     let firstDone = false;
     let secondDone = false;
     let first!: Promise<void>;
@@ -118,33 +141,48 @@ describe("training Session completion promises", () => {
       second = controller.stopRecording("telemetry_unavailable").then(() => { secondDone = true; });
     });
     expect(finishCompanion).toHaveBeenCalledTimes(1);
-    expect(store.completeSession).not.toHaveBeenCalled();
-    expect([firstDone, secondDone]).toEqual([false, false]);
-    expect(controller.lastSession).toMatchObject({ interrupted: true, interruptionReason: "telemetry_unavailable" });
-
-    await act(async () => { videoClosed.resolve(RECEIPT); });
     expect(store.completeSession).toHaveBeenCalledTimes(1);
     expect([firstDone, secondDone]).toEqual([false, false]);
+    expect(controller.lastSession).toMatchObject({ interrupted: true, interruptionReason: "telemetry_unavailable" });
     expect(records.size).toBe(0);
     expect(controller.hasPendingSave).toBe(true);
+    emit(3);
+    expect(controller.lastSession?.samples.map((sample) => sample.sequence)).toEqual([1, 2]);
 
     await act(async () => { storageCommitted.resolve(); await Promise.all([first, second]); });
     expect([firstDone, secondDone]).toEqual([true, true]);
     expect(controller.hasPendingSave).toBe(false);
     expect(controller.isFinishing).toBe(false);
+    expect(controller.hasPendingMedia).toBe(true);
+    expect(controller.canStart).toBe(false);
+    expect(records.get(id)).toMatchObject({
+      interrupted: true, interruptionReason: "telemetry_unavailable", sampleCount: 2,
+      video: { recorded: false, synchronized: false }, finalization: { media: { state: "pending" } },
+    });
+    expect(records.get(id)?.samples.map((sample) => sample.sequence)).toEqual([1, 2]);
+    await act(async () => { videoClosed.resolve(RECEIPT); });
     expect(records.get(id)).toMatchObject({
       interrupted: true, interruptionReason: "telemetry_unavailable",
       video: { recorded: true, filename: RECEIPT.filename, bytes: RECEIPT.bytes, overlay: "sticks" },
     });
+    expect(finishCompanion).toHaveBeenCalledTimes(1);
   });
 
-  it("waits for a second metadata commit when interruption upgrades during the first storage write", async () => {
+  it("waits for the termination metadata patch when interruption upgrades during the RC commit, without waiting for video", async () => {
     const firstCommit = deferred<void>();
     const secondCommit = deferred<void>();
-    vi.mocked(store.completeSession)
-      .mockImplementationOnce(async (session) => { await firstCommit.promise; records.set(session.id, session); drafts.delete(session.id); })
-      .mockImplementationOnce(async (session) => { await secondCommit.promise; records.set(session.id, session); });
+    const videoClosed = deferred<LocalVideoRecordingReceipt>();
+    finishCompanion.mockReturnValue(videoClosed.promise);
+    vi.mocked(store.completeSession).mockImplementationOnce(async (session) => {
+      await firstCommit.promise; records.set(session.id, session); drafts.delete(session.id);
+    });
+    const patch = vi.mocked(store.patchSession).getMockImplementation()!;
+    vi.mocked(store.patchSession).mockImplementation(async (id, update) => {
+      if (update.kind === "termination") await secondCommit.promise;
+      return patch(id, update);
+    });
     const id = await start();
+    emit(1);
     let firstDone = false;
     let secondDone = false;
     let first!: Promise<void>;
@@ -155,7 +193,8 @@ describe("training Session completion promises", () => {
     expect([firstDone, secondDone]).toEqual([false, false]);
 
     await act(async () => { firstCommit.resolve(); });
-    expect(store.completeSession).toHaveBeenCalledTimes(2);
+    expect(store.completeSession).toHaveBeenCalledTimes(1);
+    expect(store.patchSession).toHaveBeenCalledWith(id, expect.objectContaining({ kind: "termination" }));
     expect(records.get(id)?.interrupted).toBe(false);
     expect([firstDone, secondDone]).toEqual([false, false]);
     await act(async () => { secondCommit.resolve(); await Promise.all([first, second]); });
@@ -163,6 +202,40 @@ describe("training Session completion promises", () => {
     expect(finishCompanion).toHaveBeenCalledTimes(1);
     expect(controller.storageError).toBeNull();
     expect(controller.hasPendingSave).toBe(false);
+    expect(controller.hasPendingMedia).toBe(true);
+    expect(records.get(id)?.video.recorded).toBe(false);
+    await act(async () => { videoClosed.resolve(RECEIPT); });
+    expect(records.get(id)).toMatchObject({ interruptionReason: "rx_link_lost", sampleCount: 1, video: { recorded: true } });
+    expect(store.completeSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes concurrent late stop reasons wait for metadata after RC was already saved, preserving the media operation", async () => {
+    const videoClosed = deferred<LocalVideoRecordingReceipt>();
+    finishCompanion.mockReturnValue(videoClosed.promise);
+    const id = await start(); emit(1);
+    await act(async () => { await controller.stopRecording(); });
+    expect(records.get(id)).toMatchObject({ interrupted: false, sampleCount: 1, video: { recorded: false } });
+    const metadataCommitted = deferred<void>();
+    const patch = vi.mocked(store.patchSession).getMockImplementation()!;
+    vi.mocked(store.patchSession).mockImplementation(async (targetId, update) => {
+      if (update.kind === "termination") await metadataCommitted.promise;
+      return patch(targetId, update);
+    });
+    let firstDone = false, secondDone = false;
+    let first!: Promise<void>, second!: Promise<void>;
+    await act(async () => {
+      first = controller.stopRecording("telemetry_unavailable").then(() => { firstDone = true; });
+      second = controller.stopRecording("rx_link_lost").then(() => { secondDone = true; });
+    });
+    expect([firstDone, secondDone]).toEqual([false, false]);
+    expect(records.get(id)?.interrupted).toBe(false);
+    await act(async () => { metadataCommitted.resolve(); await Promise.all([first, second]); });
+    expect(records.get(id)).toMatchObject({ interrupted: true, interruptionReason: "rx_link_lost", sampleCount: 1, video: { recorded: false } });
+    expect(controller.hasPendingMedia).toBe(true);
+    expect(store.completeSession).toHaveBeenCalledTimes(1);
+    await act(async () => { videoClosed.resolve(RECEIPT); });
+    expect(records.get(id)).toMatchObject({ interruptionReason: "rx_link_lost", video: { recorded: true, filename: RECEIPT.filename } });
+    expect(finishCompanion).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a failed save explicitly pending after concurrent stop attempts and retries without recording video again", async () => {
@@ -170,15 +243,19 @@ describe("training Session completion promises", () => {
     finishCompanion.mockReturnValue(videoClosed.promise);
     vi.mocked(store.completeSession).mockRejectedValueOnce(new Error("disk full"));
     const id = await start();
+    emit(1);
     let first!: Promise<void>;
     let second!: Promise<void>;
     await act(async () => { first = controller.stopRecording(); second = controller.stopRecording("telemetry_unavailable"); });
-    await act(async () => { videoClosed.resolve(RECEIPT); await Promise.all([first, second]); });
+    await act(async () => { await Promise.all([first, second]); });
     expect(controller.hasPendingSave).toBe(true);
     expect(controller.storageError).toContain("尚未安全保存");
     expect(records.size).toBe(0);
     expect(controller.canStart).toBe(false);
     await act(async () => { await controller.retryPendingSave(); });
+    expect(records.get(id)).toMatchObject({ interrupted: true, interruptionReason: "telemetry_unavailable", sampleCount: 1, video: { recorded: false } });
+    expect(controller.hasPendingMedia).toBe(true);
+    await act(async () => { videoClosed.resolve(RECEIPT); });
     expect(records.get(id)).toMatchObject({ interrupted: true, interruptionReason: "telemetry_unavailable", video: { recorded: true } });
     expect(finishCompanion).toHaveBeenCalledTimes(1);
     expect(controller.hasPendingSave).toBe(false);

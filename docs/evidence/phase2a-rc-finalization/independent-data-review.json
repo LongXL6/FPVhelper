@@ -1,0 +1,18 @@
+{
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "treeSha": "a30ebfdb79776f0172c99361aa5c43e4b4ab3323",
+  "finalDataReview": "last stale-session termination projection blocker closed",
+  "checks": [
+    "resolver returns only interrupted/interruptionReason",
+    "metadata patch copies only those two fields",
+    "full stale object preserves current notes/media/export/revision; samples absent from summary",
+    "store API readback preserves current note and raw samples/end time with upgraded reason"
+  ],
+  "targetedTests": {
+    "passed": 10,
+    "backend": "fake-indexeddb",
+    "nativeBrowserClaim": false
+  },
+  "priorFindings": "strict media enum, termination normalization, chunk/quarantine guard, RC-confirmed status separation and export lock coordination reviewed; fixes reported and covered by executor gates",
+  "scope": "bounded data-layer review, no fresh whole-product performance claim"
+}

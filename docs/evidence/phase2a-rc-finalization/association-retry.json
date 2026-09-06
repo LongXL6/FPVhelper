@@ -1,0 +1,131 @@
+{
+  "case": "association-retry",
+  "sourceSha": "dac06ff38a307852a58cd894fb58824abc6f4d40",
+  "classification": "automated browser assertions; real IDB/OPFS/MediaRecorder with synthetic input",
+  "frozen": {
+    "id": "06176dcf-15a8-4f78-8bd0-25184d182617",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:08.408Z",
+    "endedAt": "2026-09-06T14:28:09.551Z",
+    "durationMs": 1143.1,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": null,
+    "exportCount": 0,
+    "video": {
+      "recorded": false,
+      "synchronized": false
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 0,
+      "confirmedExportRevision": null,
+      "media": {
+        "state": "pending",
+        "operationId": "1004a5ec-cb91-4e76-8b82-fc44a52ec640"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "3f44a8f680a90d11275e8a776c94e91c810e7a1b4f01f1dcfccdcf09aece0e2f",
+      "firstSequence": 13,
+      "lastSequence": 126,
+      "firstElapsedMs": 8.2,
+      "lastElapsedMs": 1139.9,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "final": {
+    "id": "06176dcf-15a8-4f78-8bd0-25184d182617",
+    "schemaVersion": 2,
+    "athleteCode": "PHASE2A-E2E",
+    "notes": null,
+    "startedAt": "2026-09-06T14:28:08.408Z",
+    "endedAt": "2026-09-06T14:28:09.551Z",
+    "durationMs": 1143.1,
+    "sampleCount": 114,
+    "interrupted": false,
+    "interruptionReason": null,
+    "validity": {
+      "valid": false,
+      "reasons": [
+        "too_short",
+        "too_few_unique_samples"
+      ]
+    },
+    "exportedAt": "2026-09-06T14:28:09.676Z",
+    "exportCount": 1,
+    "video": {
+      "recorded": true,
+      "synchronized": false,
+      "receiptVersion": 1,
+      "receiptEvidence": "write_and_close_resolved",
+      "filename": "fpv-video-20260906-172808-PHASE2A-E2E-06176dcf-full.mp4",
+      "mimeType": "video/mp4;codecs=avc1",
+      "bytes": 92594,
+      "startedAtEpochMs": 1788704888451,
+      "finishedAtEpochMs": 1788704889561,
+      "overlay": "sticks",
+      "overlayTiming": "latest_available_host_sample"
+    },
+    "finalization": {
+      "version": 1,
+      "contentRevision": 1,
+      "confirmedExportRevision": 1,
+      "media": {
+        "state": "recorded",
+        "operationId": "1004a5ec-cb91-4e76-8b82-fc44a52ec640"
+      }
+    },
+    "sampleEvidence": {
+      "count": 114,
+      "sha256PythonCanonicalJson": "3f44a8f680a90d11275e8a776c94e91c810e7a1b4f01f1dcfccdcf09aece0e2f",
+      "firstSequence": 13,
+      "lastSequence": 126,
+      "firstElapsedMs": 8.2,
+      "lastElapsedMs": 1139.9,
+      "strictlyIncreasingSequence": true,
+      "strictlyIncreasingTime": true
+    }
+  },
+  "gate": {
+    "mode": "normal",
+    "events": [
+      {
+        "kind": "media-writable-created",
+        "filename": "fpv-video-20260906-172808-PHASE2A-E2E-06176dcf-full.mp4",
+        "atMs": 292.90000000596046
+      },
+      {
+        "kind": "media-close-entered",
+        "filename": "fpv-video-20260906-172808-PHASE2A-E2E-06176dcf-full.mp4",
+        "atMs": 1436
+      },
+      {
+        "kind": "media-underlying-close-resolved",
+        "filename": "fpv-video-20260906-172808-PHASE2A-E2E-06176dcf-full.mp4",
+        "atMs": 1437.7999999821186
+      },
+      {
+        "kind": "media-close-returned",
+        "filename": "fpv-video-20260906-172808-PHASE2A-E2E-06176dcf-full.mp4",
+        "atMs": 1437.7999999821186
+      },
+      {
+        "kind": "media-association-transaction-fault",
+        "atMs": 1462
+      }
+    ]
+  }
+}

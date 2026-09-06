@@ -1,5 +1,6 @@
 "use client";
 
+import { sessionMediaStatusText } from "@/lib/training-session-metadata";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DraggableStickOverlay,
@@ -8,6 +9,8 @@ import {
 import { Icon, type IconName } from "@/components/ui/icon";
 import { WorkspaceVideoElement, PilotViewportTelemetry } from "@/components/video-workspace-display";
 import { SessionLibrary } from "@/components/session-library";
+import { ThrottleTimeline } from "@/components/throttle-timeline";
+import { withMeasurementProfiler } from "@/components/measurement-profiler";
 import { SessionReportLoader } from "@/components/session-report-loader";
 import { startStickVideoCompositor } from "@/lib/stick-video-compositor";
 import { StickAxes } from "@/components/stick-axes";
@@ -416,27 +419,6 @@ function Gauge({ label, value, detail, accent = "blue" }: { label: string; value
   );
 }
 
-function ThrottleTimeline({ samples }: { samples: number[] }) {
-  const points = useMemo(() => {
-    if (samples.length < 2) return "0,80 640,80";
-    return samples
-      .map((value, index) => `${(index / (samples.length - 1)) * 640},${96 - clamp(value, 0, 100) * 0.84}`)
-      .join(" ");
-  }, [samples]);
-
-  return (
-    <div className="timeline-plot" aria-label="最近三秒的油门曲线">
-      <svg viewBox="0 0 640 104" preserveAspectRatio="none" aria-hidden="true">
-        <line x1="0" y1="24" x2="640" y2="24" />
-        <line x1="0" y1="60" x2="640" y2="60" />
-        <line x1="0" y1="96" x2="640" y2="96" />
-        <polyline points={points} />
-      </svg>
-      <div className="timeline-labels"><span>-3.0 s</span><span>现在</span></div>
-    </div>
-  );
-}
-
 type WorkspaceView = "live" | "records" | "settings";
 const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; description: string }[] = [
   { id: "live", label: "飞行工作台", icon: "live", description: "每一次练习，都值得被看见。" },
@@ -511,12 +493,13 @@ export function FlightDashboard() {
   const recordingAttemptRef = useRef<DashboardRecordingAttempt | null>(null);
   const [autoCaptureActive, setAutoCaptureActive] = useState(false);
   const [autoCaptureDataGap, setAutoCaptureDataGap] = useState(false);
-  const finishCompanionRecording = useCallback(async () => {
-    const attempt = recordingAttemptRef.current;
+  const finishAttemptVideo = useCallback(async (attempt: DashboardRecordingAttempt | null) => {
     if (!attempt) return null;
     if (!attempt.setupFinished) attempt.setupAbort.abort();
     await attempt.setupDone;
     if (!attempt.finishVideo) {
+      if (recordingAttemptRef.current !== attempt) throw new Error("录像操作身份已改变；未停止当前录像");
+      const compositor = recordingCompositorRef.current;
       attempt.finishVideo = (async () => {
         try {
           if (!attempt.videoStarted) return null;
@@ -525,19 +508,24 @@ export function FlightDashboard() {
           return receipt;
         } finally {
           attempt.removeAbortListener();
-          recordingCompositorRef.current?.dispose();
-          recordingCompositorRef.current = null;
+          compositor?.dispose();
+          if (recordingCompositorRef.current === compositor) recordingCompositorRef.current = null;
         }
       })();
     }
     return attempt.finishVideo;
   }, [stopLocalVideo]);
+  const finishCompanionRecording = useCallback(
+    () => finishAttemptVideo(recordingAttemptRef.current),
+    [finishAttemptVideo],
+  );
   useEffect(() => () => {
     const attempt = recordingAttemptRef.current;
     if (attempt && !attempt.setupFinished) attempt.setupAbort.abort();
     attempt?.removeAbortListener();
     recordingCompositorRef.current?.dispose();
   }, []);
+  const companionRecordingStarted = useCallback(() => recordingAttemptRef.current?.videoStarted ?? false, []);
   const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
   const videoDevices = videoCapture.devices;
   const selectedDeviceId = activeSource?.deviceId ?? "";
@@ -586,6 +574,7 @@ export function FlightDashboard() {
     inputKey: activeChannel?.id ?? "unassigned",
     subscribeSamples,
     finishCompanionRecording,
+    companionRecordingStarted,
     stopOnTelemetryLoss: !automatic.state.enabled && !autoCaptureActive,
   });
   const workstation = useWorkstationRuntime({ keepAwake: automatic.state.enabled || trainingSession.isRecording || localVideoRecording.isActive });
@@ -705,15 +694,13 @@ export function FlightDashboard() {
     recordingCompositorRef.current = null;
   }, [localVideoRecording.state]);
 
-  const controlsLocked = automatic.state.enabled || autoCaptureActive || trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || localVideoRecording.isActive;
+  const controlsLocked = automatic.state.enabled || autoCaptureActive || trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || trainingSession.hasPendingMedia || localVideoRecording.isActive;
   if (nameControlsWereLocked !== controlsLocked) {
     setNameControlsWereLocked(controlsLocked);
     if (!controlsLocked) setRecordingPilotName(null);
   }
   const activeVideoControlsLocked = controlsLocked || videoState === "connecting" || videoState === "live";
-  const sessionIsFinalizing = trainingSession.isFinishing
-    || trainingSession.hasPendingSave
-    || (!trainingSession.isRecording && localVideoRecording.state === "stopping");
+  const sessionIsFinalizing = trainingSession.isFinishing || trainingSession.hasPendingSave;
   const tabStartBlockReason = workstationTabStartBlockReason(workstation.tabState);
   const tabAllowsStart = tabStartBlockReason === null;
   const bridgeIsLive = source === "serial" && connection === "live";
@@ -841,6 +828,8 @@ export function FlightDashboard() {
     setAutoCaptureDataGap(false);
     const cancelSetup = () => {
       if (!attempt.setupFinished) attempt.setupAbort.abort();
+      // ARM cancellation must freeze an already-started RC Session even if setup cleanup stalls.
+      void finishDashboardRecording();
     };
     signal?.addEventListener("abort", cancelSetup, { once: true });
     attempt.removeAbortListener = () => signal?.removeEventListener("abort", cancelSetup);
@@ -942,6 +931,8 @@ export function FlightDashboard() {
         try {
           if (attempt.sessionId) await stopTrainingSession(attempt.beta && (attempt.telemetryGap || attempt.failure || reason === "signal_lost")
             ? "telemetry_unavailable" : undefined);
+          // RC persistence above is independent. ARM completion still owns the old media lifetime.
+          await finishAttemptVideo(attempt).catch(() => undefined);
         } finally {
           attempt.removeAbortListener();
           if (recordingAttemptRef.current === attempt) {
@@ -955,8 +946,8 @@ export function FlightDashboard() {
   }
 
   async function stopDashboardRecording() {
-    await automatic.disable();
-    await finishDashboardRecording();
+    const finishing = finishDashboardRecording();
+    await Promise.all([automatic.disable(), finishing]);
   }
 
   const finishFailedBetaVideo = useEffectEvent(() => {
@@ -964,6 +955,7 @@ export function FlightDashboard() {
     if (!attempt?.beta) return;
     attempt.failure ??= new Error(localVideoRecording.error ?? "视频录制失败");
     if (attempt.finish) void stopTrainingSession("telemetry_unavailable");
+    void finishDashboardRecording("signal_lost");
     void automatic.disable();
   });
   useEffect(() => {
@@ -1116,7 +1108,7 @@ export function FlightDashboard() {
       }
     } else if (shortcut === "add_marker" && trainingSession.isRecording) {
       void trainingSession.addMarker(selectedMarkerKind);
-    } else if (shortcut === "export_latest" && !controlsLocked && trainingSession.lastSession) {
+    } else if (shortcut === "export_latest" && !trainingSession.isRecording && !trainingSession.hasPendingSave && !trainingSession.isFinishing && trainingSession.lastSession) {
       if (exportShortcutInFlightRef.current) return;
       exportShortcutInFlightRef.current = true;
       void trainingSession.exportSession(trainingSession.lastSession.id)
@@ -1204,11 +1196,11 @@ export function FlightDashboard() {
   useEffect(() => {
     const attempt = recordingAttemptRef.current;
     if (!attempt?.setupFinished || attempt.sessionId !== completedSessionId || trainingSession.isRecording
-      || trainingSession.isStarting || sessionIsFinalizing) return;
+      || trainingSession.isStarting || sessionIsFinalizing || trainingSession.hasPendingMedia || localVideoRecording.isActive) return;
     attempt.removeAbortListener();
     recordingAttemptRef.current = null;
     setAutoCaptureActive(false);
-  }, [completedSessionId, sessionIsFinalizing, trainingSession.isRecording, trainingSession.isStarting]);
+  }, [completedSessionId, localVideoRecording.isActive, sessionIsFinalizing, trainingSession.hasPendingMedia, trainingSession.isRecording, trainingSession.isStarting]);
   useEffect(() => {
     if (trainingSession.isRecording) recordingWasActive.current = true;
     if (!recordingWasActive.current || trainingSession.isRecording || sessionIsFinalizing || !completedSessionId) return;
@@ -1242,7 +1234,7 @@ export function FlightDashboard() {
     workspaceHeadingRef.current?.focus();
   }
   const currentPage = workspaceNavigation.find((item) => item.id === workspaceView)!;
-  const librarySessions = trainingSession.hasPendingSave && trainingSession.lastSession
+  const librarySessions = trainingSession.lastSession && !trainingSession.isRecording && (trainingSession.hasPendingSave || !trainingSession.allSessions.some((session) => session.id === trainingSession.lastSession?.id))
     ? [trainingSession.lastSession, ...trainingSession.allSessions.filter((session) => session.id !== trainingSession.lastSession?.id)]
     : trainingSession.allSessions;
 
@@ -1319,7 +1311,7 @@ export function FlightDashboard() {
             title={trainingSession.isRecording ? "结束并保存当前 Session" : startRequirement}
             onClick={() => void (trainingSession.isRecording ? stopDashboardRecording() : startDashboardRecording())}
           >
-            {sessionIsFinalizing ? "保存记录…" : trainingSession.isStarting || localVideoRecording.state === "starting" ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
+            {sessionIsFinalizing ? "保存遥控数据…" : trainingSession.hasPendingMedia ? "等待视频完成…" : trainingSession.isStarting || localVideoRecording.state === "starting" ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
           </button>
           {source === "serial" ? (
             <button
@@ -1433,7 +1425,7 @@ export function FlightDashboard() {
         <aside className="error-banner" role="status">
           <b>{trainingSession.storageError || preferenceError ? "存储提示" : "连接提示"}</b>
           <span>{visibleError}</span>
-          {trainingSession.hasPendingSave ? (
+          {trainingSession.hasPendingSave && !trainingSession.isFinishing ? (
             <button className="mini-button mini-button--active" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试保存</button>
           ) : null}
         </aside>
@@ -1828,7 +1820,7 @@ export function FlightDashboard() {
           </div>
         </section>
 
-        <aside className="telemetry-rail">
+        {withMeasurementProfiler("telemetry-display", <aside className="telemetry-rail">
           <div className="rail-heading">
             <div><span>CONTROL INPUT</span><h2>遥控输入</h2></div>
             <span className={`source-badge source-badge--${source}`}>{rcSourceLabel}</span>
@@ -1879,7 +1871,7 @@ export function FlightDashboard() {
               <p>真实机上 LQ、电池和姿态尚未接入。</p>
             </section>
           </details>
-        </aside>
+        </aside>)}
       </div>
 
       <LiveGatePanel
@@ -1902,14 +1894,14 @@ export function FlightDashboard() {
           <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
           <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
         </div>
-        <ThrottleTimeline samples={throttleHistory} />
+        {withMeasurementProfiler("throttle-timeline", <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />)}
       </section>
 
-      <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
+      {withMeasurementProfiler("recording-ui", <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
         <div className="session-heading">
           <div>
             <span>LOCAL SESSION RECORDER</span>
-            <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.hasPendingSave ? "记录待重试保存" : trainingSession.lastSession ? "最近记录已保存在本机" : "等待开始训练记录"}</h2>
+            <h2>{trainingSession.isRecording ? `正在记录 ${normalizeAthleteCode(athleteCode)}` : trainingSession.isFinishing ? "正在保存遥控数据" : trainingSession.pendingTerminationSessionId ? "遥控数据已保存，终止状态待重试" : trainingSession.hasPendingSave ? "遥控数据待重试保存" : trainingSession.lastSession ? "遥控数据已保存到本机" : "等待开始训练记录"}</h2>
           </div>
           <span className={`session-state ${trainingSession.isRecording ? "session-state--recording" : sessionIsFinalizing ? "" : trainingSession.lastSession?.validity.valid ? "session-state--valid" : trainingSession.lastSession ? "session-state--invalid" : ""}`}>
             <i />{trainingSession.isRecording ? "REC" : sessionIsFinalizing ? "SAVING" : trainingSession.lastSession?.validity.valid ? "VALID" : trainingSession.lastSession ? "INVALID" : "IDLE"}
@@ -2068,11 +2060,14 @@ export function FlightDashboard() {
               </>
             ) : null}
           </div>
-          {trainingSession.hasPendingSave ? (
-            <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试保存 Session</button>
+          {!trainingSession.isRecording && trainingSession.lastSession ? <p role="status">{sessionMediaStatusText(trainingSession.lastSession, trainingSession.mediaPhase === "finishing")}</p> : null}
+          {trainingSession.mediaAssociationError ? <div role="status"><p>{trainingSession.mediaAssociationError}</p><button className="button button--export" type="button" onClick={() => void trainingSession.retryMediaAssociation()}>重试关联视频收据</button></div> : null}
+          {!trainingSession.hasPendingSave && trainingSession.storageError && trainingSession.storageReady ? <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>重试刷新记录</button> : null}
+          {trainingSession.hasPendingSave && !trainingSession.isFinishing ? (
+            <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>{trainingSession.pendingTerminationSessionId ? "重试保存终止状态" : "重试保存 Session"}</button>
           ) : null}
         </div>
-      </section>
+      </section>)}
 
       </div>
 
@@ -2088,9 +2083,11 @@ export function FlightDashboard() {
           onUpdateNotes={trainingSession.updateSessionNotes}
           onGoToLive={() => navigateWorkspace("live")}
           isRecording={trainingSession.isRecording}
-          storageState={trainingSession.storageError ? "error" : trainingSession.storageReady ? "ready" : "loading"}
-          saveState={trainingSession.hasPendingSave ? "error" : sessionIsFinalizing ? "saving" : "saved"}
-          unsavedSessionIds={trainingSession.hasPendingSave && trainingSession.lastSession ? [trainingSession.lastSession.id] : []}
+          storageState={!trainingSession.storageReady ? trainingSession.storageError ? "error" : "loading" : trainingSession.hasPendingSave && trainingSession.storageError ? "error" : "ready"}
+          saveState={trainingSession.isFinishing ? "saving" : trainingSession.hasPendingSave ? "error" : "saved"}
+          pendingMediaSessionId={trainingSession.hasPendingMedia ? trainingSession.lastSession?.id : undefined}
+          pendingTerminationSessionId={trainingSession.pendingTerminationSessionId ?? undefined}
+          unsavedSessionIds={trainingSession.hasPendingSave && trainingSession.lastSession && trainingSession.rcConfirmedSessionId !== trainingSession.lastSession.id ? [trainingSession.lastSession.id] : []}
         />
         <SessionReportLoader loadSessions={trainingSession.loadSessionsForReport} revision={trainingSession.allSessions} />
         <details className="review-tool"><summary>检查导出文件 <small>重新校验 JSON 的完整性与有效条件</small></summary><TrainingSessionFileValidator /></details>

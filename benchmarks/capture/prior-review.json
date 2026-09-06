@@ -1,0 +1,62 @@
+{
+  "record_kind": "review_receipt_and_execution_scope_summary",
+  "verbatim_transcript": false,
+  "source": "https://chatgpt.com/c/6a9c6831-9960-83ea-bc90-7e5fb5eb26e5",
+  "read_date_local": "2026-09-06",
+  "review_protocol": "fpvhelper-handoff/v1",
+  "review_run_id": "fpvhelper-phase0-20260905-201716",
+  "reviewed_head_sha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+  "reviewed_zip_sha256": "fe49aec37875547227d42728b4d70751d0de8af729713c387bbbb5d8534264ca",
+  "decision": "PASS",
+  "required_fixes": [],
+  "accepted_scope": [
+    "Receive-time throttle window, raw gap provenance, source reset and stall aging",
+    "Preserving unedited live vision event time precision",
+    "Waiting for the existing smoke test sample-count precondition",
+    "Helper module contract as a proposal, with current implementation boundaries distinguished"
+  ],
+  "reviewer_evidence_boundary": {
+    "verified_archive_entries": 25,
+    "reviewed_patch_files": 16,
+    "independent_extracted_logic_checks_passed": 17,
+    "full_repository_tests_independently_rerun": false,
+    "unpublished_git_objects_independently_verified": false,
+    "hardware_or_production_approval": false
+  },
+  "next_execution_prompt_markers": [
+    "FPVHELPER_PHASE1A_EXECUTION_PROMPT_BEGIN",
+    "FPVHELPER_PHASE1A_EXECUTION_PROMPT_END"
+  ],
+  "next_scope": "Phase 1A: measure raw publication, per-subscriber deliveries, training appends, store notifications, snapshot reads and real-browser React commits",
+  "roles": {
+    "ChatGPT": "Review evidence and supply the next bounded engineering prompt",
+    "Codex": "Inspect source, implement tools, execute tests and measurements, reconcile results and hand off evidence",
+    "user": "Own product, data, hardware and publication authorization"
+  },
+  "execution_requirements": [
+    "Use an isolated worktree derived from the reviewed head; preserve unrelated work and user devices",
+    "Freeze a machine-readable measurement plan and tested commit before formal runs",
+    "Observe the real product path using synthetic inputs and actual browser encoding/storage",
+    "Reconcile independently identified fixture input cohorts through each eligible downstream layer",
+    "Prove production profiling with a positive control; keep scopes and nested callbacks separate",
+    "Compare ordinary production, profiling with probes off, and profiling with probes on",
+    "Keep all instrumentation bounded and disabled in ordinary builds, without background probes or remote requests",
+    "Preserve failed/exploratory runs; stop on unexplained product integrity failures or resource limits",
+    "Run targeted checks and clean-commit full check, ordinary build and smoke",
+    "Return the review package, then stop for review before optimization or another phase"
+  ],
+  "next_handoff_evidence_additions": [
+    "Previous and current tested-to-delivery full-index diffs",
+    "Commit, parent, tree and timestamp metadata without personal author information",
+    "Full file-hash inventory for tested source, tests, fixtures, configuration and lockfile",
+    "Raw synthetic measurement/profiler data and reproducible summaries",
+    "Separate original and sanitized evidence hashes and local-only evidence labels"
+  ],
+  "out_of_scope": [
+    "Sampling, protocol, scheduling, subscription order or error propagation changes",
+    "UI throttling, runtime extraction or performance optimization",
+    "Session schema, recording finalization, queue budget or storage architecture changes",
+    "Super App code, shared cloud services or user data uploads",
+    "Push, PR, merge, deployment, tags or real hardware operations"
+  ]
+}

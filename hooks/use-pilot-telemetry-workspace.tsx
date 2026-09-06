@@ -1,6 +1,11 @@
 "use client";
 
 import { memo, useCallback, useEffect, useSyncExternalStore } from "react";
+import { withMeasurementProfiler } from "@/components/measurement-profiler";
+import {
+  measurementEnabled, measurementEvent, measurementIdentity, measurementRegisterSubscription,
+  measurementRemoveSubscription, measurementSampleFields, measurementSubscriptionFields,
+} from "../lib/capture-measurement";
 import { useBetaflightTelemetry, type TelemetryController } from "./use-betaflight-telemetry";
 import type { RawSerialCaptureState } from "./use-raw-serial-capture";
 import { EMPTY_STICK_MOTION } from "../lib/stick-motion";
@@ -61,7 +66,19 @@ export function createPilotTelemetryWorkspaceStore(): PilotTelemetryWorkspaceSto
   let namesSnapshot = EMPTY_PILOT_TELEMETRY_NAMES;
 
   const notify = (pilotChannelId: string) => {
-    listeners.get(pilotChannelId)?.forEach((listener) => listener());
+    const channelListeners = listeners.get(pilotChannelId);
+    if (measurementEnabled()) measurementEvent("store.notify", {
+      storeId: measurementIdentity(controllers, "store"), pilotChannelId, listenerCount: channelListeners?.size ?? 0,
+    });
+    channelListeners?.forEach((listener) => {
+      if (!measurementEnabled()) { listener(); return; }
+      const fields = { storeId: measurementIdentity(controllers, "store"), pilotChannelId,
+        ...measurementSubscriptionFields(channelListeners, listener) };
+      measurementEvent("store.listener.attempted", fields);
+      try { listener(); }
+      catch (error) { measurementEvent("store.listener.threw", fields); throw error; }
+      measurementEvent("store.listener.returned", fields);
+    });
   };
 
   const updateNames = (pilotChannelId: string, names: BetaflightDeviceNames) => {
@@ -71,26 +88,69 @@ export function createPilotTelemetryWorkspaceStore(): PilotTelemetryWorkspaceSto
     if (names.status === "idle" && !names.pilotName && !names.craftName) delete next[pilotChannelId];
     else next[pilotChannelId] = { ...names };
     namesSnapshot = Object.keys(next).length ? next : EMPTY_PILOT_TELEMETRY_NAMES;
-    namesListeners.forEach((listener) => listener());
+    if (measurementEnabled()) measurementEvent("store.names.updated", {
+      storeId: measurementIdentity(controllers, "store"), pilotChannelId, listenerCount: namesListeners.size,
+    });
+    namesListeners.forEach((listener) => {
+      if (!measurementEnabled()) { listener(); return; }
+      const fields = { storeId: measurementIdentity(controllers, "store"),
+        ...measurementSubscriptionFields(namesListeners, listener) };
+      measurementEvent("store.names.listener.attempted", fields);
+      try { listener(); }
+      catch (error) { measurementEvent("store.names.listener.threw", fields); throw error; }
+      measurementEvent("store.names.listener.returned", fields);
+    });
   };
 
   return {
-    getNamesSnapshot: () => namesSnapshot,
+    getNamesSnapshot: () => {
+      if (measurementEnabled()) measurementEvent("store.names.read", {
+        storeId: measurementIdentity(controllers, "store"), snapshotId: measurementIdentity(namesSnapshot, "snapshot"),
+      });
+      return namesSnapshot;
+    },
     subscribeNames(listener) {
+      const registration = measurementEnabled() ? measurementRegisterSubscription(namesListeners, listener) : null;
       namesListeners.add(listener);
-      return () => { namesListeners.delete(listener); };
+      if (measurementEnabled()) measurementEvent("store.names.subscription.add", { ...registration, storeId: measurementIdentity(controllers, "store") });
+      return () => {
+        namesListeners.delete(listener);
+        if (measurementEnabled()) measurementEvent("store.names.subscription.remove", {
+          ...measurementRemoveSubscription(namesListeners, listener, registration?.registrationId ?? null),
+          storeId: measurementIdentity(controllers, "store"),
+        });
+      };
     },
     getSnapshot(pilotChannelId) {
-      return pilotChannelId ? controllers.get(pilotChannelId) ?? UNAVAILABLE_TELEMETRY_CONTROLLER : UNAVAILABLE_TELEMETRY_CONTROLLER;
+      const controller = pilotChannelId ? controllers.get(pilotChannelId) ?? UNAVAILABLE_TELEMETRY_CONTROLLER : UNAVAILABLE_TELEMETRY_CONTROLLER;
+      if (measurementEnabled()) measurementEvent("store.read", {
+        storeId: measurementIdentity(controllers, "store"), pilotChannelId: pilotChannelId ?? null,
+        snapshotId: measurementIdentity(controller, "snapshot"), ...measurementSampleFields(controller.telemetry),
+      });
+      return controller;
     },
     publish(pilotChannelId, controller) {
-      if (controllers.get(pilotChannelId) === controller) return;
+      if (measurementEnabled()) measurementEvent("store.publish.attempted", {
+        storeId: measurementIdentity(controllers, "store"), pilotChannelId,
+        snapshotId: measurementIdentity(controller, "snapshot"), ...measurementSampleFields(controller.telemetry),
+      });
+      if (controllers.get(pilotChannelId) === controller) {
+        if (measurementEnabled()) measurementEvent("store.publish.skipped", {
+          storeId: measurementIdentity(controllers, "store"), pilotChannelId, reason: "identical_snapshot",
+        });
+        return;
+      }
       controllers.set(pilotChannelId, controller);
+      if (measurementEnabled()) measurementEvent("store.updated", {
+        storeId: measurementIdentity(controllers, "store"), pilotChannelId,
+        snapshotId: measurementIdentity(controller, "snapshot"), ...measurementSampleFields(controller.telemetry),
+      });
       updateNames(pilotChannelId, controller.deviceNames);
       notify(pilotChannelId);
     },
     remove(pilotChannelId) {
       if (!controllers.delete(pilotChannelId)) return;
+      if (measurementEnabled()) measurementEvent("store.removed", { storeId: measurementIdentity(controllers, "store"), pilotChannelId });
       updateNames(pilotChannelId, EMPTY_BETAFLIGHT_DEVICE_NAMES);
       notify(pilotChannelId);
     },
@@ -101,9 +161,17 @@ export function createPilotTelemetryWorkspaceStore(): PilotTelemetryWorkspaceSto
         channelListeners = new Set();
         listeners.set(pilotChannelId, channelListeners);
       }
+      const registration = measurementEnabled() ? measurementRegisterSubscription(channelListeners, listener) : null;
       channelListeners.add(listener);
+      if (measurementEnabled()) measurementEvent("store.subscription.add", {
+        ...registration, storeId: measurementIdentity(controllers, "store"), pilotChannelId,
+      });
       return () => {
         channelListeners?.delete(listener);
+        if (measurementEnabled() && channelListeners) measurementEvent("store.subscription.remove", {
+          ...measurementRemoveSubscription(channelListeners, listener, registration?.registrationId ?? null),
+          storeId: measurementIdentity(controllers, "store"), pilotChannelId,
+        });
         if (channelListeners?.size === 0) listeners.delete(pilotChannelId);
       };
     },
@@ -123,7 +191,7 @@ const PilotTelemetryBridge = memo(function PilotTelemetryBridge({
   demoPlaybackActive: boolean;
   store: PilotTelemetryWorkspaceStore;
 }) {
-  const controller = useBetaflightTelemetry({ demoPlaybackActive });
+  const controller = useBetaflightTelemetry({ demoPlaybackActive, measurementChannelId: pilotChannelId });
 
   useEffect(() => {
     store.publish(pilotChannelId, controller);
@@ -142,14 +210,14 @@ export function PilotTelemetryWorkspaceHost({
   activePilotChannelId: string | undefined;
   store: PilotTelemetryWorkspaceStore;
 }) {
-  return pilotChannelIds.map((pilotChannelId) => (
+  return pilotChannelIds.map((pilotChannelId) => withMeasurementProfiler(`pilot-bridge:${pilotChannelId}`, (
     <PilotTelemetryBridge
       key={pilotChannelId}
       pilotChannelId={pilotChannelId}
       demoPlaybackActive={pilotChannelId === activePilotChannelId}
       store={store}
     />
-  ));
+  )));
 }
 
 export function usePilotTelemetryController(

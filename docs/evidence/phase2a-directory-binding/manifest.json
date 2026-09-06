@@ -1,0 +1,166 @@
+{
+  "run_id": "phase2a-directory-binding-20260906-01",
+  "status": "needs_review",
+  "sampleHashDefinition": "Python JSON ensure_ascii=False, sort_keys=True, separators comma/colon; SHA256 UTF-8",
+  "fileHashDefinition": "Native browser crypto.subtle SHA-256 of full File bytes for final native cases; baseline bytes/JSON enumeration only",
+  "entries": [
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/red/rc-finalization.e2e.ts-aut-e9743-e-the-user-switches-folders-chromium-smoke/directory-binding.json",
+      "originalBytes": 303180,
+      "originalSha256": "ae22f80d56d4cef6ce8c7bfb2a7041d590874613105eed64814af0a65866ebe1",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/baseline-directory-red.json",
+      "reviewBytes": 18145,
+      "reviewSha256": "269d5fb274ab8e7b5d0dce6c5225698bbdb8fc44d103577becf68146ae620d48",
+      "transformation": "Exact metadata/file bytes and native file SHA256 retained; sample arrays replaced with count/sequence/canonical hash. Baseline predates native per-file hash addition."
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/final-smoke/rc-finalization.e2e.ts-aut-e9743-e-the-user-switches-folders-chromium-smoke/directory-binding-final.json",
+      "originalBytes": 378332,
+      "originalSha256": "e2ccd2f7eaf0db4ab72b0fcf4aee06047cf853f25a0efdc5d99f7ee402d5315d",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/directory-binding-final.json",
+      "reviewBytes": 23478,
+      "reviewSha256": "5a8452e1ab188c734e5ebbe8e1db60f3890a358890da76842babf2162c729173",
+      "transformation": "Exact metadata/file bytes and native file SHA256 retained; sample arrays replaced with count/sequence/canonical hash. Baseline predates native per-file hash addition."
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/final-smoke/rc-finalization.e2e.ts-a-s-89d8b--waiting-for-its-early-JSON-chromium-smoke/two-session-directories.json",
+      "originalBytes": 635142,
+      "originalSha256": "3751af1fd93ddc231243772ac7abc0e51f5d87ce2fcce77526e21a53eb319d05",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/two-session-directories.json",
+      "reviewBytes": 29375,
+      "reviewSha256": "1bf164d9851413d0ec249511fecb0234c57ec38a72c97458320f34af216546ad",
+      "transformation": "Exact metadata/file bytes and native file SHA256 retained; sample arrays replaced with count/sequence/canonical hash. Baseline predates native per-file hash addition."
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/unit-red.log",
+      "originalBytes": 3566,
+      "originalSha256": "dff80f496bab6b861e8d3e89107fa9cd68ae5f0a4f91b119edb27b769a9b79e0",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/unit-red.log",
+      "reviewBytes": 3511,
+      "reviewSha256": "771fe8f686aa166c96da8b30d599aa5f174b46b6abdd642df8604b31cc4154be",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/s2-error-red.log",
+      "originalBytes": 2853,
+      "originalSha256": "6ad5de1d6c0deb654cefa8274f0e58e69fae4c657bf18f83946e7419826fb105",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/s2-error-red.log",
+      "reviewBytes": 2798,
+      "reviewSha256": "0e4993c13724028bffd131df45c28f6adc405a1e74e09b07895aeed375c4c553",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/unit-s2-error-green.log",
+      "originalBytes": 249,
+      "originalSha256": "bae4f02441f91a3a7ce5c2c7a1663cc4fcb3c214c8e5be52cc33930cf6132dda",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/unit-s2-error-green.log",
+      "reviewBytes": 194,
+      "reviewSha256": "a6ce366690b57d1f67c729fc69e088681e2a2d511abac822f187b20a4ef5db73",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/final-check.log",
+      "originalBytes": 452,
+      "originalSha256": "7a60d6f6a0a8adf9ddcf60efb41e1f3fb8535801af0caa9ba8dd0cadc5428ae8",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/final-check.log",
+      "reviewBytes": 397,
+      "reviewSha256": "d289fbbcf5c748f8f9b6d29ed0dfd416204b718d69bddce4e1604655418d7fe0",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/final-smoke.log",
+      "originalBytes": 6993,
+      "originalSha256": "5b25b0c8555dc74d291e20fb64db8997debcbca178bffe703f99a8c8a73f816a",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/final-smoke.log",
+      "reviewBytes": 6993,
+      "reviewSha256": "5b25b0c8555dc74d291e20fb64db8997debcbca178bffe703f99a8c8a73f816a",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/ordinary-build.log",
+      "originalBytes": 782,
+      "originalSha256": "996999ae1930cca7d0ed080bc85693adf507fbd90e1c407d0874e44131c9af35",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/ordinary-build.log",
+      "reviewBytes": 775,
+      "reviewSha256": "e387492adf6644e1149827d1a4e29f699dfa89eb8f2bf34ab67bafbf22d5774d",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/proxy-self-test.log",
+      "originalBytes": 867,
+      "originalSha256": "3cd35ab97320e682a6d25765be16535b2062ef58db30a8a8bd72faff774227e0",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/proxy-self-test.log",
+      "reviewBytes": 867,
+      "reviewSha256": "3cd35ab97320e682a6d25765be16535b2062ef58db30a8a8bd72faff774227e0",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/final-gates.json",
+      "originalBytes": 764,
+      "originalSha256": "a1f9cf0794f069a6a626a17cdb1f1b9dc5bf9384249d3c577409340abbbbac9a",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/final-gates.json",
+      "reviewBytes": 764,
+      "reviewSha256": "a1f9cf0794f069a6a626a17cdb1f1b9dc5bf9384249d3c577409340abbbbac9a",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/normal-isolation.json",
+      "originalBytes": 294,
+      "originalSha256": "5582464c8915e107535c38fea67b06bea4c5d98c04354b1ad600a665aa0bf54b",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/normal-isolation.json",
+      "reviewBytes": 294,
+      "reviewSha256": "5582464c8915e107535c38fea67b06bea4c5d98c04354b1ad600a665aa0bf54b",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/remote-review-base.json",
+      "originalBytes": 273,
+      "originalSha256": "bc546d0b7572ed9f8cfe8a2e0838d25396d98cbe7a5b797c6616213240164c43",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/remote-review-base.json",
+      "reviewBytes": 273,
+      "reviewSha256": "bc546d0b7572ed9f8cfe8a2e0838d25396d98cbe7a5b797c6616213240164c43",
+      "transformation": "Path substitution, ANSI and trailing whitespace removal only"
+    },
+    {
+      "originalLocalPath": null,
+      "reviewPath": "docs/evidence/phase2a-directory-binding/retained-failures.json",
+      "reviewBytes": 2542,
+      "reviewSha256": "bb2a75ced1c98a487ffed88d8b7925fd19195971cfc0645ee2d2aa58e7d2cd39",
+      "transformation": "Curated exact failure excerpts; original log hashes and tool-only availability stated"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/parent-cua/receipt.json",
+      "originalBytes": 3122,
+      "originalSha256": "1f2b1934731daf7272cf785e63ace7327b19d76127296cdeb4487c2123298553",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/parent-cua.json",
+      "reviewBytes": 3122,
+      "reviewSha256": "1f2b1934731daf7272cf785e63ace7327b19d76127296cdeb4487c2123298553",
+      "transformation": "Parent-authored exact scoped receipt; local path substitution only"
+    },
+    {
+      "originalLocalPath": "output/playwright/phase2a-directory-binding/parent-cua/source-review.json",
+      "originalBytes": 986,
+      "originalSha256": "40650972f2994833352bf64cbf68a34d1ff6a53772bb489c49d3260ee81a9534",
+      "reviewPath": "docs/evidence/phase2a-directory-binding/parent-source-review.json",
+      "reviewBytes": 986,
+      "reviewSha256": "40650972f2994833352bf64cbf68a34d1ff6a53772bb489c49d3260ee81a9534",
+      "transformation": "Parent-authored exact scoped receipt; local path substitution only"
+    }
+  ],
+  "availability": "Prepared locally; parent owns PR11 update and verifies GitHub readability. Raw sample receipts/traces remain local; recorded media bytes were read and hashed during tests but not exported as review files. Original Phase2A evidence unchanged.",
+  "redBindings": [
+    {
+      "case": "native directory wrong destination and old directory-state unit RED",
+      "productHead": "0ee45e163adf15954b7163250d948bf167e1c1f7",
+      "productTree": "d93766d93ca0f9cd6cb5758e4ca0a12ab273306e",
+      "workingChanges": "test additions only; initial test sources subsequently committed in a42f0e3",
+      "nativeBuildId": "y_m1dY8QsQl-yJexWGtbM"
+    },
+    {
+      "case": "S1 late export clears/overwrites S2 storageError",
+      "productHead": "9fed6334bb9e6a39c07e70d823d7d4c0736d54d6",
+      "productTree": "427e4aed0e709e3878004c2674412a375104e952",
+      "workingChanges": "new hook tests only; exact test source subsequently committed with fix in c9de6ad"
+    }
+  ]
+}

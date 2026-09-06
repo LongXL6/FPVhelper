@@ -1,0 +1,24 @@
+
+> fpvhelper@0.6.1 check
+> npm run typecheck && npm run test && npm run lint
+
+
+> fpvhelper@0.6.1 typecheck
+> tsc --noEmit
+
+
+> fpvhelper@0.6.1 test
+> vitest run
+
+
+ RUN  v4.1.11 <WORKTREE>
+
+
+ Test Files  79 passed (79)
+      Tests  756 passed (756)
+   Start at  17:27:18
+   Duration  1.73s (transform 3.34s, setup 0ms, import 5.87s, tests 4.03s, environment 8ms)
+
+
+> fpvhelper@0.6.1 lint
+> eslint .

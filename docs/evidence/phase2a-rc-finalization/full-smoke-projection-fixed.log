@@ -1,0 +1,67 @@
+[WebServer] (node:36416) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36416) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36429) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36428) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:36430) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36426) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36427) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36425) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36431) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] (node:36458) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+
+Running 30 tests using 1 worker
+
+(node:36460) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:16:5 › Betaflight pilot name is automatic, manual edits persist, and reset restores the current connection name
+[2/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:47:7 › Betaflight uses aircraft name when pilot name is empty
+[3/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:47:7 › Betaflight reads the legacy aircraft name before API 1.45
+[4/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:65:7 › Betaflight empty names keeps live RC and permits manual naming
+[5/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:65:7 › Betaflight unsupported metadata keeps live RC and permits manual naming
+[6/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:65:7 › Betaflight metadata timeout keeps live RC and permits manual naming
+[7/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:79:5 › Betaflight names remain per pilot when responses arrive after selection changes and a different device reconnects
+[8/30] [chromium-smoke] › e2e/betaflight-names.e2e.ts:109:5 › the visible crop-and-binding action opens the selected pilot in a four-up workspace
+[9/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:136:7 › default video and OSD recording entry › requires video and directory, preserves data-only choice, and records from the visible setup
+[10/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:199:7 › default video and OSD recording entry › records a playable WebM and explains the fallback when only WebM encoding is available
+[11/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:235:5 › onboarding closes even when its local preference cannot be saved
+[12/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:255:5 › four-up workspace keeps each pilot channel and crop selection local
+[13/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:322:5 › pilot video binding switches between full input and a persisted custom crop
+[14/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:415:5 › independent video inputs open together and keep one active telemetry viewport
+[15/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:453:5 › active pilot full and cropped video record to the authorized local folder
+[16/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:611:5 › a delayed video file open cannot start after its Training Session has ended
+[17/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:701:5 › two pilot bridges keep MSP_RC streams and Sessions isolated
+[18/30] [chromium-smoke] › e2e/fpv-control-room.e2e.ts:781:5 › fake media and read-only MSP bridge persist a local training session
+[19/30] [chromium-smoke] › e2e/json-export.e2e.ts:53:7 › versioned JSON exports to an authorized directory › keeps original JSON bytes while exporting revised notes as v2 and v3 after reauthorization
+[20/30] [chromium-smoke] › e2e/live-vision.e2e.ts:7:5 › live gate review shares the video-and-OSD recording stream and preserves both saved session associations
+[21/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:42:5 › normal stop confirms RC, real video close and exactly one final JSON
+[22/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:55:5 › unclosed media does not block terminal RC, early export or same-origin reload
+[23/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:70:5 › RC transaction failure is retryable while media remains pending
+[24/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:79:5 › late closed-media acknowledgement merges notes and serializes early/final exports
+[25/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:96:5 › failed media association retries the receipt without another recording or media file
+[26/30] [chromium-smoke] › e2e/rc-finalization.e2e.ts:105:5 › a rejected media result never fabricates a receipt even when the underlying file closed
+[27/30] [chromium-smoke] › e2e/recording-progress.e2e.ts:7:5 › records every input while publishing paired DOM progress on a bounded cadence and exact final values
+[28/30] [chromium-smoke] › e2e/throttle-timeline.e2e.ts:12:5 › live throttle shows a partial receive-time window, ages through silence, and returns to demo
+[29/30] [chromium-smoke] › e2e/vision-lab.e2e.ts:91:7 › local vision review without a remote model › reviews imported candidates, recalculates laps, and preserves repeated JSON snapshots
+[30/30] [chromium-smoke] › e2e/vision-lab.e2e.ts:137:7 › local vision review without a remote model › restores review history but requires the original video hash before more review
+  30 passed (52.7s)

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "warmupMs": 5000,
+  "windowMs": 20000,
+  "repeats": 1,
+  "lifecyclePhaseMs": 5000,
+  "drainMs": 3000,
+  "cleanupMs": 20000,
+  "maxEvents": 200000,
+  "maxTraceBytes": 67108864,
+  "maxRunMs": 120000,
+  "maxBatchMs": 1800000,
+  "maxOutputBytes": 262144000,
+  "minDiskFreeBytes": 2147483648,
+  "maxHeapBytes": null,
+  "status": "frozen",
+  "conditions": [
+    {
+      "id": "S1-100",
+      "scenario": "S1",
+      "inputHz": 100,
+      "modes": [
+        "N",
+        "P1"
+      ]
+    },
+    {
+      "id": "S2",
+      "scenario": "S2",
+      "inputHz": 100,
+      "modes": [
+        "P1"
+      ]
+    }
+  ],
+  "runOrder": [
+    {
+      "repeat": 1,
+      "condition": "S1-100",
+      "mode": "N"
+    },
+    {
+      "repeat": 1,
+      "condition": "S1-100",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S2",
+      "mode": "P1"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { measurementEnabled, measurementEvent, measurementIdentity, measurementSampleFields } from "@/lib/capture-measurement";
+import { hasCurrentSessionExport, sessionFinalization } from "@/lib/training-session-metadata";
 import { PUBLIC_APP_BUILD } from "@/lib/app-version";
 import type { TrainingSessionSummary } from "@/lib/training-session-index";
 import type { LocalVideoRecordingReceipt } from "@/lib/local-video-recording";
@@ -20,8 +22,6 @@ import {
   recoverInterruptedTrainingSession,
   resolveTrainingSessionTermination,
   withTrainingSessionTermination,
-  withTrainingSessionNotes,
-  withTrainingSessionVideoReceipt,
   trainingSessionFilename,
   type TrainingSession,
   type TrainingSessionDraft,
@@ -70,6 +70,7 @@ interface UseTrainingSessionOptions {
   inputKey: string;
   subscribeSamples?: SubscribeTelemetrySamples;
   finishCompanionRecording?: () => Promise<LocalVideoRecordingReceipt | null>;
+  companionRecordingStarted?: () => boolean;
   stopOnTelemetryLoss?: boolean;
 }
 
@@ -100,6 +101,12 @@ interface TrainingSessionController {
   isRecording: boolean;
   isStarting: boolean;
   isFinishing: boolean;
+  hasPendingMedia: boolean;
+  rcConfirmedSessionId: string | null;
+  pendingTerminationSessionId: string | null;
+  mediaPhase: "idle" | "finishing" | "awaiting_rc" | "associating" | "association_failed";
+  mediaAssociationError: string | null;
+  retryMediaAssociation: () => Promise<void>;
   sessionId: string | null;
   sampleCount: number;
   uniqueSampleCount: number;
@@ -138,6 +145,21 @@ interface TrainingSessionController {
   clearExportDirectory: () => Promise<void>;
 }
 
+interface MediaFinalizationOperation {
+  sessionId: string;
+  operationId: string;
+  expected: boolean;
+  inputKey: string;
+  pendingTermination: TrainingSessionTermination | null;
+  settled: boolean;
+  receipt: LocalVideoRecordingReceipt | null;
+  associated: boolean;
+  associating: Promise<void> | null;
+  autoExport: boolean;
+  autoExportRequested: boolean;
+  exportDirectory: TrainingSessionDirectoryHandle | null;
+}
+
 function uniqueLocalId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `${prefix}-${Date.now()}-${performance.now().toFixed(3)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -161,11 +183,19 @@ export function useTrainingSession({
   inputKey,
   subscribeSamples,
   finishCompanionRecording,
+  companionRecordingStarted,
   stopOnTelemetryLoss = true,
 }: UseTrainingSessionOptions): TrainingSessionController {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [rcConfirmedSessionId, setRcConfirmedSessionId] = useState<string | null>(null);
+  const rcConfirmedSessionIdRef = useRef<string | null>(null);
+  const [pendingTerminationSessionId, setPendingTerminationSessionId] = useState<string | null>(null);
+  const [mediaPhase, setMediaPhase] = useState<TrainingSessionController["mediaPhase"]>("idle");
+  const [mediaAssociationError, setMediaAssociationError] = useState<string | null>(null);
+  const hasPendingMedia = mediaPhase !== "idle";
+  const mediaOperationRef = useRef<MediaFinalizationOperation | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sampleCount, setSampleCount] = useState(0);
   const [uniqueSampleCount, setUniqueSampleCount] = useState(0);
@@ -201,16 +231,19 @@ export function useTrainingSession({
   const companionFinishingRef = useRef(false);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
-  const finishRecordingPromiseRef = useRef<Promise<void> | null>(null);
+  const finishRecordingPromiseRef = useRef<{ sessionId: string | null; promise: Promise<void> } | null>(null);
   const workstationIdRef = useRef<string | null>(null);
   const terminationRef = useRef<TrainingSessionTermination | null>(null);
   const noteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const sessionMutationIdsRef = useRef(new Set<string>());
+  const exportWaitersRef = useRef(new Map<string, Promise<void>>());
 
   const applySessions = useCallback((nextSessions: TrainingSessionSummary[], latestSession: TrainingSession | null) => {
     sessionsRef.current = nextSessions;
     setSessions(nextSessions);
     if (!draftRef.current && !pendingSessionRef.current) {
+      rcConfirmedSessionIdRef.current = latestSession?.id ?? null;
+      setRcConfirmedSessionId(latestSession?.id ?? null);
       setLastSession(latestSession);
       setSessionId(latestSession?.id ?? null);
       setSampleCount(latestSession?.sampleCount ?? 0);
@@ -228,7 +261,8 @@ export function useTrainingSession({
       store.countUnexportedValidSessions(),
       store.getStorageIntegrity(),
     ]);
-    const latestSession = nextSessions[0] ? await store.getSession(nextSessions[0].id) : null;
+    const latestId = mediaOperationRef.current?.sessionId ?? nextSessions[0]?.id;
+    const latestSession = latestId ? await store.getSession(latestId) : null;
     applySessions(nextSessions, latestSession);
     setUnexportedValidCount(nextUnexportedValidCount);
     setStorageIntegrity(nextStorageIntegrity);
@@ -236,7 +270,7 @@ export function useTrainingSession({
   }, [applySessions]);
 
   const loadSession = useCallback(async (id: string) => (
-    pendingSessionRef.current?.id === id ? pendingSessionRef.current : await storeRef.current?.getSession(id) ?? null
+    pendingSessionRef.current?.id === id && rcConfirmedSessionIdRef.current !== id ? pendingSessionRef.current : await storeRef.current?.getSession(id) ?? null
   ), []);
   const loadSessionsForReport = useCallback(async () => await storeRef.current?.listSessions() ?? [], []);
 
@@ -254,7 +288,19 @@ export function useTrainingSession({
       }
     });
     draftSaveRef.current = save;
-    try { await save; }
+    try {
+      await save;
+      if (measurementEnabled()) measurementEvent("session.checkpoint.confirmed", {
+        sessionId: draft.id, sampleCount: count, elapsedMs: elapsed,
+        operationId: measurementIdentity(save, "checkpoint"),
+      });
+    }
+    catch (error) {
+      if (measurementEnabled()) measurementEvent("session.checkpoint.failed", {
+        sessionId: draft.id, sampleCount: count, operationId: measurementIdentity(save, "checkpoint"),
+      });
+      throw error;
+    }
     finally { if (draftSaveRef.current === save) draftSaveRef.current = null; }
   }, []);
 
@@ -299,7 +345,7 @@ export function useTrainingSession({
     });
 
     try {
-      await store.saveSession(exportedSession);
+      await store.patchSession(session.id, { kind: "export", exportedAtEpochMs, snapshotRevision: sessionFinalization(session).contentRevision });
       await refreshSessions(store);
       setStorageError(null);
       setExportWarning(null);
@@ -317,16 +363,20 @@ export function useTrainingSession({
   const exportStoredSessionToDirectory = useCallback(async (
     session: TrainingSession,
     store: TrainingSessionStore,
+    handle: TrainingSessionDirectoryHandle | null,
   ): Promise<{ confirmed: boolean; reason: string | null; filename?: string; localStateSaved: boolean }> => {
-    const handle = directoryHandleRef.current;
     if (!handle) {
       return { confirmed: false, reason: "尚未选择自动保存文件夹", localStateSaved: true };
     }
 
+    const ownsStorageStatus = () => {
+      const currentId = draftRef.current?.id ?? pendingSessionRef.current?.id ?? mediaOperationRef.current?.sessionId;
+      return !currentId || currentId === session.id;
+    };
     const permission = await getTrainingSessionDirectoryPermission(handle);
     if (permission !== "granted") {
-      setExportDirectoryState("permission_required");
-      return { confirmed: false, reason: "自动保存文件夹需要重新授权", localStateSaved: true };
+      if (directoryHandleRef.current === handle) setExportDirectoryState("permission_required");
+      return { confirmed: false, reason: `记录 ${session.id.slice(0, 8)} 的自动保存文件夹“${handle.name}”需要重新授权`, localStateSaved: true };
     }
 
     const exportedAtEpochMs = Date.now();
@@ -336,15 +386,15 @@ export function useTrainingSession({
       receipt = await saveTrainingSessionToDirectory(exportedSession, handle);
     } catch (exportError) {
       const permissionAfterFailure = await getTrainingSessionDirectoryPermission(handle);
-      setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
+      if (directoryHandleRef.current === handle) setExportDirectoryState(permissionAfterFailure === "granted" ? "error" : "permission_required");
       return {
         confirmed: false,
-        reason: `自动保存文件夹写入失败：${storageErrorMessage(exportError)}`,
+        reason: `记录 ${session.id.slice(0, 8)} 的自动保存文件夹“${handle.name}”写入失败：${storageErrorMessage(exportError)}`,
         localStateSaved: true,
       };
     }
 
-    setExportDirectoryState("ready");
+    if (directoryHandleRef.current === handle) setExportDirectoryState("ready");
     setLastExport({
       receiptId: createTrainingSessionExportReceiptId(exportedSession.id, exportedAtEpochMs),
       session: exportedSession,
@@ -357,11 +407,13 @@ export function useTrainingSession({
     setExportWarning(null);
 
     try {
-      await store.saveSession(exportedSession);
+      await store.patchSession(session.id, { kind: "export", exportedAtEpochMs, snapshotRevision: sessionFinalization(session).contentRevision });
       await refreshSessions(store);
-      setStorageError(null);
+      if (ownsStorageStatus()) setStorageError(null);
     } catch (saveError) {
-      setStorageError(`JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+      const message = `记录 ${session.id.slice(0, 8)} 的 JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`;
+      if (ownsStorageStatus()) setStorageError(message);
+      setExportWarning(message);
       return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: false };
     }
     return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: true };
@@ -484,7 +536,7 @@ export function useTrainingSession({
       setExportDirectoryName(null);
       setExportDirectoryState("unconfigured");
       setExportWarning(null);
-      setExportNotice("已清除自动保存文件夹；需要时可重新选择。");
+      setExportNotice("已清除后续记录的自动保存文件夹；已停止记录的待完成导出仍使用原文件夹，需要时可重新选择。");
     } catch (directoryError) {
       setExportDirectoryState("error");
       setExportWarning(`清除自动保存文件夹失败：${storageErrorMessage(directoryError)}`);
@@ -530,7 +582,7 @@ export function useTrainingSession({
     };
   }, [refreshSessions]);
 
-  const canStart = useMemo(() => canStartTrainingSession({
+  const canStart = useMemo(() => !hasPendingMedia && canStartTrainingSession({
     storageReady,
     storageError,
     storageIntegrity,
@@ -542,11 +594,14 @@ export function useTrainingSession({
     connection,
     linkState,
     athleteCode,
-  }), [athleteCode, connection, hasPendingSave, isFinishing, isRecording, isStarting, linkState, source, storageError, storageIntegrity, storageReady]);
+  }), [athleteCode, connection, hasPendingMedia, hasPendingSave, isFinishing, isRecording, isStarting, linkState, source, storageError, storageIntegrity, storageReady]);
 
   const startRecording = useCallback(async () => {
     const store = storeRef.current;
-    if (!canStart || !store || startingRef.current || recordingActiveRef.current || finishingRef.current || pendingSessionRef.current) return null;
+    if (measurementEnabled()) measurementEvent("session.start.requested", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), inputKey, canStart,
+    });
+    if (!canStart || !store || startingRef.current || recordingActiveRef.current || finishingRef.current || pendingSessionRef.current || (mediaOperationRef.current && !mediaOperationRef.current.associated)) return null;
     startingRef.current = true;
     setIsStarting(true);
     setStorageError(null);
@@ -573,8 +628,18 @@ export function useTrainingSession({
       pendingSessionRef.current = null;
       completedPendingSessionRef.current = null;
       terminationRef.current = null;
+      mediaOperationRef.current = null;
+      rcConfirmedSessionIdRef.current = null;
+      setRcConfirmedSessionId(null);
+      setPendingTerminationSessionId(null);
+      setMediaPhase("idle");
+      setMediaAssociationError(null);
       uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set() };
       recordingActiveRef.current = true;
+      if (measurementEnabled()) measurementEvent("session.start.confirmed", {
+        sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: id, inputKey,
+        startedMonotonicMs: draft.startedMonotonicMs,
+      });
       setSessionId(id);
       setSampleCount(0);
       setUniqueSampleCount(0);
@@ -586,6 +651,9 @@ export function useTrainingSession({
       setIsRecording(true);
       return id;
     } catch (saveError) {
+      if (measurementEnabled()) measurementEvent("session.start.failed", {
+        sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: id, inputKey,
+      });
       setStorageError(`开始记录失败：${storageErrorMessage(saveError)}`);
       return null;
     } finally {
@@ -622,28 +690,29 @@ export function useTrainingSession({
   const persistPendingSession = useCallback(async () => {
     const draft = draftRef.current;
     const store = storeRef.current;
-    if (!draft || !pendingSessionRef.current || !store || finishingRef.current || companionFinishingRef.current) return;
+    if (!draft || !pendingSessionRef.current || !store || finishingRef.current) return;
     finishingRef.current = true;
     setIsFinishing(true);
-    setHasPendingSave(true);
-
-    let sessionStored = false;
-    let storedSession = completedPendingSessionRef.current?.id === draft.id ? completedPendingSessionRef.current : null;
     try {
-      // A list refresh can fail after the atomic completion has already committed.
-      // Retrying that completion must not resurrect its now-closed draft.
-      if (!storedSession) await persistDraft(draft);
-      while (true) {
-        if (pendingSessionRef.current !== storedSession) {
-          storedSession = pendingSessionRef.current;
-          if (!storedSession) throw new Error("Session 终止状态丢失");
-          await store.completeSession(storedSession);
-          completedPendingSessionRef.current = storedSession;
-          setPersistedSampleCount(storedSession.sampleCount);
-          setPersistedElapsedMs(storedSession.samples.at(-1)?.elapsedMs ?? 0);
-        }
-        await refreshSessions(store);
-        if (pendingSessionRef.current === storedSession) break;
+      let stored = completedPendingSessionRef.current;
+      if (!stored) {
+        await persistDraft(draft);
+        stored = pendingSessionRef.current;
+        if (!stored) throw new Error("Session 终态丢失");
+        await store.completeSession(stored);
+        completedPendingSessionRef.current = stored;
+        rcConfirmedSessionIdRef.current = stored.id;
+        setRcConfirmedSessionId(stored.id);
+        setPersistedSampleCount(stored.sampleCount);
+        setPersistedElapsedMs(stored.samples.at(-1)?.elapsedMs ?? 0);
+        if (measurementEnabled()) measurementEvent("session.complete.confirmed", { sessionId: stored.id, sampleCount: stored.sampleCount });
+      }
+      // A later, stronger termination is metadata only; never overwrite notes/exports or reopen a draft.
+      while (pendingSessionRef.current && (pendingSessionRef.current.interrupted !== stored.interrupted
+        || pendingSessionRef.current.interruptionReason !== stored.interruptionReason)) {
+        const updated = await store.patchSession(stored.id, { kind: "termination", termination: pendingSessionRef.current });
+        stored = { ...stored, ...updated };
+        completedPendingSessionRef.current = stored;
       }
       draftRef.current = null;
       uniqueSequencesRef.current = null;
@@ -651,39 +720,105 @@ export function useTrainingSession({
       pendingSessionRef.current = null;
       completedPendingSessionRef.current = null;
       setHasPendingSave(false);
+      setPendingTerminationSessionId(null);
       setStorageError(null);
-      setPersistedSampleCount(storedSession?.sampleCount ?? 0);
-      setPersistedElapsedMs(storedSession?.samples.at(-1)?.elapsedMs ?? 0);
-      sessionStored = true;
-    } catch (saveError) {
-      setStorageError(completedPendingSessionRef.current?.id === draft.id
-        ? `Session 已写入本机，结束状态或记录列表尚未更新：${storageErrorMessage(saveError)}；请重试`
-        : `Session 尚未安全保存：${storageErrorMessage(saveError)}；记录仍保留在本页，可重试`);
+      setLastSession(stored);
+      setPersistedSampleCount(stored.sampleCount);
+      setPersistedElapsedMs(stored.samples.at(-1)?.elapsedMs ?? 0);
+      setIsFinishing(false);
+      try { await refreshSessions(store); }
+      catch (error) { setStorageError(`遥控数据已保存，记录列表刷新失败：${storageErrorMessage(error)}；可重试刷新`); }
+    } catch (error) {
+      if (measurementEnabled()) measurementEvent("session.complete.failed", { sessionId: draft.id, sampleCount: draft.samples.length });
+      if (completedPendingSessionRef.current) setPendingTerminationSessionId(draft.id);
+      setStorageError(completedPendingSessionRef.current
+        ? `遥控样本已入库，终止状态尚未更新：${storageErrorMessage(error)}；请重试保存`
+        : `遥控数据尚未安全保存：${storageErrorMessage(error)}；记录仍保留在本页，可重试`);
+    } finally {
+      finishingRef.current = false;
+      setIsFinishing(false);
     }
+  }, [persistDraft, refreshSessions]);
 
-    if (sessionStored && autoExport && storedSession) {
-      sessionMutationIdsRef.current.add(storedSession.id);
+  const persistTermination = useCallback(async (operation: MediaFinalizationOperation) => {
+    const termination = operation.pendingTermination;
+    const store = storeRef.current;
+    if (!termination || !store) return;
+    try {
+      await store.patchSession(operation.sessionId, { kind: "termination", termination });
+      if (operation.pendingTermination === termination) { operation.pendingTermination = null; setPendingTerminationSessionId(null); }
+      setHasPendingSave(Boolean(pendingSessionRef.current || operation.pendingTermination));
+      setStorageError(null);
+    } catch (error) {
+      setHasPendingSave(true);
+      setPendingTerminationSessionId(operation.sessionId);
+      setStorageError(`遥控样本已入库，终止状态尚未更新：${storageErrorMessage(error)}；请重试保存`);
+      throw error;
+    }
+  }, []);
+
+  const associateMedia = useCallback(async (operation: MediaFinalizationOperation) => {
+    if (!operation.settled || operation.associated || pendingSessionRef.current?.id === operation.sessionId) return;
+    if (operation.associating) return operation.associating;
+    const store = storeRef.current;
+    if (!store) return;
+    const work = (async () => {
+      if (mediaOperationRef.current === operation) setMediaPhase("associating");
       try {
-        const directoryResult = await exportStoredSessionToDirectory(storedSession, store);
-        if (!directoryResult.confirmed && directoryResult.reason) {
-          const feedback = requestUnconfirmedTrainingSessionDownload(storedSession);
-          const combinedFeedback = combineTrainingSessionExportFailures(directoryResult.reason, feedback);
-          setExportNotice(combinedFeedback.notice);
-          setExportWarning(combinedFeedback.warning);
+        await persistTermination(operation);
+        if (operation.expected) await store.patchSession(operation.sessionId, { kind: "media", operationId: operation.operationId, receipt: operation.receipt });
+        else if (operation.receipt) throw new Error("未请求的录像返回了收据，关联已拒绝");
+        operation.associated = true;
+        if (mediaOperationRef.current === operation) { setMediaPhase("idle"); setMediaAssociationError(null); }
+        if (operation.expected) {
+          try { await refreshSessions(store); setStorageError(null); }
+          catch (error) { setStorageError(`遥控数据与媒体状态已入库，列表刷新失败：${storageErrorMessage(error)}`); }
         }
-      } finally {
-        sessionMutationIdsRef.current.delete(storedSession.id);
+      } catch (error) {
+        if (mediaOperationRef.current === operation) {
+          setMediaPhase("association_failed");
+          setMediaAssociationError(`${operation.receipt ? "视频文件写入与关闭已完成，但收据关联失败" : "媒体结果尚未关联"}：${storageErrorMessage(error)}；可仅重试关联`);
+        }
+        return;
       }
-    }
+      if (operation.autoExport && !operation.autoExportRequested) {
+        operation.autoExportRequested = true;
+        // An early RC export can still be closing when video arrives. Wait for its confirmed metadata
+        // before capturing the automatic final JSON; the media patch and RC saved state do not wait.
+        while (sessionMutationIdsRef.current.has(operation.sessionId)) {
+          await (exportWaitersRef.current.get(operation.sessionId) ?? noteSaveQueueRef.current).catch(() => undefined);
+        }
+        sessionMutationIdsRef.current.add(operation.sessionId);
+        try {
+          const latest = await store.getSession(operation.sessionId);
+          if (!latest) { setExportWarning("遥控记录已保存，自动导出前无法读取记录；可在记录页重试导出"); return; }
+          const result = await exportStoredSessionToDirectory(latest, store, operation.exportDirectory);
+          if (!result.confirmed && result.reason) {
+            const feedback = combineTrainingSessionExportFailures(result.reason, requestUnconfirmedTrainingSessionDownload(latest));
+            setExportNotice(feedback.notice); setExportWarning(feedback.warning);
+          }
+        } finally { sessionMutationIdsRef.current.delete(operation.sessionId); }
+      }
+    })();
+    operation.associating = work;
+    try { await work; }
+    catch (error) { setExportWarning(`遥控数据已保存，后续导出未完成：${storageErrorMessage(error)}`); }
+    finally { operation.associating = null; }
+  }, [exportStoredSessionToDirectory, persistTermination, refreshSessions]);
 
-    finishingRef.current = false;
-    setIsFinishing(false);
-  }, [autoExport, exportStoredSessionToDirectory, persistDraft, refreshSessions]);
+  const retryMediaAssociation = useCallback(async () => {
+    const operation = mediaOperationRef.current;
+    if (operation) await associateMedia(operation);
+  }, [associateMedia]);
 
   const finishRecordingWork = useCallback(async (
     interrupted: boolean,
     interruptionReason: TrainingSessionInterruptionReason | null = null,
   ) => {
+    if (measurementEnabled()) measurementEvent("session.stop.requested", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: draftRef.current?.id ?? null,
+      interrupted, interruptionReason,
+    });
     const termination = resolveTrainingSessionTermination(terminationRef.current, {
       interrupted,
       interruptionReason,
@@ -695,19 +830,42 @@ export function useTrainingSession({
       const upgradedSession = withTrainingSessionTermination(pendingSession, termination);
       pendingSessionRef.current = upgradedSession;
       setLastSession(upgradedSession);
-      if (!finishingRef.current && !companionFinishingRef.current) await persistPendingSession();
+      if (!finishingRef.current) await persistPendingSession();
+      if (mediaOperationRef.current) await associateMedia(mediaOperationRef.current);
       return;
     }
 
     const draft = draftRef.current;
-    if (!draft || finishingRef.current) return;
+    if (!draft || finishingRef.current) {
+      const operation = mediaOperationRef.current;
+      if (!draft && operation && !operation.associated && storeRef.current) {
+        operation.pendingTermination = termination;
+        setLastSession((current) => current?.id === operation.sessionId ? withTrainingSessionTermination(current, termination) : current);
+        try { await persistTermination(operation); await refreshSessions(storeRef.current); }
+        catch { /* Explicit pending termination and error remain retryable without a draft. */ }
+      }
+      return;
+    }
     recordingActiveRef.current = false;
     setIsRecording(false);
-    const session = finishTrainingSession(draft, Date.now(), performance.now(), {
+    const frozen = finishTrainingSession(draft, Date.now(), performance.now(), {
       interrupted: termination.interrupted,
       ...(termination.interruptionReason ? { interruptionReason: termination.interruptionReason } : {}),
     });
+    const operation: MediaFinalizationOperation = { sessionId: frozen.id, operationId: uniqueLocalId("media"),
+      expected: companionRecordingStarted?.() ?? Boolean(finishCompanionRecording), inputKey, pendingTermination: null, settled: !finishCompanionRecording,
+      receipt: null, associated: false, associating: null, autoExport, autoExportRequested: false,
+      // Capture while recording controls still own this folder, before late media/export waits.
+      exportDirectory: directoryHandleRef.current };
+    mediaOperationRef.current = operation;
+    const session: TrainingSession = { ...frozen, finalization: { version: 1, contentRevision: 0, confirmedExportRevision: null,
+      media: { state: operation.expected ? "pending" : "not_requested", operationId: operation.expected ? operation.operationId : null } } };
     pendingSessionRef.current = session;
+    if (measurementEnabled()) measurementEvent("session.stop.frozen", {
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: session.id,
+      sampleCount: session.sampleCount, durationMs: session.durationMs,
+      lastSequence: session.samples.at(-1)?.sequence ?? null,
+    });
     setHasPendingSave(true);
     setLastSession(session);
     setElapsedMs(session.durationMs);
@@ -716,36 +874,41 @@ export function useTrainingSession({
     setMarkerCount(session.markers.length);
     if (finishCompanionRecording) {
       companionFinishingRef.current = true;
-      setIsFinishing(true);
-      try {
-        const receipt = await finishCompanionRecording();
-        if (receipt && pendingSessionRef.current) {
-          pendingSessionRef.current = withTrainingSessionVideoReceipt(pendingSessionRef.current, receipt, "sticks");
-          setLastSession(pendingSessionRef.current);
-        }
-      } catch (videoError) {
-        setExportWarning(`视频未完整保存，遥控数据继续保存：${storageErrorMessage(videoError)}`);
-      } finally {
-        companionFinishingRef.current = false;
-      }
+      setMediaPhase("finishing");
+      // Invoke synchronously before database awaits; stop requests must not queue behind storage.
+      let completion: Promise<LocalVideoRecordingReceipt | null>;
+      try { completion = finishCompanionRecording(); } catch (error) { completion = Promise.reject(error); }
+      void completion.then((receipt) => { operation.receipt = receipt; }).catch((error: unknown) => {
+        setExportWarning(`视频未完整保存，遥控数据独立保存：${storageErrorMessage(error)}`);
+      }).finally(async () => {
+        operation.settled = true;
+        if (mediaOperationRef.current === operation) { companionFinishingRef.current = false; setMediaPhase("awaiting_rc"); }
+        await associateMedia(operation);
+      });
     }
     await persistPendingSession();
-  }, [finishCompanionRecording, persistPendingSession]);
+    await associateMedia(operation);
+  }, [associateMedia, autoExport, companionRecordingStarted, finishCompanionRecording, inputKey, persistPendingSession, persistTermination, refreshSessions]);
 
   const finishRecording = useCallback((
     interrupted: boolean,
     interruptionReason: TrainingSessionInterruptionReason | null = null,
   ): Promise<void> => {
+    const stoppingSessionId = draftRef.current?.id ?? pendingSessionRef.current?.id ?? mediaOperationRef.current?.sessionId ?? null;
     const previous = finishRecordingPromiseRef.current;
-    // A concurrent stop may upgrade the interruption reason, but must still wait
-    // for the original companion video and storage writes to finish.
-    const operation = Promise.all([previous, finishRecordingWork(interrupted, interruptionReason)])
-      .then(() => undefined)
-      .finally(() => {
+    // Concurrent stops share RC/termination completion; media finishes independently.
+    // An older Session's pending export must not hold a later Session's stop promise.
+    const operation = {
+      sessionId: stoppingSessionId,
+      promise: Promise.all([
+        previous?.sessionId === stoppingSessionId ? previous.promise : undefined,
+        finishRecordingWork(interrupted, interruptionReason),
+      ]).then(() => undefined).finally(() => {
         if (finishRecordingPromiseRef.current === operation) finishRecordingPromiseRef.current = null;
-      });
+      }),
+    };
     finishRecordingPromiseRef.current = operation;
-    return operation;
+    return operation.promise;
   }, [finishRecordingWork]);
 
   const stopRecording = useCallback((interruptionReason?: TrainingSessionInterruptionReason) => interruptionReason
@@ -753,7 +916,11 @@ export function useTrainingSession({
     : linkState === "lost"
     ? finishRecording(true, "rx_link_lost")
     : finishRecording(false), [finishRecording, linkState]);
-  const retryPendingSave = useCallback(() => persistPendingSession(), [persistPendingSession]);
+  const retryPendingSave = useCallback(async () => {
+    if (pendingSessionRef.current) await persistPendingSession();
+    else if (storeRef.current) { try { if (mediaOperationRef.current) await persistTermination(mediaOperationRef.current); await refreshSessions(storeRef.current); setStorageError(null); } catch (error) { setStorageError(storageErrorMessage(error)); } }
+    if (mediaOperationRef.current) await associateMedia(mediaOperationRef.current);
+  }, [associateMedia, persistPendingSession, persistTermination, refreshSessions]);
 
   const addMarker = useCallback(async (kind: Exclude<TrainingSessionMarkerKind, "manual">) => {
     const draft = draftRef.current;
@@ -774,18 +941,36 @@ export function useTrainingSession({
     }
   }, [isRecording, persistDraft]);
 
-  const recordTelemetrySample = useCallback((sample: FlightTelemetry, sampleSource: TelemetrySource) => {
-    if (!recordingActiveRef.current || source !== "serial" || sampleSource !== "serial" || connection !== "live" || linkState === "lost") return;
-    if (recordingInputKeyRef.current !== inputKey) return;
+  const recordTelemetrySample = useCallback(function recordTelemetrySample(sample: FlightTelemetry, sampleSource: TelemetrySource) {
+    const fields = measurementEnabled() ? {
+      ...measurementSampleFields(sample), consumerId: measurementIdentity(recordTelemetrySample, "consumer"),
+      sessionHookId: measurementIdentity(draftRef, "session-hook"), sessionId: draftRef.current?.id ?? null,
+      inputKey, recordingInputKey: recordingInputKeyRef.current, sampleSource,
+    } : null;
+    if (!recordingActiveRef.current || source !== "serial" || sampleSource !== "serial" || connection !== "live" || linkState === "lost") {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason:
+        !recordingActiveRef.current ? "not_recording" : source !== "serial" ? "source_not_serial"
+          : sampleSource !== "serial" ? "sample_not_serial" : connection !== "live" ? "connection_not_live" : "link_lost" });
+      return;
+    }
+    if (recordingInputKeyRef.current !== inputKey) {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason: "input_changed" });
+      return;
+    }
     const draft = draftRef.current;
-    if (!draft || pendingSessionRef.current || finishingRef.current || sample.monotonicTimestampMs < draft.startedMonotonicMs) return;
+    if (!draft || pendingSessionRef.current || finishingRef.current || sample.monotonicTimestampMs < draft.startedMonotonicMs) {
+      if (fields) measurementEvent("session.sample.rejected", { ...fields, reason:
+        !draft ? "no_draft" : pendingSessionRef.current ? "pending_session" : finishingRef.current ? "finishing" : "before_start" });
+      return;
+    }
     if (appendTrainingSessionSample(draft, sample, sampleSource)) {
+      if (fields) measurementEvent("session.sample.appended", { ...fields, accepted: true, sampleCount: draft.samples.length });
       if (uniqueSequencesRef.current?.draftId !== draft.id) {
         uniqueSequencesRef.current = { draftId: draft.id, sequences: new Set(draft.samples.map((entry) => entry.sequence)) };
       }
       uniqueSequencesRef.current.sequences.add(sample.sequence);
-      setSampleCount(draft.samples.length);
-      setUniqueSampleCount(uniqueSequencesRef.current.sequences.size);
+    } else if (fields) {
+      measurementEvent("session.sample.duplicate", { ...fields, accepted: false, reason: "adjacent_sequence_source" });
     }
   }, [connection, inputKey, linkState, source]);
 
@@ -810,20 +995,40 @@ export function useTrainingSession({
   }, [connection, finishRecording, inputKey, isRecording, source, stopOnTelemetryLoss]);
 
   useEffect(() => {
-    if (!stopOnTelemetryLoss || recordingInputKeyRef.current !== inputKey) return;
-    if (linkState === "lost" && (isRecording || draftRef.current || pendingSessionRef.current)) {
+    if (!stopOnTelemetryLoss) return;
+    const operation = mediaOperationRef.current;
+    const originalInput = recordingInputKeyRef.current ?? (operation && !operation.associated ? operation.inputKey : null);
+    if (originalInput !== inputKey) return;
+    if (linkState === "lost" && (isRecording || draftRef.current || pendingSessionRef.current || (operation && !operation.associated))) {
       void finishRecording(true, "rx_link_lost");
     }
   }, [finishRecording, inputKey, isRecording, linkState, stopOnTelemetryLoss]);
 
   useEffect(() => {
-    if (!isRecording) return;
+    if (!isRecording || !sessionId) return;
+    let cancelled = false;
+    // Start publishes zero counts; later ticks publish only changed progress for this Session.
+    let publishedSampleCount = 0;
+    let publishedUniqueSampleCount = 0;
     const timer = window.setInterval(() => {
       const draft = draftRef.current;
-      if (draft) setElapsedMs(Math.max(0, performance.now() - draft.startedMonotonicMs));
+      if (cancelled || !recordingActiveRef.current || draft?.id !== sessionId) return;
+      setElapsedMs(Math.max(0, performance.now() - draft.startedMonotonicMs));
+      const unique = uniqueSequencesRef.current;
+      if (unique?.draftId !== draft.id) return;
+      const count = draft.samples.length;
+      const uniqueCount = unique.sequences.size;
+      if (count === publishedSampleCount && uniqueCount === publishedUniqueSampleCount) return;
+      publishedSampleCount = count;
+      publishedUniqueSampleCount = uniqueCount;
+      setSampleCount(count);
+      setUniqueSampleCount(uniqueCount);
     }, 250);
-    return () => window.clearInterval(timer);
-  }, [isRecording]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isRecording, sessionId]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -855,14 +1060,14 @@ export function useTrainingSession({
   }, [persistDraft]);
 
   useEffect(() => {
-    if (!shouldWarnBeforeTrainingExit({ isRecording, hasPendingSave, unexportedValidCount })) return;
+    if (!shouldWarnBeforeTrainingExit({ isRecording, hasPendingSave: hasPendingSave || hasPendingMedia, unexportedValidCount })) return;
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [hasPendingSave, isRecording, unexportedValidCount]);
+  }, [hasPendingMedia, hasPendingSave, isRecording, unexportedValidCount]);
 
   const updateSessionNotes = useCallback((targetSessionId: string, notes: string) => {
     if (sessionMutationIdsRef.current.has(targetSessionId)) {
@@ -874,9 +1079,8 @@ export function useTrainingSession({
       const currentSession = await store?.getSession(targetSessionId);
       if (!store || !currentSession) throw new Error("未找到可保存的本机记录，请先完成记录保存。");
       if (pendingSessionRef.current?.id === targetSessionId) throw new Error("这条记录尚未完成保存，请先重试保存 Session。");
-      const updatedSession = withTrainingSessionNotes(currentSession, notes);
       try {
-        await store.saveSession(updatedSession);
+        await store.patchSession(targetSessionId, { kind: "notes", notes });
         await refreshSessions(store);
         setStorageError(null);
       } catch (saveError) {
@@ -896,27 +1100,33 @@ export function useTrainingSession({
   }, [hasPendingSave, updateSessionNotes]);
 
   const exportSession = useCallback(async (targetSessionId: string, notesOverride?: string): Promise<TrainingSessionExportResult> => {
+    const exportDirectory = directoryHandleRef.current;
     const store = storeRef.current;
-    const summary = sessionsRef.current.find((candidate) => candidate.id === targetSessionId);
+    const summary = sessionsRef.current.find((candidate) => candidate.id === targetSessionId)
+      ?? ((!pendingSessionRef.current || rcConfirmedSessionIdRef.current === targetSessionId) && lastSession?.id === targetSessionId ? lastSession : null);
     if (!store || !summary) {
       const message = "未找到可导出的本机记录，请先完成记录保存。";
       setExportNotice(null);
       setExportWarning(message);
       return { status: "failed", message, localStateSaved: false };
     }
-    if (sessionMutationIdsRef.current.has(targetSessionId) || pendingSessionRef.current?.id === targetSessionId) {
+    if (sessionMutationIdsRef.current.has(targetSessionId) || (pendingSessionRef.current?.id === targetSessionId && rcConfirmedSessionIdRef.current !== targetSessionId)) {
       const message = "这条记录正在保存或导出，请完成后重试。";
       setExportNotice(null);
       setExportWarning(message);
       return { status: "failed", message, localStateSaved: true };
     }
     sessionMutationIdsRef.current.add(targetSessionId);
+    let finishExport!: () => void;
+    const waiter = new Promise<void>((resolve) => { finishExport = resolve; });
+    exportWaitersRef.current.set(targetSessionId, waiter);
     try {
-      if (directoryHandleRef.current) {
+      if (exportDirectory) {
+        if (notesOverride !== undefined) await store.patchSession(targetSessionId, { kind: "notes", notes: notesOverride });
         const session = await loadSession(targetSessionId);
         if (!session) throw new Error("记录样本无法完整读取，请检查本机存储或归档文件");
-        const snapshot = notesOverride === undefined ? session : withTrainingSessionNotes(session, notesOverride);
-        const result = await exportStoredSessionToDirectory(snapshot, store);
+        const snapshot = session;
+        const result = await exportStoredSessionToDirectory(snapshot, store, exportDirectory);
         if (!result.confirmed) {
           const message = `${result.reason}；已有文件与本机记录保留。`;
           setExportNotice(null);
@@ -932,9 +1142,10 @@ export function useTrainingSession({
       // Open while the click still has browser activation; reading a long record can take time.
       const selectedFile = picker?.({ suggestedName: trainingSessionFilename(summary), types: [{ description: "FPVHelper 训练记录", accept: { "application/json": [".json"] } }] });
       void selectedFile?.catch(() => undefined);
+      if (notesOverride !== undefined) await store.patchSession(targetSessionId, { kind: "notes", notes: notesOverride });
       const session = await loadSession(targetSessionId);
       if (!session) throw new Error("记录样本无法完整读取，请检查本机存储或归档文件");
-      const snapshot = notesOverride === undefined ? session : withTrainingSessionNotes(session, notesOverride);
+      const snapshot = session;
       return await exportStoredSession(snapshot, store, "download", selectedFile ? () => selectedFile : null);
     } catch (exportError) {
       const message = isAbortError(exportError) ? "已取消文件保存，本机记录仍保留。" : `导出未完成：${storageErrorMessage(exportError)}`;
@@ -942,13 +1153,21 @@ export function useTrainingSession({
       return { status: isAbortError(exportError) ? "cancelled" : "failed", message, localStateSaved: true };
     } finally {
       sessionMutationIdsRef.current.delete(targetSessionId);
+      exportWaitersRef.current.delete(targetSessionId);
+      finishExport();
     }
-  }, [exportStoredSession, exportStoredSessionToDirectory, loadSession]);
+  }, [exportStoredSession, exportStoredSessionToDirectory, lastSession, loadSession]);
 
   return {
     isRecording,
     isStarting,
     isFinishing,
+    hasPendingMedia,
+    rcConfirmedSessionId,
+    pendingTerminationSessionId,
+    mediaPhase,
+    mediaAssociationError,
+    retryMediaAssociation,
     sessionId,
     sampleCount,
     uniqueSampleCount,
@@ -967,7 +1186,7 @@ export function useTrainingSession({
     storageIntegrity,
     recentSessionCount: sessions.length,
     unexportedValidCount,
-    unexportedCount: sessions.filter((session) => session.exportedAt === null).length,
+    unexportedCount: sessions.filter((session) => !hasCurrentSessionExport(session)).length,
     hasPendingSave,
     lastExport,
     exportDirectoryState,

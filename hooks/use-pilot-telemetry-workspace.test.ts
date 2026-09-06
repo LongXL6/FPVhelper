@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryController } from "./use-betaflight-telemetry";
 import { createPilotTelemetryWorkspaceStore } from "./use-pilot-telemetry-workspace";
 import { EMPTY_BETAFLIGHT_DEVICE_NAMES, type BetaflightDeviceNames } from "../lib/betaflight-device-name";
@@ -11,7 +11,61 @@ function controller(id: string, deviceNames: BetaflightDeviceNames = EMPTY_BETAF
   return { id, deviceNames } as unknown as TelemetryController;
 }
 
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
+
+async function measuredStore(mode: "on" | "off") {
+  vi.resetModules();
+  vi.stubEnv("NEXT_PUBLIC_FPV_MEASUREMENT", "true");
+  vi.stubGlobal("window", { location: { hostname: "localhost" }, __fpvMeasurementSetup: { mode, maxEvents: 1000 } });
+  return (await import("./use-pilot-telemetry-workspace")).createPilotTelemetryWorkspaceStore();
+}
+
 describe("pilot telemetry workspace store", () => {
+  it.each(["on", "off"] as const)("preserves notification order, exact reads and duplicate subscriptions with measurement %s", async (mode) => {
+    const store = await measuredStore(mode);
+    const calls: string[] = [];
+    const first = () => { calls.push("first"); store.getSnapshot("one"); };
+    const removeFirst = store.subscribe("one", first);
+    const removeDuplicate = store.subscribe("one", first);
+    const removeSecond = store.subscribe("one", () => { calls.push("second"); });
+    const next = controller("next");
+    store.publish("one", next);
+    store.publish("one", next);
+    removeDuplicate();
+    store.publish("one", controller("third"));
+    removeFirst();
+    removeSecond();
+    store.remove("one");
+    expect(calls).toEqual(["first", "second", "second"]);
+    const events = window.__fpvMeasurement!.snapshot().events;
+    if (mode === "off") { expect(events).toEqual([]); return; }
+    expect(events.filter((event) => event.kind === "store.read")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "store.updated")).toHaveLength(2);
+    expect(events.filter((event) => event.kind === "store.publish.skipped")).toHaveLength(1);
+    expect(events.filter((event) => event.kind.startsWith("store.listener.")).map((event) => event.kind))
+      .toEqual(["store.listener.attempted", "store.listener.returned", "store.listener.attempted", "store.listener.returned", "store.listener.attempted", "store.listener.returned"]);
+    const registrations = events.filter((event) => event.kind === "store.subscription.add");
+    expect(registrations[1]).toMatchObject({ added: false, subscriptionId: registrations[0].subscriptionId });
+    expect(events.filter((event) => event.kind === "store.subscription.remove").map((event) => event.deleted)).toEqual([true, false, true]);
+  });
+
+  it("observes and rethrows the original listener error without calling later listeners", async () => {
+    const store = await measuredStore("on");
+    const error = new Error("original listener failure");
+    const later = vi.fn();
+    store.subscribe("one", () => { throw error; });
+    store.subscribe("one", later);
+    const next = controller("next");
+    let thrown: unknown;
+    try { store.publish("one", next); } catch (caught) { thrown = caught; }
+    expect(thrown).toBe(error);
+    expect(later).not.toHaveBeenCalled();
+    expect(store.getSnapshot("one")).toBe(next);
+    const events = window.__fpvMeasurement!.snapshot().events;
+    expect(events.filter((event) => event.kind.startsWith("store.listener.")).map((event) => event.kind))
+      .toEqual(["store.listener.attempted", "store.listener.threw"]);
+  });
+
   it("keeps each pilot controller and subscriber isolated", () => {
     const store = createPilotTelemetryWorkspaceStore();
     const pilotOne = controller("pilot-one");

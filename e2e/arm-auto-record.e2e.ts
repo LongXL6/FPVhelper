@@ -1,8 +1,34 @@
-import type { Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import type { Page, TestInfo } from "@playwright/test";
 import type { TrainingSession } from "../lib/training-session";
 import { expect, readStoredTrainingRecords, test } from "./fixtures/fpv-hardware";
+import { installPhase2AMediaGate } from "./fixtures/phase2a-media-gate";
 
 const directoryName = "arm-auto-record-exports";
+
+interface MediaGate {
+  snapshot(): { mode: string; events: Array<{ kind: string; filename?: string; atMs: number }> };
+  release(): void;
+}
+
+async function mediaGateSnapshot(page: Page) {
+  return page.evaluate(() => {
+    const gate = (window as Window & { __phase2aMediaGate?: MediaGate }).__phase2aMediaGate;
+    if (!gate) throw new Error("Expected the synthetic media close gate");
+    return gate.snapshot();
+  });
+}
+
+async function releaseMediaGate(page: Page) {
+  await page.evaluate(() => (window as Window & { __phase2aMediaGate?: MediaGate }).__phase2aMediaGate?.release());
+}
+
+async function attachJson(info: TestInfo, name: string, value: unknown) {
+  const path = info.outputPath(name);
+  await mkdir(info.outputDir, { recursive: true });
+  await writeFile(path, JSON.stringify(value, null, 2));
+  await info.attach(name, { contentType: "application/json", path });
+}
 
 interface ArmRecordingMetrics {
   starts: number;
@@ -168,9 +194,9 @@ async function openArmBetaSettings(page: Page) {
   await expect(summary).toBeVisible();
 }
 
-async function prepareAutomaticRecording(page: Page) {
+async function prepareAutomaticRecording(page: Page, path = "/") {
   await installRecordingInstrumentation(page);
-  await page.goto("/");
+  await page.goto(path);
   await expect(page.getByRole("combobox", { name: "录制内容", exact: true })).toHaveValue("video");
   await openArmBetaSettings(page);
   await expect(page.getByLabel("ARM 通道", { exact: true })).toHaveValue("0");
@@ -222,6 +248,7 @@ test.describe("FPVHelper ARM recording Beta with a 15 second DISARM delay", () =
   test.setTimeout(60_000);
 
   test.afterEach(async ({ page }, testInfo) => {
+    if (!page.isClosed()) await releaseMediaGate(page).catch(() => undefined);
     const evidence = await page.evaluate(() => {
       const preview = document.querySelector("video");
       const frames = preview?.getVideoPlaybackQuality();
@@ -241,7 +268,7 @@ test.describe("FPVHelper ARM recording Beta with a 15 second DISARM delay", () =
         } : null,
       };
     }).catch((error: unknown) => ({ evidenceError: error instanceof Error ? error.message : String(error) }));
-    await testInfo.attach("arm-recording-browser-evidence.json", { contentType: "application/json", body: JSON.stringify(evidence, null, 2) });
+    await attachJson(testInfo, "arm-recording-browser-evidence.json", evidence);
   });
 
   test("redirects the former separate ARM recording URL into the FPVHelper dashboard", async ({ page }) => {
@@ -327,10 +354,20 @@ test.describe("FPVHelper ARM recording Beta with a 15 second DISARM delay", () =
     await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "starting");
     await page.getByRole("button", { name: "停用 ARM 自动记录", exact: true }).click();
     await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "stopping");
+    await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
+    const frozenDuringSetup = (await readStoredTrainingRecords(page)).sessions[0];
+    expect(frozenDuringSetup.sampleCount).toBeGreaterThan(10);
+    expect(frozenDuringSetup.sampleCount).toBe(frozenDuringSetup.samples.length);
+    expect(frozenDuringSetup.video.recorded).toBe(false);
+    expect((await readStoredTrainingRecords(page)).drafts).toHaveLength(0);
+    expect(await page.evaluate(() => window.__fpvArmRecording)).toMatchObject({ starts: 0, pendingVideoOpens: 1 });
     await page.evaluate(() => window.__fpvArmRecordingControl.releaseVideoOpen());
     await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "disabled");
     await expect.poll(async () => (await readJsonExports(page)).length).toBe(1);
     const [cancelled] = await readJsonExports(page);
+    expect(cancelled.session.id).toBe(frozenDuringSetup.id);
+    expect(cancelled.session.samples).toEqual(frozenDuringSetup.samples);
+    expect(cancelled.session.endedAt).toBe(frozenDuringSetup.endedAt);
     expect(cancelled.session.video.recorded).toBe(false);
     expect(await page.evaluate(() => window.__fpvArmRecording)).toMatchObject({ starts: 0, stops: 0, pendingVideoOpens: 0 });
 
@@ -343,6 +380,80 @@ test.describe("FPVHelper ARM recording Beta with a 15 second DISARM delay", () =
     if (!saved) throw new Error("Expected a fresh session after cancelled startup");
     await expectPlayableVideo(page, saved.session);
     expect(await page.evaluate(() => window.__fpvArmRecording)).toMatchObject({ starts: 1, stops: 1, pendingVideoOpens: 0 });
+  });
+
+  test("confirms and exports terminal RC after 15 seconds DISARM but keeps the ARM attempt until real media close", async ({ page }, info) => {
+    await page.addInitScript(installPhase2AMediaGate);
+    await prepareAutomaticRecording(page, "/?mediaGate=before-close&analytics=off");
+    await enableAutomaticRecording(page);
+    await startAndWaitForVideoFrames(page);
+    const disarmedAtMs = await page.evaluate(() => {
+      window.__fpvFakeSerialPorts[0].rcChannelsUs[4] = 1000;
+      return performance.now();
+    });
+    await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "stopping", { timeout: 20_000 });
+    expect(await page.evaluate(() => performance.now()) - disarmedAtMs).toBeGreaterThanOrEqual(15_000);
+    await expect.poll(async () => (await mediaGateSnapshot(page)).events.some((event) => event.kind === "media-close-entered")).toBe(true);
+    await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
+    const frozen = (await readStoredTrainingRecords(page)).sessions[0];
+    expect((await readStoredTrainingRecords(page)).drafts).toHaveLength(0);
+    expect(frozen).toMatchObject({ interrupted: false, video: { recorded: false, synchronized: false }, finalization: { media: { state: "pending" } } });
+    expect(frozen.sampleCount).toBe(frozen.samples.length);
+    expect(frozen.sampleCount).toBeGreaterThan(10);
+    expect(frozen.samples.every((sample) => sample.source === "ground_rc")).toBe(true);
+    expect((await mediaGateSnapshot(page)).events.some((event) => event.kind === "media-underlying-close-resolved")).toBe(false);
+
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "训练记录", exact: true }).click();
+    await expect(page.locator(".session-detail-header")).toContainText("遥控数据已保存");
+    await page.getByRole("button", { name: "导出 JSON", exact: true }).click();
+    await expect.poll(async () => (await readJsonExports(page)).length).toBe(1);
+    const early = (await readJsonExports(page))[0];
+    expect(early.session.id).toBe(frozen.id);
+    expect(early.session.samples).toEqual(frozen.samples);
+    expect(early.session.video.recorded).toBe(false);
+
+    // A new ARM level is observed while the native media file is deliberately still unclosed.
+    await setArmSwitch(page, true);
+    const before = await page.evaluate(() => window.__fpvFakeSerial.rcResponses);
+    await expect.poll(() => page.evaluate(() => window.__fpvFakeSerial.rcResponses)).toBeGreaterThan(before + 30);
+    await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "stopping");
+    expect(await page.evaluate(() => window.__fpvArmRecording.starts)).toBe(1);
+    expect((await readStoredTrainingRecords(page)).sessions[0].samples).toEqual(frozen.samples);
+    await attachJson(info, "arm-rc-confirmed-media-pending.json", {
+      frozen, early, disarmedAtMs, gate: await mediaGateSnapshot(page),
+      recorder: await page.evaluate(() => window.__fpvArmRecording),
+      boundary: "Synthetic serial/video; real MediaRecorder and OPFS. Before-close gate holds only video, not terminal RC or early JSON.",
+    });
+
+    await releaseMediaGate(page);
+    await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "waiting_disarm");
+    await expect.poll(async () => (await readStoredTrainingRecords(page)).sessions.find((session) => session.id === frozen.id)?.video.recorded).toBe(true);
+    await expect.poll(async () => (await readJsonExports(page)).length).toBe(2);
+    const afterClose = (await readStoredTrainingRecords(page)).sessions.find((session) => session.id === frozen.id)!;
+    expect(afterClose.samples).toEqual(frozen.samples);
+    expect(afterClose.endedAt).toBe(frozen.endedAt);
+    expect(afterClose.interruptionReason).toBeNull();
+    expect((await readJsonExports(page)).find((entry) => entry.filename === early.filename)).toEqual(early);
+    await expectPlayableVideo(page, afterClose);
+    expect(await page.evaluate(() => window.__fpvArmRecording.starts)).toBe(1);
+
+    await openArmBetaSettings(page);
+    await setArmSwitch(page, false);
+    await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "ready");
+    await startAndWaitForVideoFrames(page);
+    expect(await page.evaluate(() => window.__fpvArmRecording.starts)).toBe(2);
+    await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
+    await expect(page.getByTestId("auto-phase")).toHaveAttribute("data-phase", "disabled");
+    await expect.poll(async () => (await readJsonExports(page)).length).toBe(3);
+    const finalSessions = (await readStoredTrainingRecords(page)).sessions;
+    expect(finalSessions).toHaveLength(2);
+    const next = finalSessions.find((session) => session.id !== frozen.id)!;
+    expect(next.sampleCount).toBeGreaterThan(10);
+    await expectPlayableVideo(page, next);
+    expect(new Set(finalSessions.map((session) => session.video.recorded && session.video.filename)).size).toBe(2);
+    expect(await page.evaluate(() => window.__fpvArmRecording)).toMatchObject({ starts: 2, stops: 2 });
+    expect(await page.evaluate(() => window.__fpvFakeSerial.protocolErrors)).toEqual([]);
+    await attachJson(info, "arm-media-closed-next-attempt.json", { finalSessions, exports: await readJsonExports(page), gate: await mediaGateSnapshot(page) });
   });
 
   test("keeps video recording after serial loss and marks the data gap when manually saved", async ({ page }) => {

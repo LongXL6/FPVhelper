@@ -1,0 +1,99 @@
+{
+  "run_id": "phase2a-directory-binding-20260906-01",
+  "status": "needs_review",
+  "DIRECTORY-01": "confirmed/fixed locally; parent re-review pending",
+  "base": {
+    "sha": "0ee45e163adf15954b7163250d948bf167e1c1f7",
+    "tree": "d93766d93ca0f9cd6cb5758e4ca0a12ab273306e",
+    "pr": "https://github.com/LongXL6/fpvhelper/pull/11"
+  },
+  "tested": {
+    "sha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+    "tree": "c4267b8fa5e9b2792b992e23a1aedb523e470b36",
+    "cleanAtGates": true
+  },
+  "delivery": {
+    "sha": null,
+    "tree": null,
+    "resolution": "Post-commit output/playwright/phase2a-directory-binding/handoff/delivery.json records final SHA/tree and exact tested-to-delivery diff; parent must include it in PR update. Tracked file cannot name its own commit hash."
+  },
+  "gates": {
+    "testedSha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+    "testedTree": "c4267b8fa5e9b2792b992e23a1aedb523e470b36",
+    "sourceCleanBefore": true,
+    "smokeBuildId": "g93Ixsi_cxsSl-GokkgsM",
+    "check": {
+      "passed": 762,
+      "files": 79,
+      "typecheck": "passed",
+      "lint": "passed"
+    },
+    "fullSmoke": {
+      "passed": 32,
+      "failed": 0
+    },
+    "node": "v25.8.1",
+    "lockfileSha256": "ea6b77a38f691ef7d6e51a36801fc3ab3aac104edc2d03ab5a67548870292f07",
+    "ordinaryBuildEnv": {
+      "NEXT_PUBLIC_ANALYTICS_ENABLED": "false",
+      "NEXT_TELEMETRY_DISABLED": "1",
+      "FPV_MEASUREMENT_BUILD": "0"
+    },
+    "ordinaryBuildExitCode": 0,
+    "sourceCleanAfter": true,
+    "ordinaryBuildId": "Ug5KVuGzL2RqK2l5oq1iI",
+    "recordedAtUtc": "2026-09-06T15:53:03.459164+00:00"
+  },
+  "diff": {
+    "product": [
+      "hooks/use-training-session.ts"
+    ],
+    "testsAndFixtures": [
+      "e2e/fixtures/phase2a-cua-directory-controls.ts",
+      "e2e/fpv-control-room.e2e.ts",
+      "e2e/rc-finalization.e2e.ts",
+      "hooks/use-training-session-library.test.tsx",
+      "scripts/phase2a-cua-proxy.mts"
+    ],
+    "testedToDelivery": "documentation/evidence only, checked after commit"
+  },
+  "policy": {
+    "automaticTarget": "Stop captures original handle before asynchronous waits. Later selection/clear cannot redirect the queued task.",
+    "manualTarget": "Capture current directory at user action.",
+    "clear": "Remove default for future records; queued exports of already-stopped records retain original target. User-facing notice explicitly explains retention.",
+    "originalTargetFailure": "No use of newer D2; Session-specific export feedback, no overwrite of current D2 permission state or S2 storage error. Existing browser-download fallback stays unconfirmed.",
+    "serialization": "No handle in Session JSON; no DB/schema/queue changes"
+  },
+  "computerUse": {
+    "receipt": "parent-cua.json",
+    "result": "Actual UI D1 selection/early JSON pending/media release/D2 selection/final automatic-v2 to D1/later explicit manual export to D2",
+    "sourceSha": "d2cd9903c37fdfdfcaf499c3bbd1e1a6a059c468",
+    "recordIdPrefix": "2ce24394",
+    "samplesShown": 2169,
+    "inlineScreenshots": 3,
+    "filesystemRecalculationByCua": false
+  },
+  "availability": {
+    "reviewFiles": "tracked local preparation; parent owns PR11 publication/access checks",
+    "rawSamplesAndTraces": "ignored local output only; hashes do not provide remote access",
+    "recordedMedia": "native file bytes/hash read during tests; no exported media artifacts"
+  },
+  "evidence_gaps": [
+    "No physical permission revocation, real-device or power-loss test",
+    "Three actual CUA screenshots inline only; no PNG export. CUA UI observations are separate from native automated filesystem/IDB readback.",
+    "No new performance A/B; prior R1 remains PARTIAL / measurement_sensitive_or_inconclusive"
+  ],
+  "externalActions": {
+    "executorPush": false,
+    "merge": false,
+    "deploy": false,
+    "tag": false,
+    "cloudMutation": false
+  },
+  "stopPoint": "Parent updates existing private Draft PR11 and requests re-review; no new stage or release.",
+  "cleanup": {
+    "ownedServers": "PIDs63636(3138) and63701(3140), command/cwd checked then TERM; final listener check in delivery receipt",
+    "newCuaTabs": "Parent verified tabs8/9 closed; user tabs untouched",
+    "retainedPriorGap": "Original Phase2A error tab4 cleanup restriction remains; not bypassed"
+  }
+}

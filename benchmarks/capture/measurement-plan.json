@@ -1,0 +1,1148 @@
+{
+  "schemaVersion": 1,
+  "protocol": "fpvhelper-capture-measurement-plan/v1",
+  "status": "frozen",
+  "phase": "phase-1a",
+  "scope": "Measure existing capture publications, store notifications and React commits; no runtime extraction or sampling changes.",
+  "reviewedPhase0": {
+    "runId": "fpvhelper-phase0-20260905-201716",
+    "headSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+    "testedImplementationSha": "7fe193876707864cb016fe87d63be181a59c8890",
+    "evidenceStatus": "Parent supplied matching Phase 0 PASS and Phase 1A scope; no release or hardware authorization."
+  },
+  "formalMeasurementAllowed": true,
+  "frozenPlanCommit": null,
+  "frozenPlanSha256": null,
+  "measurementSourceSha": null,
+  "warmupMs": 5000,
+  "windowMs": 20000,
+  "repeats": 3,
+  "lifecyclePhaseMs": 5000,
+  "drainMs": 3000,
+  "maxRunMs": 120000,
+  "cleanupMs": 20000,
+  "maxBatchMs": 1800000,
+  "maxEvents": 200000,
+  "maxTraceBytes": 67108864,
+  "maxOutputBytes": 262144000,
+  "minDiskFreeBytes": 2147483648,
+  "maxHeapBytes": null,
+  "timingRationale": "Bounded first baseline on an active user workstation: 20 s rather than a recommended 60 s steady window. Limited steady-state evidence; no long-run, thermal, endurance or hardware claim. All 30 planned runs and cleanup remain subject to a 30 min batch ceiling.",
+  "units": {
+    "durations": "ms unless a field says otherwise",
+    "bytes": "bytes; 64 MiB encoded snapshot ceiling checked after each bounded run, 250 MiB retained compressed/evidence artifacts, 2 GiB minimum available disk",
+    "inputHz": "nominal synthetic source pacing, never measured RF or guaranteed delivery rate"
+  },
+  "conditions": [
+    {
+      "id": "S0",
+      "scenario": "S0",
+      "inputHz": 0,
+      "modes": [
+        "P1"
+      ],
+      "intent": "Product demo; inputHz 0 means no serial fixture, not zero demo samples.",
+      "recording": false,
+      "denominator": "Demo has no independently delivered serial-frame cohort; unavailable fixture completeness is null."
+    },
+    {
+      "id": "S1-100",
+      "scenario": "S1",
+      "inputHz": 100,
+      "modes": [
+        "N",
+        "P0",
+        "P1"
+      ],
+      "intent": "One deterministic synthetic serial port; idle telemetry view.",
+      "recording": false,
+      "denominator": "Independent delivered fixture IDs intersect actual valid subscription intervals."
+    },
+    {
+      "id": "S1-50",
+      "scenario": "S1",
+      "inputHz": 50,
+      "modes": [
+        "P1"
+      ],
+      "intent": "Same idle path at 50 Hz nominal fixture pacing.",
+      "recording": false,
+      "denominator": "Independent delivered fixture IDs intersect actual valid subscription intervals."
+    },
+    {
+      "id": "S2",
+      "scenario": "S2",
+      "inputHz": 100,
+      "modes": [
+        "N",
+        "P0",
+        "P1"
+      ],
+      "intent": "One synthetic port and synthetic video with local stick-overlay recording active before warmup.",
+      "recording": true,
+      "denominator": "Window cohort intersects actual recording acceptance gates; full Session count is a different denominator."
+    },
+    {
+      "id": "S3",
+      "scenario": "S3",
+      "inputHz": 100,
+      "modes": [
+        "P1"
+      ],
+      "intent": "Two independent synthetic ports; current-channel switches and internal navigation.",
+      "recording": false,
+      "denominator": "Per port, consumer and labelled lifecycle phase; inactive view is not assumed to mean inactive subscription."
+    },
+    {
+      "id": "S4",
+      "scenario": "S4",
+      "inputHz": 100,
+      "modes": [
+        "P1"
+      ],
+      "intent": "Pause, resume, return to demo and explicit fixture/component cleanup.",
+      "recording": false,
+      "denominator": "Per labelled phase and actual subscription lifetime; paused/no-subscription periods do not create expected raw samples."
+    }
+  ],
+  "modeOrdersByRepeat": [
+    {
+      "repeat": 1,
+      "order": [
+        "N",
+        "P0",
+        "P1"
+      ]
+    },
+    {
+      "repeat": 2,
+      "order": [
+        "P0",
+        "P1",
+        "N"
+      ]
+    },
+    {
+      "repeat": 3,
+      "order": [
+        "P1",
+        "N",
+        "P0"
+      ]
+    }
+  ],
+  "runOrder": [
+    {
+      "repeat": 1,
+      "condition": "S0",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S1-100",
+      "mode": "N"
+    },
+    {
+      "repeat": 1,
+      "condition": "S1-100",
+      "mode": "P0"
+    },
+    {
+      "repeat": 1,
+      "condition": "S1-100",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S1-50",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S2",
+      "mode": "N"
+    },
+    {
+      "repeat": 1,
+      "condition": "S2",
+      "mode": "P0"
+    },
+    {
+      "repeat": 1,
+      "condition": "S2",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S3",
+      "mode": "P1"
+    },
+    {
+      "repeat": 1,
+      "condition": "S4",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S0",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S1-100",
+      "mode": "P0"
+    },
+    {
+      "repeat": 2,
+      "condition": "S1-100",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S1-100",
+      "mode": "N"
+    },
+    {
+      "repeat": 2,
+      "condition": "S1-50",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S2",
+      "mode": "P0"
+    },
+    {
+      "repeat": 2,
+      "condition": "S2",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S2",
+      "mode": "N"
+    },
+    {
+      "repeat": 2,
+      "condition": "S3",
+      "mode": "P1"
+    },
+    {
+      "repeat": 2,
+      "condition": "S4",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S0",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S1-100",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S1-100",
+      "mode": "N"
+    },
+    {
+      "repeat": 3,
+      "condition": "S1-100",
+      "mode": "P0"
+    },
+    {
+      "repeat": 3,
+      "condition": "S1-50",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S2",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S2",
+      "mode": "N"
+    },
+    {
+      "repeat": 3,
+      "condition": "S2",
+      "mode": "P0"
+    },
+    {
+      "repeat": 3,
+      "condition": "S3",
+      "mode": "P1"
+    },
+    {
+      "repeat": 3,
+      "condition": "S4",
+      "mode": "P1"
+    }
+  ],
+  "modes": {
+    "N": {
+      "build": "ordinary production Next build",
+      "measurementBuildFlag": "0",
+      "nextDistDir": ".next",
+      "setupMode": "on",
+      "productTraceAvailable": false,
+      "internalMetricsWhenUnavailable": null,
+      "purpose": "Ordinary production baseline with independent fixture ledger and common CDP observations. The fixture deliberately requests setup on, but the compiled-out ordinary build must still expose no measurement bridge."
+    },
+    "P0": {
+      "build": "same profiling build as P1",
+      "measurementBuildFlag": "1",
+      "nextDistDir": ".next-measurement",
+      "setupMode": "off",
+      "productTraceAvailable": false,
+      "internalMetricsWhenUnavailable": null,
+      "purpose": "Profiling build and wrappers present, trace collector off; measures build/instrumentation baseline separately."
+    },
+    "P1": {
+      "build": "same profiling build as P0",
+      "measurementBuildFlag": "1",
+      "nextDistDir": ".next-measurement",
+      "setupMode": "on",
+      "productTraceAvailable": true,
+      "purpose": "Bounded in-page event collector and React Profiler callbacks enabled."
+    }
+  },
+  "buildContract": {
+    "reactStrictMode": true,
+    "changeStrictModeBetweenRuns": false,
+    "normalBuildCommand": "FPV_MEASUREMENT_BUILD=0 NEXT_PUBLIC_ANALYTICS_ENABLED=false NEXT_TELEMETRY_DISABLED=1 npm run build",
+    "profilingBuildCommand": "FPV_MEASUREMENT_BUILD=1 NEXT_PUBLIC_ANALYTICS_ENABLED=false NEXT_TELEMETRY_DISABLED=1 npm run build -- --profile",
+    "profilingClientFlag": "NEXT_PUBLIC_FPV_MEASUREMENT=true only in the dedicated measurement build",
+    "traceSetup": "window.__fpvMeasurementSetup = { mode: on|off, maxEvents: 200000, runId } before application scripts",
+    "profileSource": "In-page profiler event timeline; no extra full CDP trace in the formal comparison.",
+    "runtimeReactVersionSource": "Observe version in the actual Next app runtime; installed react/package.json is not sufficient for vendored React.",
+    "buildOrder": [
+      "profiling build first",
+      "ordinary N build last"
+    ],
+    "generatedFileBoundary": "Next profiling build transiently rewrites tracked next-env.d.ts to the measurement distDir. Record that change; the ordinary build runs last so the final tracked state is checked clean before formal measurements."
+  },
+  "clockAndCohort": {
+    "clock": "real performance.now in the measured page realm",
+    "fakeClocksAllowed": false,
+    "interval": "[t0, t1)",
+    "t0": "Page-clock boundary after 5 s warmup, with preconditions established.",
+    "t1": "Actual page-clock end boundary after the planned windowMs wait for steady scenarios; report actual elapsed duration. Lifecycle scenarios use explicit actual per-phase boundaries.",
+    "fixtureIdentity": "Source/port plus monotonically assigned independent fixtureFrameId; never derive identity from product sequence.",
+    "deliveryBasis": "Only ledger-confirmed delivered frames whose page-clock delivery time falls in the cohort; planned ticks and delivered frames are separate counts.",
+    "drain": "At t1 freeze the cohort by actual delivery in [t0,t1), then allow a bounded 3 s processing drain while input transport continues in steady S1/S2. Preserve in-flight and later arrivals, but exclude their IDs from this cohort only by the predeclared delivery-time rule. Do not pause transport for steady-state drain; S4 pauses only in its explicit lifecycle phase.",
+    "subscriptionDenominator": "Expected IDs = delivered cohort intersect each consumer's actual valid subscription intervals; report mounts/unmounts and interval boundaries.",
+    "recordingDenominator": "Expected recorded IDs additionally intersect actual recording acceptance gate intervals, independent of raw/UI subscription denominators.",
+    "lateOrMissing": "Drain expiry reports unresolved/missing/late explicitly. Preserve all ledger entries, including in-flight arrivals outside the cohort; do not drop records or move the cohort boundaries to improve results.",
+    "lifecycle": "S3/S4 phase-level windows and denominators remain separate from steady 20 s ratios; report the actual phase timings.",
+    "fixtureObserverModes": {
+      "detailed": false,
+      "sameInModes": [
+        "N",
+        "P0",
+        "P1"
+      ],
+      "commonObservations": [
+        "bounded independent frame identity ledger",
+        "requested/planned/generated/actual-delivered page-clock times",
+        "per-port aggregate counters"
+      ],
+      "contrast": "P1-P0 adds only product collector and profiler callback recording; the bounded fixture ledger, aggregate counters and before/after CDP observation do not change."
+    }
+  },
+  "profilerSemantics": {
+    "ids": [
+      "workbench",
+      "telemetry-display",
+      "throttle-timeline",
+      "recording-ui",
+      "pilot-bridge:<channel>"
+    ],
+    "fields": [
+      "id",
+      "phase",
+      "actualDuration",
+      "baseDuration",
+      "startTime",
+      "commitTime"
+    ],
+    "phaseMeaning": "React mount/update/nested-update callback phase; callback count is not browser FPS. Keep phase and event index with every callback.",
+    "commitIdentity": "Raw per-profiler callback count is primary. workbench callback count describes measured-subtree commits within that boundary only, not all page/root commits. Do not deduplicate callbacks by timestamp.",
+    "durationMeaning": "actualDuration is React measured render work for that boundary; nested durations overlap and must not be summed as total CPU. baseDuration is React's estimate, not measured baseline CPU.",
+    "coverage": "Record each boundary's actual scope. workbench is the measured subtree, not a guarantee of all page roots, portals or independent bridge activity.",
+    "notMeasuredByProfiler": [
+      "DOM mutation count",
+      "browser painted FPS",
+      "whole-main-thread CPU",
+      "RF sample rate",
+      "hardware input latency"
+    ],
+    "windowBasis": "Select React callbacks by commitTime in [t0,t1), not the later collector event.timeMs. Preserve callback collection time separately.",
+    "timestampAssociation": "Distinct commitTime values are an association aid, not a collision-free commit identity. Preserve all callbacks and flag repeated workbench commitTime values as ambiguous."
+  },
+  "reporting": {
+    "perRun": [
+      "condition",
+      "mode",
+      "repeat",
+      "actual input/delivery counts",
+      "consumer subscription intervals",
+      "recording gate intervals",
+      "missing/duplicate/out-of-order IDs",
+      "product counters or null with reason",
+      "per-profiler callback counts, workbench measured-subtree count and timestamp ambiguity",
+      "raw run duration and denominator",
+      "cleanup outcome",
+      "budget usage and stop reason",
+      "common CDP endpoint counters, bracket duration including drain, derived deltas or explicit unavailability",
+      "read.batch chunk/byte counts and parser.frame counts by command/error, separately from RC decoded cohort"
+    ],
+    "overhead": "Pair N/P0/P1 within the same repeat and condition: P0-N reports profiling-build/wrapper baseline overhead; P1-P0 adds product collector and profiler callback recording. Fixture detailed=false, bounded input ledger, aggregate counters and common CDP before/after observations stay the same in every mode. Use each metric's own declared duration; compare only independently available metrics.",
+    "unavailable": "Use null plus unavailable reason, not zero. No trace in N/P0 is intentional unavailability, not zero notifications/commits.",
+    "aggregation": "Retain all planned, failed, partial and exploratory runs; report per-run values and repeat summaries. Never select only fastest or passing runs.",
+    "limits": "No performance improvement, long-duration stability, device safety or cloud integration claim follows from this baseline."
+  },
+  "resources": {
+    "browsers": 1,
+    "ownedServers": 1,
+    "serverOwnership": "scripts/run-phase1a-batch.mts owns one server PID/process group on configured loopback port 3124, switches N/P categories sequentially according to run-index, and never runs both categories concurrently. Actual port availability and bounded cleanup require validation before formal execution.",
+    "parallelBuildOrSmokeAllowed": false,
+    "browserProfile": "Fresh isolated context; never attach to user Chrome.",
+    "serverPort": 3124,
+    "normalUrl": "http://127.0.0.1:3124/",
+    "profileUrl": "http://127.0.0.1:3124/",
+    "recordingStorage": "Synthetic local isolated browser storage; no user directory or original media.",
+    "diskGate": "Check available disk before the batch and each run; stop if below minDiskFreeBytes.",
+    "artifactBudgetIncludes": "All retained bytes under this isolated worktree's output/playwright, including prior failed/successful explorations, formal runs, prerequisites, summaries, compressed traces and build/server logs. A fresh batch directory does not reset the 250 MiB allowance. Temporary raw snapshot/compression peak is reported separately and remains subject to available disk checks.",
+    "traceMemoryBoundary": "Primary collector cap is 200000 fixed-schema events, not a byte/heap cap. No per-frame JSON.stringify; encoded snapshot size is checked after the bounded run.",
+    "artifactEncoding": "gzip for retained JSON traces; retain rawBytes and compressedBytes in receipts. Other retained evidence also counts toward maxOutputBytes.",
+    "temporarySnapshotMaxBytes": 67108864,
+    "heapThreshold": "maxHeapBytes is null until an actual observable and justified process/heap threshold is established; no heap-bound claim follows from event count or encoded bytes.",
+    "fixtureFrameLedgerCap": 30000,
+    "artifactBudgetRoot": "output/playwright"
+  },
+  "stopPolicy": {
+    "batchStopsOn": [
+      "product integrity failure: unexpected raw loss, duplication, order or cross-source mixing after declared denominator and drain",
+      "event count cap reached/overflow, or encoded snapshot exceeds 64 MiB when checked after a bounded run",
+      "unexpected external request or attempted user-data upload",
+      "artifact/disk budget breach",
+      "run or batch deadline",
+      "cleanup deadline or unresolved owned process/resource"
+    ],
+    "result": "partial; retain original evidence and reason, stop dependent runs, no optimistic pass.",
+    "cleanup": "Deadline is 20 s; timeout does not prove cancellation or release. Keep the owned-resource handle/quarantine evidence if cleanup is unresolved.",
+    "runnerDeadline": "Child measurement work maxRunMs=120000; parent runner deadline is maxRunMs + cleanupMs=140000 but no later than batchWorkDeadline. batchWorkDeadline = batchStarted + maxBatchMs - cleanupMs reserves the final 20 s for owned-process cleanup inside the 30 min batch ceiling."
+  },
+  "execution": {
+    "fixture": "e2e/fixtures/measurement-hardware.ts",
+    "runner": "scripts/measure-phase1a.mts",
+    "analyzer": "scripts/phase1a-analysis.ts",
+    "runnerStatus": "CLI and bounded process-group cleanup source reviewed; six P1 and four P0/N exploratory controls observed. Frozen protocol awaits root commit, exact-source checks/build receipts and formal execution.",
+    "commandTemplate": "node --experimental-transform-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/run-phase1a-batch.mts --plan benchmarks/capture/measurement-plan.json --output output/playwright/phase1a-formal-<batch-id> --port 3124",
+    "exploratoryOptions": [
+      "--exploratory",
+      "--condition S1-100",
+      "--mode P1"
+    ],
+    "formalGate": "Frozen plan must be committed before formal execution; external receipts bind actual plan hash/commit, tested source/tree/file manifest and build IDs. Formal status does not itself prove those subsequent steps completed.",
+    "orchestrator": "scripts/run-phase1a-batch.mts",
+    "individualRunCommandTemplate": "node --experimental-transform-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/measure-phase1a.mts --plan benchmarks/capture/measurement-plan.json --normal-url http://127.0.0.1:3124/ --profile-url http://127.0.0.1:3124/ --output output/playwright/phase1a-<batch-id> --run-index <zero-based-plan-index>",
+    "exploratoryCommandTemplate": "node --experimental-transform-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/measure-phase1a.mts --plan benchmarks/capture/measurement-plan.json --normal-url http://127.0.0.1:3124/ --profile-url http://127.0.0.1:3124/ --output output/playwright/phase1a-exploratory-<batch-id> --exploratory --condition S1-100 --mode P1",
+    "serverPrecondition": "The lower-level runner does not own/start/stop servers. For a direct exploratory run, its caller starts exactly one matching N or P server and owns its cleanup. Formal orchestration selects the category and invokes one --run-index at a time.",
+    "nodeArguments": [
+      "--experimental-transform-types",
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON"
+    ],
+    "nodeArgumentReason": "The runner imports TypeScript requiring transformation, not only erasable-type stripping; the orchestrator must pass the same transform flag to owned runner processes.",
+    "sourceGateEveryRun": "Before every formal run, verify HEAD still equals the batch source SHA and git status --porcelain remains empty; stop partial if source changes. Initial source-linked BUILD_ID receipts remain required."
+  },
+  "exploratory": {
+    "requiredBeforeFreeze": true,
+    "maxWarmupMs": 2000,
+    "maxWindowMs": 2000,
+    "maxLifecyclePhaseMs": 2000,
+    "repeats": 1,
+    "resultsCountTowardFormalRepeats": false,
+    "preserveAllBatches": true,
+    "positiveControl": [
+      "Dedicated profiling runtime produces genuine React Profiler callbacks with declared fields.",
+      "P0 uses the same profiling build but does not collect trace; N exposes no measurement bridge.",
+      "Independent fixture IDs reconcile against valid subscriptions and recording gates.",
+      "Runtime React, actual browser version, headless state and viewport are observed; GPU backend is observed or explicitly unavailable.",
+      "Collector budgets and ordinary-build isolation are verified without user input or external requests.",
+      "A preserved final-source/build positive-control receipt binds genuine mount/update callback examples, raw artifact SHA and build identity; earlier exploratory summaries are not silently reused after source/analyzer changes."
+    ],
+    "rerunP1AfterCaptureBoundaries": {
+      "required": true,
+      "conditions": [
+        "S0",
+        "S1-100",
+        "S1-50",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "reason": "read.batch/parser.frame instrumentation changed the profiling source and event workload; rebuild profiling then ordinary before final evidence.",
+      "status": "completed_by_explore_07_with_current_analyzer_reanalysis"
+    }
+  },
+  "runtimeFieldsToFreeze": {
+    "actualBrowserVersion": "151.0.7922.34",
+    "headlessActual": true,
+    "gpuBackendActual": null,
+    "gpuUnavailableReason": "Not queried; no GPU performance claim",
+    "viewport": {
+      "width": 1440,
+      "height": 1100
+    },
+    "normalRuntimeReactVersion": null,
+    "normalRuntimeReactVersionUnavailableReason": "N ordinary build correctly exposes no measurement bridge. The N control artifacts contain no direct React runtime version observation; installed package version is not substituted.",
+    "profilingRuntimeReactVersion": "19.3.0-canary-cbb046ab-20260731",
+    "profilingPositiveControl": {
+      "status": "observed_in_six_P1_exploratory_conditions",
+      "artifacts": "freezeEvidence.P1",
+      "reanalysisAnalyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+      "formalRepetition": false
+    },
+    "boundaryCoverageObserved": {
+      "observedProfilerIds": [
+        "pilot-bridge:video-source-1-pilot-1",
+        "pilot-bridge:video-source-1-pilot-2",
+        "pilot-bridge:video-source-1-pilot-3",
+        "pilot-bridge:video-source-1-pilot-4",
+        "pilot-bridge:video-source-2-pilot-1",
+        "pilot-bridge:video-source-2-pilot-2",
+        "pilot-bridge:video-source-2-pilot-3",
+        "pilot-bridge:video-source-2-pilot-4",
+        "recording-ui",
+        "telemetry-display",
+        "throttle-timeline",
+        "workbench"
+      ],
+      "sourceScopes": [
+        {
+          "id": "workbench",
+          "source": "app/page.tsx:6",
+          "scope": "FlightDashboard subtree; does not claim every independent page root or portal."
+        },
+        {
+          "id": "telemetry-display",
+          "source": "components/flight-dashboard.tsx:1672",
+          "scope": "aside.telemetry-rail"
+        },
+        {
+          "id": "throttle-timeline",
+          "source": "components/flight-dashboard.tsx:1746",
+          "scope": "ThrottleTimeline child"
+        },
+        {
+          "id": "recording-ui",
+          "source": "components/flight-dashboard.tsx:1749",
+          "scope": "section.session-card subtree"
+        },
+        {
+          "idPattern": "pilot-bridge:<channel>",
+          "source": "hooks/use-pilot-telemetry-workspace.tsx:213",
+          "scope": "Each PilotTelemetryBridge; channel label does not imply an active serial input."
+        }
+      ],
+      "countSemantics": "Raw per-profiler callback count; nested boundaries overlap. Counts/examples below span each complete exploratory capture, not just its measurement cohort."
+    },
+    "serverPort": null,
+    "serverPortUnavailableReason": "Configured frozen endpoint is 3124; these raw exploration artifacts do not store origin/port. Formal orchestrator must bind its owned server PID/port in the external receipt.",
+    "collectorByteBudgetEnforcement": {
+      "status": "under_limits_in_six_explorations",
+      "maxObservedEventCount": 63469,
+      "maxObservedEncodedJsonBytes": 17596238,
+      "eventCap": 200000,
+      "encodedJsonCeilingBytes": 67108864,
+      "allCollectorOverflowAndErrorCountsZero": true,
+      "caveat": "Under-limit runs do not prove cap-trigger behavior or a heap bound; use the separate collector tests for overflow enforcement."
+    },
+    "artifactCompressionVerified": {
+      "gzipDecodedSuccessfully": true,
+      "allReportedByteCountsMatch": true,
+      "runCount": 6,
+      "scope": "Six P1 exploratory artifacts only."
+    },
+    "commonCdpObservationVerified": {
+      "P1": true,
+      "P0": true,
+      "N": true,
+      "evidence": "explore-07 P1 and explore-08/09 P0/N raw artifacts; see freezeEvidence.",
+      "domain": "CDP renderer seconds, before/after bracket includes drain and observation overhead; not page cohort duration."
+    },
+    "finalBuildPositiveControlReceipt": {
+      "binding": "External receipt required before formal execution: source commit, plan hash/commit and normal/profile BUILD_IDs. Exploratory positive controls are linked here; no formal build/measurement completion claimed."
+    },
+    "captureStagePositiveControlReceipt": {
+      "status": "read.batch/parser.frame observed in five serial P1 scenarios; S0 has no serial fixture",
+      "evidence": "freezeEvidence.P1 captureCountsWholeCapture and raw gzip hashes"
+    }
+  },
+  "prerequisites": {
+    "scope": "local-only; redact local paths before any shared bundle",
+    "directory": "output/playwright/phase1a-prerequisites",
+    "environment": "environment.json",
+    "baselineMetadata": "phase0-reviewed-baseline.json",
+    "priorPhaseFullIndexDiff": "phase0-tested-to-reviewed.patch",
+    "trackedSourceHashes": "tracked-files-sha256.json",
+    "readOnlyCommandReceipts": "read-only-command-receipts.json",
+    "noRuntimeValidationClaim": true
+  },
+  "draftRevisions": [
+    {
+      "observedAtUtc": "2026-09-05T21:20:33.252908+00:00",
+      "change": "Replace initial 16 MiB trace wording with 200000-event collector cap plus 64 MiB post-run encoded snapshot ceiling; 250 MiB retained artifact budget uses gzip JSON.",
+      "reason": "JS object heap is not encoded JSON size; per-frame stringify would distort the measured workload. Preserve actual heap/process observations separately.",
+      "priorDraftLocalOnly": "output/playwright/phase1a-prerequisites/measurement-plan-initial-draft-16mib.json",
+      "formalResultsBeforeRevision": false
+    },
+    {
+      "observedAtUtc": "2026-09-05T21:32:49.750527+00:00",
+      "change": "Use raw per-profiler callbacks, commitTime windowing, timestamp ambiguity reporting; all modes keep fixture detailed=false; freeze actual-delivery cohort with explicit in-flight handling; document one-port sequential orchestration and profile-then-normal build order.",
+      "reason": "Timestamp equality is not a globally unique commit ID; differing fixture tracing would confound P1-P0; pause cannot retroactively erase in-flight input.",
+      "formalResultsBeforeRevision": false
+    },
+    {
+      "observedAtUtc": "2026-09-05T21:36:14.246627+00:00",
+      "change": "Steady S1/S2 drain freezes the delivery cohort without pausing input transport; t1 is the actual observed page-clock boundary, not an assumed exact timer deadline. S4 retains explicit lifecycle pauses.",
+      "reason": "Pausing transport during a normal recording drain could trigger RC stale guards and prematurely stop S2, changing the product workflow being measured. Cohort exclusion follows declared delivery time rather than suppressing input.",
+      "formalResultsBeforeRevision": false
+    },
+    {
+      "observedAtUtc": "2026-09-05T21:45:49.384662+00:00",
+      "change": "Require Node TypeScript transform flag; declare common N/P0/P1 CDP endpoint observation with its independent seconds domain and drain-inclusive bracket; retain source-bound exploratory React/browser evidence separately from final-build acceptance.",
+      "reason": "CLI compatibility and observer symmetry must be frozen before formal runs. CDP counter brackets and page delivery cohorts have different denominators. Earlier successful exploration cannot certify later fixture/analyzer changes.",
+      "formalResultsBeforeRevision": false
+    },
+    {
+      "observedAtUtc": "2026-09-05T21:51:07.689864+00:00",
+      "change": "Parent runner deadline includes declared cleanup allowance while retaining the 30 min batch ceiling; source identity/clean state checked before each run; artifact accounting covers the entire isolated worktree output/playwright. Add explicit read.batch/parser.frame boundaries and require rebuilt P1 exploratory controls.",
+      "reason": "Do not cut off bounded cleanup or hide prior artifacts in another batch folder. Newly added capture observations change the measured workload and invalidate reuse of earlier profiling-build controls.",
+      "formalResultsBeforeRevision": false
+    },
+    {
+      "observedAtUtc": "2026-09-05T21:59:58.162431+00:00",
+      "change": "Freeze protocol after six P1 exploratory scenarios plus two P0 and two N controls; current analyzer reanalysis linked. Keep unavailable ordinary React/GPU fields explicit, retain external self-hash/source/build binding and reserve final batch cleanup.",
+      "reason": "Positive controls now establish measurement availability and mode isolation; formal execution still requires the committed plan, exact-source validation and build receipts.",
+      "formalResultsBeforeRevision": false
+    }
+  ],
+  "commonCdpObservation": {
+    "sameInModes": [
+      "N",
+      "P0",
+      "P1"
+    ],
+    "collection": "One CDP Performance.enable per page, then one Performance.getMetrics before and after every labelled interval; no full CDP timeline trace.",
+    "fields": [
+      "Timestamp",
+      "TaskDuration",
+      "ScriptDuration",
+      "LayoutDuration",
+      "JSHeapUsedSize",
+      "JSHeapTotalSize"
+    ],
+    "clockAndUnits": "CDP renderer counters have their own timestamp domain. Timestamp and cumulative duration deltas are seconds; heap endpoint sizes are bytes. Do not directly subtract CDP timestamps from page performance.now milliseconds.",
+    "interval": "The before/after bracket includes the page measurement window, any declared drain, and observation/control overhead. Retain both endpoints and measured CDP Timestamp delta; it is not identical to the delivery cohort [t0,t1).",
+    "comparison": "Compare same-condition same-repeat N/P0/P1 using common available counters. For renderer task occupancy use TaskDuration delta divided by CDP Timestamp delta, not page cohort duration. Preserve absolute duration and denominators; ScriptDuration is not additive to total TaskDuration.",
+    "limits": "Renderer counters do not measure whole-process or machine CPU, physical input latency, or a time-aligned per-frame latency. Heap snapshots are endpoints, not a peak or continuous heap bound.",
+    "unavailable": "Retain available=false with reason and null derived deltas. An unavailable counter is not zero overhead."
+  },
+  "exploratoryEvidence": {
+    "status": "observed_earlier_draft_not_final_build_acceptance",
+    "runId": "explore-03-S1-100-P1-r1",
+    "artifactLocalOnly": "output/playwright/phase1a/explore-03/explore-03-S1-100-P1-r1.json.gz",
+    "artifactSha256": "40a6baeaee4ff08563c24c34b8fbbdad5345c26cdbc81f459ff0df8c1c91355f",
+    "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+    "sourceDiffSha256": "79fb88a22ef51f7090977842a6ac591a3f3eefa9fd48d50a9b2f06b53876a189",
+    "planSha256": "38652c520055042e53da84c695ef68ca3637450ea70827c3b904d370faa5762d",
+    "browserObserved": {
+      "version": "151.0.7922.34",
+      "headless": true,
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "gpuBackend": null,
+      "gpuUnavailableReason": "Not queried; no GPU performance claim"
+    },
+    "profilingReactVersionObserved": [
+      "19.3.0-canary-cbb046ab-20260731"
+    ],
+    "profilerPhaseCountsWholeExploratoryCapture": {
+      "mount": 8,
+      "update": 6984,
+      "nested-update": 40
+    },
+    "profilerFieldsObserved": [
+      "profilerId",
+      "phase",
+      "actualDuration",
+      "baseDuration",
+      "startTime",
+      "commitTime",
+      "reactVersion",
+      "index",
+      "timeMs"
+    ],
+    "rawSnapshotBytes": 6082860,
+    "gzipBytes": 253770,
+    "boundary": "This earlier exploratory receipt proves these observations only for its source/diff/plan. Its old valid=true summary must not be treated as acceptance of subsequently changed analyzer/fixture code. Final build positive control remains required; no formal repetitions have run."
+  },
+  "captureBoundarySemantics": {
+    "read.batch": "One observation for a reader.read result carrying a value, before done handling; fields batchId, byteLength, done, hookId and connectionGeneration. This counts transport chunks, not RC samples.",
+    "parser.frame": "One observation per frame returned by parser.push for that batch; fields batchId, command, error, payloadLength, hookId and connectionGeneration. Includes non-RC and error frames; a buffered frame is associated with the read batch that completes parsing.",
+    "rc.decoded": "Decoded RC sample observation remains separate and reconciles with independent fixture IDs; parser frame count must not be used as its cohort denominator.",
+    "positiveControl": "Observe read.batch and parser.frame on the rebuilt final profiling source. The earlier build predates these boundaries, so rerun all P1 exploratory conditions before freezing.",
+    "normalOffBoundary": "These product collector events remain unavailable in N/P0; do not invent zero read or parse activity."
+  },
+  "frozenAtUtc": "2026-09-05T21:59:58.162431+00:00",
+  "externalReceiptBinding": {
+    "selfReferentialFields": [
+      "frozenPlanCommit",
+      "frozenPlanSha256",
+      "measurementSourceSha"
+    ],
+    "reason": "The plan cannot contain its own final commit/file hash. Keep these null and bind the exact frozen plan bytes/commit, tested source commit/tree/file manifest and both BUILD_IDs in external formal build/orchestrator/run receipts. Null here is not permission to omit external binding.",
+    "formalExecutionPrerequisites": [
+      "Commit this frozen plan and complete exact-source checks.",
+      "Build profiling first and ordinary last from the clean committed source; verify both BUILD_IDs against the source-linked build receipt.",
+      "Orchestrator checks unchanged HEAD and clean worktree before every run and records planSha256/sourceSha.",
+      "Retain all exploratory and failed artifacts; any further protocol change requires a new plan revision and batch."
+    ]
+  },
+  "freezeEvidence": {
+    "scope": "Read-only observations of preserved exploratory artifacts; not formal repetitions. Root explicitly authorized protocol freeze after controls and bounded review.",
+    "P1": [
+      {
+        "runId": "explore-00-S0-P1-r1",
+        "condition": "S0",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-00-S0-P1-r1.json.gz",
+          "bytes": 60597,
+          "sha256": "ddce027498dd23bae00fd90de74794ecef01df90f9c5adfbc6e0d4be5a930220"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-00-S0-P1-r1.summary.json",
+          "bytes": 8771,
+          "sha256": "bcdf76cd82df99e8449d96104c6bc5247353d3a407babb54901c87f1e6249dbd"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-00-S0-P1-r1.reanalysis-1788645277291.json",
+          "bytes": 8365,
+          "sha256": "fbe27a7a078f57ec232f0ce1e4060505726b3362507cc026fd079eccd2d3d93e",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "ddce027498dd23bae00fd90de74794ecef01df90f9c5adfbc6e0d4be5a930220",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.292Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 0,
+          "parser.frame": 0,
+          "rc.decoded": 0
+        },
+        "collectorEventCount": 4988
+      },
+      {
+        "runId": "explore-03-S1-100-P1-r1",
+        "condition": "S1-100",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-03-S1-100-P1-r1.json.gz",
+          "bytes": 263607,
+          "sha256": "14436870bb7076e93379bf8dde35b0b8c2813a2680c668cb8cd994ba71f6f2cb"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-03-S1-100-P1-r1.summary.json",
+          "bytes": 11018,
+          "sha256": "4b2a7708f70a1b40a8d0550ca6f7a0e01ac1210d9e6582623f637f9964375b70"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-03-S1-100-P1-r1.reanalysis-1788645277324.json",
+          "bytes": 10735,
+          "sha256": "f229f138b8ad8472d98cb72f713b35504a280958faa8fa1f6d58a6d3b1d5523b",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "14436870bb7076e93379bf8dde35b0b8c2813a2680c668cb8cd994ba71f6f2cb",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.324Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 696,
+          "parser.frame": 696,
+          "rc.decoded": 612
+        },
+        "collectorEventCount": 21783
+      },
+      {
+        "runId": "explore-04-S1-50-P1-r1",
+        "condition": "S1-50",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-04-S1-50-P1-r1.json.gz",
+          "bytes": 150083,
+          "sha256": "3eba6811c8d31640fc03280912353231fd31ef68de927b2721830e31a689f57d"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-04-S1-50-P1-r1.summary.json",
+          "bytes": 10921,
+          "sha256": "b6e1948eb2629299da1ac40c1dd495106469f38e9ca3f1f74c76107f4775683b"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-04-S1-50-P1-r1.reanalysis-1788645277337.json",
+          "bytes": 10638,
+          "sha256": "4bc3cd37164bbdd4ebdf608eb2c5cf358b669941feaa9125311bb32ef3a49e50",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "3eba6811c8d31640fc03280912353231fd31ef68de927b2721830e31a689f57d",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.337Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 409,
+          "parser.frame": 409,
+          "rc.decoded": 330
+        },
+        "collectorEventCount": 12166
+      },
+      {
+        "runId": "explore-07-S2-P1-r1",
+        "condition": "S2",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-07-S2-P1-r1.json.gz",
+          "bytes": 342292,
+          "sha256": "bfa1e8e76efb4bc0676c4a4171cb17271700a3e07dec25b1de8c63c2ecd1e635"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-07-S2-P1-r1.summary.json",
+          "bytes": 11876,
+          "sha256": "6e4fd5479c4551696e512ba0ff3b093607b37e3de4a8379847c866dee2075380"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-07-S2-P1-r1.reanalysis-1788645277371.json",
+          "bytes": 11558,
+          "sha256": "29c59fd36a2e5240d73a3d780f3c3b53c87acfd6f4c3e247bf861514d8cc4ee7",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "bfa1e8e76efb4bc0676c4a4171cb17271700a3e07dec25b1de8c63c2ecd1e635",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.371Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 698,
+          "parser.frame": 698,
+          "rc.decoded": 611
+        },
+        "collectorEventCount": 27804
+      },
+      {
+        "runId": "explore-08-S3-P1-r1",
+        "condition": "S3",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-08-S3-P1-r1.json.gz",
+          "bytes": 769713,
+          "sha256": "5e3165d2ba718bfb7b8985a528e9777a93e11debfaf4f12394365e7c5caa350a"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-08-S3-P1-r1.summary.json",
+          "bytes": 44423,
+          "sha256": "43d844cb825a84ac1a90257127ee3265c3d4709476bf3f4880cee621a789b7d1"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-08-S3-P1-r1.reanalysis-1788645277487.json",
+          "bytes": 46467,
+          "sha256": "0bd2701b33acc8ef32c9a789ffc233dcd17b964f6926cb7200a1f1d1f4657620",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "5e3165d2ba718bfb7b8985a528e9777a93e11debfaf4f12394365e7c5caa350a",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.487Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 2588,
+          "parser.frame": 2588,
+          "rc.decoded": 2282
+        },
+        "collectorEventCount": 63469
+      },
+      {
+        "runId": "explore-09-S4-P1-r1",
+        "condition": "S4",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-07/explore-09-S4-P1-r1.json.gz",
+          "bytes": 285205,
+          "sha256": "33c98fb1be0fe0f033c8ff5e1cefdeaf1877d6c9796cf5c39ece3b99529f826c"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-07/explore-09-S4-P1-r1.summary.json",
+          "bytes": 44651,
+          "sha256": "14356c822cbbf36d7a4fdbb4535139161187867871471ac36e390fd6416ae955"
+        },
+        "reanalysis": {
+          "path": "output/playwright/phase1a/explore-07/explore-09-S4-P1-r1.reanalysis-1788645277530.json",
+          "bytes": 46788,
+          "sha256": "eb1f2e5f199aef2d6d2662081084a13b3f8f9838543535e84bf21027dab0d910",
+          "analyzerSha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c",
+          "originalArtifactSha256": "33c98fb1be0fe0f033c8ff5e1cefdeaf1877d6c9796cf5c39ece3b99529f826c",
+          "originalArtifactHashMatches": true,
+          "reanalysisOnly": true,
+          "analyzedAtUtc": "2026-09-05T21:54:37.530Z",
+          "historicalValid": true,
+          "historicalViolations": [],
+          "acceptanceBoundary": "Recorded reanalysis result of the original artifact using this analyzer hash; no new browser execution and no acceptance of subsequently changed code."
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "captureCountsWholeCapture": {
+          "read.batch": 592,
+          "parser.frame": 592,
+          "rc.decoded": 519
+        },
+        "collectorEventCount": 23641
+      }
+    ],
+    "P0AndN": [
+      {
+        "runId": "explore-02-S1-100-P0-r1",
+        "condition": "S1-100",
+        "mode": "P0",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-08/explore-02-S1-100-P0-r1.json.gz",
+          "bytes": 13309,
+          "sha256": "79f8280ea6775eb4fc0c02bfe623566ffee8213f997200d12eccce086ea9a4c0"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-08/explore-02-S1-100-P0-r1.summary.json",
+          "bytes": 5156,
+          "sha256": "47f8123fdd4cb236f5a3047d2333b336a5f21d758a7ff31532d5051b7c810939"
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "historicalValid": true,
+        "probePresent": true,
+        "probeEnabled": false,
+        "probeEvents": 0,
+        "cdpAvailableAllWindows": true,
+        "browser": {
+          "version": "151.0.7922.34",
+          "headless": true,
+          "viewport": {
+            "width": 1440,
+            "height": 1100
+          },
+          "gpuBackend": null,
+          "gpuUnavailableReason": "Not queried; no GPU performance claim"
+        },
+        "recording": {},
+        "cleanupCompleted": true,
+        "contextClosed": true
+      },
+      {
+        "runId": "explore-06-S2-P0-r1",
+        "condition": "S2",
+        "mode": "P0",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-08/explore-06-S2-P0-r1.json.gz",
+          "bytes": 29354,
+          "sha256": "3e7cbceff89a0180cc76f6ed43e0543fe03eb0e2a1819c1b33d99b027fa7d1fc"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-08/explore-06-S2-P0-r1.summary.json",
+          "bytes": 5764,
+          "sha256": "2f60e45cf4f41043b5523861d5ad27fd9ae8095f866127cb8a5dd1580dd46396"
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "historicalValid": true,
+        "probePresent": true,
+        "probeEnabled": false,
+        "probeEvents": 0,
+        "cdpAvailableAllWindows": true,
+        "browser": {
+          "version": "151.0.7922.34",
+          "headless": true,
+          "viewport": {
+            "width": 1440,
+            "height": 1100
+          },
+          "gpuBackend": null,
+          "gpuUnavailableReason": "Not queried; no GPU performance claim"
+        },
+        "recording": {
+          "container": "mp4",
+          "fileBytes": 564587,
+          "width": 1920,
+          "height": 1080,
+          "readyState": 4,
+          "jsonMatchesPersistedSamplesAndReceipt": true
+        },
+        "cleanupCompleted": true,
+        "contextClosed": true
+      },
+      {
+        "runId": "explore-01-S1-100-N-r1",
+        "condition": "S1-100",
+        "mode": "N",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-09/explore-01-S1-100-N-r1.json.gz",
+          "bytes": 13266,
+          "sha256": "a4ddf0e6351f7b40eff0df4295b5d7a8285552072b4e396bb17d7037f5f472dd"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-09/explore-01-S1-100-N-r1.summary.json",
+          "bytes": 5140,
+          "sha256": "03bf23fad7e63260ed548e247b457d89c091395bf29704b656f38051681bea37"
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "historicalValid": true,
+        "probePresent": false,
+        "probeEnabled": null,
+        "probeEvents": null,
+        "cdpAvailableAllWindows": true,
+        "browser": {
+          "version": "151.0.7922.34",
+          "headless": true,
+          "viewport": {
+            "width": 1440,
+            "height": 1100
+          },
+          "gpuBackend": null,
+          "gpuUnavailableReason": "Not queried; no GPU performance claim"
+        },
+        "recording": {},
+        "cleanupCompleted": true,
+        "contextClosed": true
+      },
+      {
+        "runId": "explore-05-S2-N-r1",
+        "condition": "S2",
+        "mode": "N",
+        "artifact": {
+          "path": "output/playwright/phase1a/explore-09/explore-05-S2-N-r1.json.gz",
+          "bytes": 29154,
+          "sha256": "aac39a8ceed5167f9d6f9a56f19db6da6abe0d2bdf9ebe5fe127b894b64a9c76"
+        },
+        "summary": {
+          "path": "output/playwright/phase1a/explore-09/explore-05-S2-N-r1.summary.json",
+          "bytes": 5804,
+          "sha256": "8daf1021449b7c8fef91cc11b47028f86a754c19cc58a7ef9f0b37ae07e764eb"
+        },
+        "sourceSha": "4a35333f9aea79340105a0eaf8b1b3eb7875920f",
+        "sourceDiffSha256": "e31044f51bb5bf799add4dd27eeaa91198eb114cdef6db5d01e9a8a4ec862d97",
+        "planSha256": "00dfb381a8396eb382c0401b1a775d14c4840de985ef84e787819bef63fa74c0",
+        "historicalValid": true,
+        "probePresent": false,
+        "probeEnabled": null,
+        "probeEvents": null,
+        "cdpAvailableAllWindows": true,
+        "browser": {
+          "version": "151.0.7922.34",
+          "headless": true,
+          "viewport": {
+            "width": 1440,
+            "height": 1100
+          },
+          "gpuBackend": null,
+          "gpuUnavailableReason": "Not queried; no GPU performance claim"
+        },
+        "recording": {
+          "container": "mp4",
+          "fileBytes": 568338,
+          "width": 1920,
+          "height": 1080,
+          "readyState": 4,
+          "jsonMatchesPersistedSamplesAndReceipt": true
+        },
+        "cleanupCompleted": true,
+        "contextClosed": true
+      }
+    ],
+    "reactExample": {
+      "mount": {
+        "profilerId": "pilot-bridge:video-source-1-pilot-1",
+        "phase": "mount",
+        "actualDuration": 0.5,
+        "baseDuration": 0.5,
+        "startTime": 75.5,
+        "commitTime": 84.59999999403954,
+        "reactVersion": "19.3.0-canary-cbb046ab-20260731",
+        "index": 0,
+        "timeMs": 85.2999999821186,
+        "kind": "react.commit"
+      },
+      "update": {
+        "profilerId": "pilot-bridge:video-source-1-pilot-1",
+        "phase": "update",
+        "actualDuration": 0,
+        "baseDuration": 0.5,
+        "startTime": 90.59999999403954,
+        "commitTime": 91.59999999403954,
+        "reactVersion": "19.3.0-canary-cbb046ab-20260731",
+        "index": 30,
+        "timeMs": 92.19999998807907,
+        "kind": "react.commit"
+      },
+      "nested-update": {
+        "profilerId": "workbench",
+        "phase": "nested-update",
+        "actualDuration": 0,
+        "baseDuration": 1.1999999582767487,
+        "startTime": 205.19999998807907,
+        "commitTime": 205.19999998807907,
+        "reactVersion": "19.3.0-canary-cbb046ab-20260731",
+        "index": 164,
+        "timeMs": 205.19999998807907,
+        "kind": "react.commit"
+      }
+    },
+    "index": "output/playwright/phase1a-prerequisites/exploratory-index.json",
+    "indexSha256AtFreeze": "36a0e17caffada7ab7affc0de41bd132f6a6f005d20bcac8cb720f51d05c1b61",
+    "analyzer": {
+      "path": "scripts/phase1a-analysis.ts",
+      "bytes": 22658,
+      "sha256": "0b35ed9092179904ea222b8ed8ae65b7c5de151da52a17159c0eb5ec3473fa2c"
+    },
+    "sourceIdentityLimit": "Exploratory sourceDiffSha256 used git diff HEAD and omits untracked files. Final formal evidence must use the full committed source and file manifest; do not claim the exploratory diff hash is complete source identity."
+  }
+}

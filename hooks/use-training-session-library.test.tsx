@@ -1,3 +1,4 @@
+import { applyTrainingSessionMetadataPatch } from "../lib/training-session-metadata";
 import { useEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ import * as exportModule from "../lib/training-session-export";
 import * as directoryModule from "../lib/training-session-export-directory";
 import * as exportFeedbackModule from "./training-session-export-feedback";
 import * as workstationModule from "../lib/workstation-id";
+import * as measurement from "../lib/capture-measurement";
 import { useTrainingSession, type TrainingSessionExportResult } from "./use-training-session";
 import type { LocalVideoRecordingReceipt } from "../lib/local-video-recording";
 
@@ -28,6 +30,7 @@ let sampleListener: TelemetrySampleListener | null;
 let subscribeSamples: SubscribeTelemetrySamples;
 let finishCompanionRecording: (() => Promise<LocalVideoRecordingReceipt | null>) | undefined;
 let linkState: LinkState;
+let autoExport: boolean;
 
 function makeSession(id: string, startedAtEpochMs: number) {
   const draft = createTrainingSessionDraft({
@@ -54,7 +57,7 @@ function Harness() {
     connection: "live",
     linkState,
     athleteCode: "PILOT-07",
-    autoExport: false,
+    autoExport,
     inputKey: "pilot-channel-1",
     subscribeSamples,
     finishCompanionRecording,
@@ -78,6 +81,7 @@ async function mountWithExportDirectory(handle: directoryModule.TrainingSessionD
 }
 
 beforeEach(async () => {
+  autoExport = false;
   finishCompanionRecording = undefined;
   linkState = "ok";
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -107,6 +111,13 @@ beforeEach(async () => {
     getStorageIntegrity: vi.fn(async () => ({ readableDraftCount: 0, readableSessionCount: records.size, quarantinedDraftCount: 0, quarantinedSessionCount: 0 })),
     saveSession,
     completeSession: vi.fn(async (session) => { records.set(session.id, session); }),
+    patchSession: vi.fn(async (id, patch) => {
+      const current = records.get(id);
+      if (!current) throw new Error("Missing session");
+      const updated = applyTrainingSessionMetadataPatch(toTrainingSessionSummary(current), patch);
+      await saveSession({ ...current, ...updated });
+      return updated;
+    }),
     close: vi.fn(async () => undefined),
   };
   vi.spyOn(storeModule, "createTrainingSessionStore").mockReturnValue(store);
@@ -129,6 +140,101 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it.each([false, true])("keeps S2 RC failure when S1 late export settles (metadata failure: %s)", async (metadataFailure) => {
+    autoExport = true;
+    const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => "granted", getFileHandle: vi.fn() };
+    const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2" };
+    await mountWithExportDirectory(d1);
+    let finishS1!: () => void;
+    const close = new Promise<void>((resolve) => { finishS1 = resolve; });
+    vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session) => { await close; return { filename: trainingSessionFilename(session), bytes: 100 }; });
+    let s1!: string, stoppedS1!: Promise<void>;
+    await act(async () => { s1 = (await controller.startRecording())!; });
+    await act(async () => { stoppedS1 = controller.stopRecording(); });
+    expect(records.has(s1)).toBe(true);expect(controller.hasPendingMedia).toBe(false);
+    vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2);
+    let s2!: string;
+    await act(async () => { await controller.configureExportDirectory(); s2 = (await controller.startRecording())!; });
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: performance.now() }, "serial"));
+    vi.mocked(store.completeSession).mockRejectedValueOnce(new Error("S2 RC transaction failed"));
+    await act(async () => { await controller.stopRecording(); });
+    expect(controller.hasPendingSave).toBe(true);expect(controller.storageError).toContain("S2 RC transaction failed");const error=controller.storageError;
+    if (metadataFailure) vi.mocked(store.patchSession).mockImplementation(async (id, update) => { if(id===s1&&update.kind==="export")throw new Error("S1 export metadata failed"); return applyTrainingSessionMetadataPatch(toTrainingSessionSummary(records.get(id)!),update); });
+    await act(async () => { finishS1(); await stoppedS1; });
+    expect(controller.storageError).toBe(error);expect(controller.hasPendingSave).toBe(true);expect(records.has(s2)).toBe(false);expect(controller.lastSession?.id).toBe(s2);expect(controller.lastSession?.samples).toHaveLength(1);expect(controller.exportDirectoryName).toBe("D2");
+    if(metadataFailure) expect(controller.exportWarning).toContain("S1 export metadata failed");
+  });
+
+  it.each(["clear", "revoke-D1"] as const)("preserves the queued automatic target after %s", async (action) => {
+    autoExport = true;
+    let mediaDone!: (receipt: LocalVideoRecordingReceipt) => void;
+    finishCompanionRecording = () => new Promise((resolve) => { mediaDone = resolve; });
+    let permission: directoryModule.TrainingSessionDirectoryPermission = "granted";
+    const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => permission, getFileHandle: vi.fn() };
+    const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2", queryPermission: async () => "granted" };
+    await mountWithExportDirectory(d1);
+    let earlyDone!: () => void;
+    const earlyClose = new Promise<void>((resolve) => { earlyDone = resolve; });
+    const save = vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session) => {
+      if (session.exportCount === 1) await earlyClose;
+      return { filename: trainingSessionFilename(session), bytes: 123 };
+    });
+    const fallback = vi.spyOn(exportFeedbackModule, "requestUnconfirmedTrainingSessionDownload").mockReturnValue({ notice: null, warning: "unconfirmed fallback" });
+    let id!: string;
+    await act(async () => { id = (await controller.startRecording())!; });
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: performance.now() }, "serial"));
+    await act(async () => { await controller.stopRecording(); });
+    const frozen = records.get(id)!;
+    let early!: Promise<TrainingSessionExportResult>;
+    await act(async () => { early = controller.exportSession(id); });
+    await act(async () => { mediaDone({ filename: "S1.webm", mimeType: "video/webm", bytes: 123, startedAtEpochMs: Date.now()-100, finishedAtEpochMs: Date.now() }); });
+    expect(controller.hasPendingMedia).toBe(false);expect(save).toHaveBeenCalledOnce();
+    await act(async () => {
+      if (action === "clear") await controller.clearExportDirectory();
+      else { vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2); await controller.configureExportDirectory(); permission = "denied"; }
+    });
+    if (action === "clear") expect(controller.exportNotice).toContain("待完成导出仍使用原文件夹");
+    await act(async () => { earlyDone(); await early; });
+    expect(records.get(id)?.samples).toEqual(frozen.samples);expect(records.get(id)?.endedAt).toBe(frozen.endedAt);expect(records.get(id)?.video.recorded).toBe(true);
+    if (action === "clear") {
+      expect(save).toHaveBeenCalledTimes(2);expect(save.mock.calls.every(([,handle])=>handle===d1)).toBe(true);expect(records.get(id)?.exportCount).toBe(2);
+      expect(controller.exportDirectoryState).toBe("unconfigured");expect(controller.exportNotice).toContain("D1");expect(fallback).not.toHaveBeenCalled();
+    } else {
+      expect(save).toHaveBeenCalledOnce();expect(records.get(id)?.exportCount).toBe(1);expect(controller.exportDirectoryState).toBe("ready");expect(controller.exportDirectoryName).toBe("D2");expect(controller.exportWarning).toContain(id.slice(0,8));expect(controller.exportWarning).toContain("D1");
+      await act(async () => { await controller.exportSession(id); });expect(save.mock.calls[1][1]).toBe(d2);expect(records.get(id)?.exportCount).toBe(2);
+    }
+  });
+
+  it.each(["replace", "clear"] as const)("keeps the selected directory state after %s while an old export settles", async (action) => {
+    for (const outcome of ["success", "permission", "write-error"] as const) {
+      let settle!: () => void;
+      const gate = new Promise<void>((resolve) => { settle = resolve; });
+      const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => "granted", getFileHandle: vi.fn() };
+      const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2" };
+      await mountWithExportDirectory(d1);
+      const permission = vi.spyOn(directoryModule, "getTrainingSessionDirectoryPermission").mockImplementation(async (handle) => {
+        if (handle === d1 && outcome === "permission") { await gate; return "denied"; }
+        return "granted";
+      });
+      const save = vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session, handle) => {
+        expect(handle).toBe(d1); await gate;
+        if (outcome === "write-error") throw new Error("D1 write failed");
+        return { filename: trainingSessionFilename(session), bytes: 100 };
+      });
+      let pending!: Promise<TrainingSessionExportResult>;
+      await act(async () => { pending = controller.exportSession("older"); });
+      vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2);
+      await act(async () => { if (action === "clear") await controller.clearExportDirectory(); else await controller.configureExportDirectory(); });
+      const state = controller.exportDirectoryState, name = controller.exportDirectoryName;
+      await act(async () => { settle(); await pending; });
+      expect(controller.exportDirectoryState).toBe(state);
+      expect(controller.exportDirectoryName).toBe(name);
+      if (outcome === "success") expect(controller.exportNotice).toContain("D1");
+      else expect(controller.exportWarning).toContain("D1");
+      permission.mockRestore(); save.mockRestore();
+    }
+  });
+
   it("exports to the configured folder with its actual versioned filename only after close completes", async () => {
     const baseFilename = trainingSessionFilename(records.get("older")!);
     const filename = baseFilename.replace(/\.json$/, "-v2.json");
@@ -154,7 +260,7 @@ describe("training library session actions", () => {
     ]);
     expect(write).toHaveBeenCalledOnce();
     expect(existingWritable).not.toHaveBeenCalled();
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
     expect(controller.lastExport).toBeNull();
 
     let result: TrainingSessionExportResult | undefined;
@@ -187,8 +293,8 @@ describe("training library session actions", () => {
     expect(controller.exportNotice).toBeNull();
     expect(controller.lastExport).toBeNull();
     expect(getFileHandle).not.toHaveBeenCalled();
-    expect(saveSession).not.toHaveBeenCalled();
-    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
+    expect(records.get("older")).toMatchObject({ notes: "未导出的备注", exportCount: 3 });
     expect(picker).not.toHaveBeenCalled();
     expect(requestDownload).not.toHaveBeenCalled();
   });
@@ -220,8 +326,8 @@ describe("training library session actions", () => {
     expect(controller.exportNotice).toBeNull();
     expect(abort).toHaveBeenCalledWith(failure);
     expect(close).toHaveBeenCalledTimes(failingOperation === "write" ? 0 : 1);
-    expect(saveSession).not.toHaveBeenCalled();
-    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
+    expect(records.get("older")).toMatchObject({ notes: "失败后保留的备注", exportCount: 3 });
     expect(picker).not.toHaveBeenCalled();
     expect(requestDownload).not.toHaveBeenCalled();
   });
@@ -234,7 +340,7 @@ describe("training library session actions", () => {
         return { createWritable: async () => ({ write: async () => undefined, close: async () => undefined }) };
       },
     });
-    saveSession.mockRejectedValueOnce(new Error("metadata write failed"));
+    saveSession.mockImplementationOnce(async (session) => { records.set(session.id, session); }).mockRejectedValueOnce(new Error("metadata write failed"));
     let result: TrainingSessionExportResult | undefined;
     await act(async () => { result = await controller.exportSession("older", "文件已保存的备注"); });
 
@@ -245,7 +351,7 @@ describe("training library session actions", () => {
       session: { id: "older", notes: "文件已保存的备注", exportCount: 4 },
     });
     expect(controller.storageError).toContain("导出状态未写入 IndexedDB");
-    expect(records.get("older")).toMatchObject({ notes: "older 原备注", exportCount: 3 });
+    expect(records.get("older")).toMatchObject({ notes: "文件已保存的备注", exportCount: 3 });
   });
 
   it("keeps migration-limited history exportable while new recording stays disabled", async () => {
@@ -285,7 +391,9 @@ describe("training library session actions", () => {
     expect(order).toEqual(["picker", "read"]);
   });
 
-  it("freezes RC immediately and waits for video close before completing the matching session", async () => {
+  it.each([true, false])("persists frozen RC before video close with measurement enabled=%s", async (enabled) => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(enabled);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
     let closeVideo!: (receipt: LocalVideoRecordingReceipt) => void;
     finishCompanionRecording = vi.fn(() => new Promise<LocalVideoRecordingReceipt>((resolve) => { closeVideo = resolve; }));
     await act(async () => renderer!.update(<Harness />));
@@ -297,12 +405,18 @@ describe("training library session actions", () => {
     let stopped!: Promise<void>;
     await act(async () => { stopped = controller.stopRecording(); });
     expect(controller.isRecording).toBe(false);
-    expect(controller.isFinishing).toBe(true);
-    expect(controller.hasPendingSave).toBe(true);
+    expect(controller.isFinishing).toBe(false);
+    expect(controller.hasPendingSave).toBe(false);
+    expect(controller.hasPendingMedia).toBe(true);
     const closingDuringVideo = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(closingDuringVideo);
     expect(closingDuringVideo.defaultPrevented).toBe(true);
-    expect(store.completeSession).not.toHaveBeenCalled();
+    expect(store.completeSession).toHaveBeenCalledOnce();
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.start.confirmed")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.stop.frozen")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.complete.confirmed")).toHaveLength(1);
+    }
     act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 2, monotonicTimestampMs: 2_010 }, "serial"));
     expect(controller.sampleCount).toBe(1);
     await act(async () => {
@@ -315,6 +429,13 @@ describe("training library session actions", () => {
     const closingAfterSave = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(closingAfterSave);
     expect(closingAfterSave.defaultPrevented).toBe(false);
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.appended")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.rejected")).toHaveLength(1);
+      expect(events.mock.calls.filter(([kind]) => kind === "session.complete.confirmed")).toEqual([
+        ["session.complete.confirmed", { sessionId, sampleCount: 1 }],
+      ]);
+    } else expect(events).not.toHaveBeenCalled();
   });
 
   it("coalesces slow one-second checkpoints and reports only confirmed samples", async () => {
@@ -346,8 +467,8 @@ describe("training library session actions", () => {
     vi.mocked(store.listSessionSummaries).mockRejectedValueOnce(new Error("history read failed"));
     await act(async () => controller.stopRecording());
     expect(records.get(id!)?.sampleCount).toBe(1);
-    expect(controller.hasPendingSave).toBe(true);
-    expect(controller.storageError).toContain("已写入本机");
+    expect(controller.hasPendingSave).toBe(false);
+    expect(controller.storageError).toContain("遥控数据已保存");
     expect(controller.persistedSampleCount).toBe(1);
     const writesBeforeRetry = vi.mocked(store.saveDraft).mock.calls.length;
     await act(async () => controller.retryPendingSave());
@@ -359,38 +480,32 @@ describe("training library session actions", () => {
     expect(controller.lastSession?.id).toBe(id);
   });
 
-  it("retries a stronger termination after completion and preserves the confirmed video receipt", async () => {
-    const receipt: LocalVideoRecordingReceipt = {
-      filename: "retained-recording.webm", mimeType: "video/webm", bytes: 700,
-      startedAtEpochMs: Date.now() - 1000, finishedAtEpochMs: Date.now(),
-    };
-    finishCompanionRecording = vi.fn(async () => receipt);
+  it("retries a stronger terminal metadata update while media is pending, then preserves its late receipt", async () => {
+    const receipt: LocalVideoRecordingReceipt = { filename: "retained-recording.webm", mimeType: "video/webm", bytes: 700, startedAtEpochMs: Date.now()-1000, finishedAtEpochMs: Date.now() };
+    let release!: (receipt: LocalVideoRecordingReceipt) => void;
+    finishCompanionRecording = vi.fn(() => new Promise<LocalVideoRecordingReceipt>((resolve) => { release = resolve; }));
     await act(async () => renderer!.update(<Harness />));
-    vi.spyOn(performance, "now").mockReturnValue(1_000);
+    vi.spyOn(performance, "now").mockReturnValue(1000);
     let id: string | null = null;
     await act(async () => { id = await controller.startRecording(); });
-    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: 1_010 }, "serial"));
-    vi.mocked(performance.now).mockReturnValue(2_000);
-    vi.mocked(store.listSessionSummaries).mockRejectedValueOnce(new Error("history read failed"));
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: 1010 }, "serial"));
+    vi.mocked(performance.now).mockReturnValue(2000);
     await act(async () => controller.stopRecording());
-    expect(records.get(id!)?.video).toMatchObject({ recorded: true, filename: receipt.filename, bytes: receipt.bytes });
-    const writesBeforeRetry = vi.mocked(store.saveDraft).mock.calls.length;
-    vi.mocked(store.completeSession).mockRejectedValueOnce(new Error("termination write failed"));
+    const endedAt = records.get(id!)!.endedAt;
+    const draftWrites = vi.mocked(store.saveDraft).mock.calls.length;
+    vi.mocked(store.patchSession).mockRejectedValueOnce(new Error("termination write failed"));
     linkState = "lost";
     await act(async () => renderer!.update(<Harness />));
-    expect(controller.lastSession?.interruptionReason).toBe("rx_link_lost");
     expect(controller.hasPendingSave).toBe(true);
-    expect(records.get(id!)?.interruptionReason).toBeNull();
+    expect(records.get(id!)!.interruptionReason).toBeNull();
     await act(async () => controller.retryPendingSave());
-    expect(store.saveDraft).toHaveBeenCalledTimes(writesBeforeRetry);
-    expect(store.completeSession).toHaveBeenCalledTimes(3);
-    expect(records.get(id!)).toMatchObject({
-      interrupted: true, interruptionReason: "rx_link_lost", sampleCount: 1,
-      video: { recorded: true, synchronized: false, filename: receipt.filename, bytes: receipt.bytes, overlay: "sticks" },
-    });
+    expect(records.get(id!)!.interruptionReason).toBe("rx_link_lost");
+    expect(store.saveDraft).toHaveBeenCalledTimes(draftWrites);
+    await act(async () => { release(receipt); });
+    expect(records.get(id!)).toMatchObject({ endedAt, sampleCount: 1, interruptionReason: "rx_link_lost", video: { recorded: true, filename: receipt.filename } });
+    expect(store.completeSession).toHaveBeenCalledOnce();
     expect(finishCompanionRecording).toHaveBeenCalledOnce();
     expect(controller.hasPendingSave).toBe(false);
-    expect(controller.storageError).toBeNull();
   });
 
   it("ignores a stale marker callback and pagehide after stop before React commits", async () => {
@@ -406,10 +521,10 @@ describe("training library session actions", () => {
       await staleAddMarker("crash");
       window.dispatchEvent(new Event("pagehide"));
     });
-    expect(store.saveDraft).toHaveBeenCalledOnce();
+    expect(store.saveDraft).toHaveBeenCalledTimes(2);
     expect(controller.markerCount).toBe(0);
     expect(controller.lastSession?.markers).toEqual([]);
-    expect(store.completeSession).not.toHaveBeenCalled();
+    expect(store.completeSession).toHaveBeenCalledOnce();
     await act(async () => { finishVideo(); await stopping; });
     expect(store.saveDraft).toHaveBeenCalledTimes(2);
     expect(controller.lastSession?.markers).toEqual([]);
@@ -422,7 +537,8 @@ describe("training library session actions", () => {
 
     await act(async () => controller.updateSessionNotes("older", notes));
 
-    expect(records.get("older")).toEqual({ ...before, notes: normalizeSessionNotes(notes) });
+    expect(records.get("older")).toMatchObject({ ...before, notes: normalizeSessionNotes(notes) });
+    expect(records.get("older")?.finalization?.contentRevision).toBe(1);
     expect(records.get("older")!.notes).toHaveLength(2_000);
     expect(records.get("newer")!.notes).toBe("newer 原备注");
     expect(controller.lastSession?.id).toBe("newer");
@@ -454,12 +570,12 @@ describe("training library session actions", () => {
 
     expect(requestDownload).toHaveBeenCalledWith(expect.objectContaining({ id: "older", notes: "导出草稿", exportCount: 3 }));
     expect(result?.status).toBe("requested");
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
     expect(controller.lastExport).toBeNull();
-    expect(records.get("older")!.notes).toBe("older 原备注");
+    expect(records.get("older")!.notes).toBe("导出草稿");
   });
 
-  it("confirms the file and saves overridden notes only after its writable closes", async () => {
+  it("saves explicit notes independently and confirms the file only after its writable closes", async () => {
     let finishClose!: () => void;
     const close = new Promise<void>((resolve) => { finishClose = resolve; });
     let filePayload: TrainingSession | null = null;
@@ -468,7 +584,7 @@ describe("training library session actions", () => {
     let pending!: Promise<TrainingSessionExportResult>;
     await act(async () => { pending = controller.exportSession("older", "文件与备注一起保存"); });
     expect(write).toHaveBeenCalledOnce();
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
     expect(controller.lastExport).toBeNull();
 
     let result: TrainingSessionExportResult | undefined;
@@ -484,7 +600,7 @@ describe("training library session actions", () => {
     await act(async () => { result = await controller.exportSession("older", "仍需保留的草稿"); });
     expect(result?.status).toBe("failed");
     expect(controller.lastExport).toBeNull();
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
     expect(records.get("older")!.exportCount).toBe(3);
   });
 
@@ -526,23 +642,29 @@ describe("training library session actions", () => {
     await act(async () => { result = await controller.exportSession("older"); });
     expect(result?.status).toBe("cancelled");
     expect(controller.exportNotice).toBeNull();
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(store.patchSession).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ kind: "export" }));
   });
 
   it("separates a confirmed file from a failed local metadata write", async () => {
     vi.mocked(exportModule.getBrowserTrainingSessionSaveFilePicker).mockReturnValue(async () => ({ createWritable: async () => ({ write: async () => undefined, close: async () => undefined }) }));
-    saveSession.mockRejectedValueOnce(new Error("metadata write failed"));
+    saveSession.mockImplementationOnce(async (session) => { records.set(session.id, session); }).mockRejectedValueOnce(new Error("metadata write failed"));
     let result: TrainingSessionExportResult | undefined;
     await act(async () => { result = await controller.exportSession("older", "文件里已有备注"); });
 
     expect(result).toMatchObject({ status: "confirmed", localStateSaved: false });
     expect(controller.lastExport?.session.notes).toBe("文件里已有备注");
-    expect(records.get("older")!.notes).toBe("older 原备注");
+    expect(records.get("older")!.notes).toBe("文件里已有备注");
     expect(controller.exportWarning).toContain("导出状态未写入 IndexedDB");
   });
 
-  it("records every subscribed RC frame even when React batches 100 frames into one render", async () => {
+  it.each([true, false])("records all 100 batched frames with measurement enabled=%s", async (enabled) => {
+    vi.spyOn(measurement, "measurementEnabled").mockReturnValue(enabled);
+    const events = vi.spyOn(measurement, "measurementEvent").mockImplementation(() => undefined);
+    vi.spyOn(measurement, "measurementSampleFields").mockImplementation((sample): measurement.MeasurementFields => sample ? {
+      sequence: sample.sequence, monotonicTimestampMs: sample.monotonicTimestampMs, channelsUs: [...sample.rcChannelsUs],
+    } : {});
     vi.spyOn(performance, "now").mockReturnValue(1_000);
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 0, monotonicTimestampMs: 990 }, "serial"));
     await act(async () => { await controller.startRecording(); });
     expect(controller.isRecording).toBe(true);
 
@@ -550,14 +672,21 @@ describe("training library session actions", () => {
       for (let sequence = 1; sequence <= 100; sequence += 1) {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_000 + sequence * 10 }, "serial");
       }
+      sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 100, monotonicTimestampMs: 2_000 }, "serial");
     });
-    expect(controller.sampleCount).toBe(100);
-    expect(controller.uniqueSampleCount).toBe(100);
 
     vi.mocked(performance.now).mockReturnValue(2_000);
     await act(async () => controller.stopRecording());
+    expect(controller.sampleCount).toBe(100);
+    expect(controller.uniqueSampleCount).toBe(100);
     expect(controller.lastSession?.samples.map((sample) => sample.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
     expect(controller.lastSession?.estimatedRcSampleRateHz).toBe(100);
+    if (enabled) {
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.appended").map(([, fields]) => fields.sequence))
+        .toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+      expect(events.mock.calls.filter(([kind]) => kind === "session.sample.duplicate")).toHaveLength(1);
+      expect(events.mock.calls.find(([kind]) => kind === "session.sample.rejected")?.[1]).toMatchObject({ sessionId: null, reason: "not_recording" });
+    } else expect(events).not.toHaveBeenCalled();
   });
 
   it("accepts frames immediately after starting resolves before React commits the recording state", async () => {
@@ -568,8 +697,11 @@ describe("training library session actions", () => {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_000 + sequence * 10 }, "serial");
       }
     });
+    vi.mocked(performance.now).mockReturnValue(2_000);
+    await act(async () => controller.stopRecording());
     expect(controller.sampleCount).toBe(100);
     expect(controller.uniqueSampleCount).toBe(100);
+    expect(controller.lastSession?.samples.map((entry) => entry.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
   });
 
   it("counts unique sequences incrementally and starts the next record with an empty set", async () => {
@@ -580,15 +712,17 @@ describe("training library session actions", () => {
         sampleListener?.({ ...EMPTY_TELEMETRY, sequence, monotonicTimestampMs: 1_010 + index * 10 }, "serial");
       }
     });
-    expect(controller.sampleCount).toBe(3);
-    expect(controller.uniqueSampleCount).toBe(2);
 
     vi.mocked(performance.now).mockReturnValue(2_000);
     await act(async () => controller.stopRecording());
+    expect(controller.sampleCount).toBe(3);
+    expect(controller.uniqueSampleCount).toBe(2);
     await act(async () => {
       await controller.startRecording();
       sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: 2_010 }, "serial");
     });
+    vi.mocked(performance.now).mockReturnValue(2_010);
+    await act(async () => controller.stopRecording());
     expect(controller.sampleCount).toBe(1);
     expect(controller.uniqueSampleCount).toBe(1);
   });
