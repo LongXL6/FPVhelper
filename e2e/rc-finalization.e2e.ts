@@ -161,6 +161,7 @@ test("a second Session uses D2 while S1 automatic export is still waiting for it
  expect((await readStoredTrainingRecords(page)).drafts[0].id).toBe(draft.id);
  await expect(page.getByRole("button",{name:"■ 结束记录",exact:true})).toBeEnabled();
  expect(await files(page,true,"phase2a-s2")).toHaveLength(0);
+ await expect(page.getByTestId("local-video-recording-status")).toContainText("● REC");
  await page.getByRole("button",{name:"■ 结束记录",exact:true}).click();
  await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.filter(s=>s.id===draft.id&&s.video.recorded&&s.exportCount===1).length).toBe(1);
  const stored=(await readStoredTrainingRecords(page)).sessions,d1=await files(page),d2=await files(page,false,"phase2a-s2");
@@ -175,4 +176,35 @@ test("a second Session uses D2 while S1 automatic export is still waiting for it
   const exported=artifacts.find(f=>f.json?.video.recorded)!.json!;expect(exported.samples).toEqual(session.samples);expect(exported.video).toEqual(session.video);expect(exported.finalization?.confirmedExportRevision).toBe(session.finalization?.contentRevision);
  }
  await attach(info,"two-session-directories.json",{s1,draft,stored,d1,d2,gate:await gateSnapshot(page)});
+});
+
+test("keeps S2 media recording when S1 automatic JSON close releases its old dashboard finisher",async({page},info)=>{
+ await prepare(page,"normal","&jsonGate=first");
+ await expect.poll(async()=>JSON.stringify(await gateSnapshot(page))).toContain("json-close-entered");
+ const s1=await terminal(page);expect(s1.video.recorded).toBe(true);expect(s1.exportCount).toBe(0);
+ await page.evaluate(()=>Object.defineProperty(window,"showDirectoryPicker",{configurable:true,value:async()=> (await navigator.storage.getDirectory()).getDirectoryHandle("old-finisher-s2",{create:true})}));
+ await page.getByRole("navigation",{name:"主导航"}).getByRole("button",{name:"飞行工作台",exact:true}).click();
+ await page.locator(".recording-options > summary").click();await page.getByRole("button",{name:"更换文件夹",exact:true}).click();
+ await expect(page.getByRole("button",{name:"● 开始记录",exact:true})).toBeEnabled();
+ await page.getByRole("button",{name:"● 开始记录",exact:true}).click();
+ await expect.poll(async()=> (await readStoredTrainingRecords(page)).drafts[0]?.samples.length??0).toBeGreaterThan(30);
+ const s2=(await readStoredTrainingRecords(page)).drafts[0];expect(s2.id).not.toBe(s1.id);
+ const videoStatus=page.getByTestId("local-video-recording-status");
+ await expect(videoStatus).toContainText("● REC");
+ await release(page,true);await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
+ const responses=await page.evaluate(()=>window.__fpvFakeSerial.rcResponses);
+ await expect.poll(()=>page.evaluate(()=>window.__fpvFakeSerial.rcResponses)).toBeGreaterThan(responses+20);
+ await attach(info,"old-dashboard-finisher-release.json",{s1,s2,stored:await readStoredTrainingRecords(page),gate:await gateSnapshot(page),videoStatus:await videoStatus.textContent(),boundary:"Normal native media completion; only first automatic JSON close acknowledgement is held. S2 started before S1 automatic export resumed."});
+ await expect(videoStatus).toContainText("● REC");
+ expect((await readStoredTrainingRecords(page)).drafts[0].id).toBe(s2.id);
+ await page.getByRole("button",{name:"■ 结束记录",exact:true}).click();
+ await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.filter(session=>session.id===s2.id&&session.video.recorded&&session.exportCount===1).length).toBe(1);
+ const sessions=(await readStoredTrainingRecords(page)).sessions,d1=await files(page),d2=await files(page,false,"old-finisher-s2");
+ expect(sessions).toHaveLength(2);expect(d1.filter(file=>file.json)).toHaveLength(1);expect(d2.filter(file=>file.json)).toHaveLength(1);
+ for(const [id,artifacts] of [[s1.id,d1],[s2.id,d2]] as const){
+  const saved=sessions.find(session=>session.id===id)!;if(!saved.video.recorded)throw new Error("missing final video receipt");
+  const video=saved.video;expect(artifacts.find(file=>file.name===video.filename)?.bytes).toBe(video.bytes);
+  const exported=artifacts.find(file=>file.json)!.json!;expect(exported.id).toBe(id);expect(exported.samples).toEqual(saved.samples);expect(exported.video).toEqual(saved.video);
+ }
+ await attach(info,"old-dashboard-finisher-final.json",{sessions,d1,d2,gate:await gateSnapshot(page)});
 });

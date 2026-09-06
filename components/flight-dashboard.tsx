@@ -20,6 +20,9 @@ import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
 import { PilotNameField } from "@/components/pilot-name-field";
 import { LiveGatePanel } from "@/components/live-gate-panel";
+import { ArmAutoRecordSettings, armAutoRecordStatus } from "@/components/arm-auto-record-settings";
+import { useArmAutoRecord } from "@/hooks/use-arm-auto-record";
+import type { ArmAutoRecordStopReason } from "@/lib/arm-auto-record";
 import { LiveGateSummary, type LiveGateSummaryData } from "@/components/live-gate-summary";
 import {
   quarantinedTrainingRecordCount,
@@ -54,6 +57,7 @@ import {
   localVideoRecordingFilename,
   localVideoContainerForMimeType,
   preferredLocalVideoMimeType,
+  type LocalVideoRecordingReceipt,
 } from "@/lib/local-video-recording";
 import {
   appendDiagnosticTransition,
@@ -121,6 +125,20 @@ import {
   workstationShortcutShouldPreventDefault,
   workstationTabStartBlockReason,
 } from "@/lib/workstation-runtime";
+
+interface DashboardRecordingAttempt {
+  beta: boolean;
+  sessionId: string | null;
+  setupAbort: AbortController;
+  setupDone: Promise<void>;
+  setupFinished: boolean;
+  videoStarted: boolean;
+  telemetryGap: boolean;
+  failure: Error | null;
+  finish: Promise<void> | null;
+  finishVideo: Promise<LocalVideoRecordingReceipt | null> | null;
+  removeAbortListener: () => void;
+}
 
 const statusCopy = {
   demo: "演示数据",
@@ -456,6 +474,7 @@ export function FlightDashboard() {
     loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName,
   ), [loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName]);
   const videoSetupRef = useRef<HTMLDetailsElement>(null);
+  const armSettingsRef = useRef<HTMLDetailsElement>(null);
   const exportShortcutInFlightRef = useRef(false);
   const pilotOutputCanvasesRef = useRef(new Map<string, HTMLCanvasElement>());
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
@@ -471,27 +490,42 @@ export function FlightDashboard() {
   const localVideoRecording = useLocalVideoRecording();
   const stopLocalVideo = localVideoRecording.stop;
   const recordingCompositorRef = useRef<Awaited<ReturnType<typeof startStickVideoCompositor>> | null>(null);
-  const recordingSetupAbortRef = useRef<AbortController | null>(null);
-  const recordingMediaStartedRef = useRef(false);
-  const finishCompanionRecording = useCallback(async () => {
-    recordingSetupAbortRef.current?.abort();
-    recordingSetupAbortRef.current = null;
-    try {
-      if (!recordingMediaStartedRef.current) return null;
-      const receipt = await stopLocalVideo();
-      if (!receipt) throw new Error("本次视频没有返回有效的写入与关闭收据");
-      return receipt;
-    } finally {
-      recordingMediaStartedRef.current = false;
-      recordingCompositorRef.current?.dispose();
-      recordingCompositorRef.current = null;
+  const recordingAttemptRef = useRef<DashboardRecordingAttempt | null>(null);
+  const [autoCaptureActive, setAutoCaptureActive] = useState(false);
+  const [autoCaptureDataGap, setAutoCaptureDataGap] = useState(false);
+  const finishAttemptVideo = useCallback(async (attempt: DashboardRecordingAttempt | null) => {
+    if (!attempt) return null;
+    if (!attempt.setupFinished) attempt.setupAbort.abort();
+    await attempt.setupDone;
+    if (!attempt.finishVideo) {
+      if (recordingAttemptRef.current !== attempt) throw new Error("录像操作身份已改变；未停止当前录像");
+      const compositor = recordingCompositorRef.current;
+      attempt.finishVideo = (async () => {
+        try {
+          if (!attempt.videoStarted) return null;
+          const receipt = await stopLocalVideo();
+          if (!receipt) throw attempt.failure ?? new Error("视频未完整保存：未取得本次录像的写入收据");
+          return receipt;
+        } finally {
+          attempt.removeAbortListener();
+          compositor?.dispose();
+          if (recordingCompositorRef.current === compositor) recordingCompositorRef.current = null;
+        }
+      })();
     }
+    return attempt.finishVideo;
   }, [stopLocalVideo]);
+  const finishCompanionRecording = useCallback(
+    () => finishAttemptVideo(recordingAttemptRef.current),
+    [finishAttemptVideo],
+  );
   useEffect(() => () => {
-    recordingSetupAbortRef.current?.abort();
+    const attempt = recordingAttemptRef.current;
+    if (attempt && !attempt.setupFinished) attempt.setupAbort.abort();
+    attempt?.removeAbortListener();
     recordingCompositorRef.current?.dispose();
   }, []);
-  const companionRecordingStarted = useCallback(() => recordingMediaStartedRef.current, []);
+  const companionRecordingStarted = useCallback(() => recordingAttemptRef.current?.videoStarted ?? false, []);
   const activeVideoRuntime = videoSourceRuntime(videoCapture.runtimes, activeSource?.id);
   const videoDevices = videoCapture.devices;
   const selectedDeviceId = activeSource?.deviceId ?? "";
@@ -518,9 +552,17 @@ export function FlightDashboard() {
   const athleteCode = activeChannel?.athleteCode ?? "";
   const { telemetry, throttleHistory, stickMotion, connection, source, error, linkState, subscribeSamples } = telemetryControl;
   const recordingTelemetryRef = useRef(telemetry);
-  useEffect(() => subscribeSamples((sample) => {
-    recordingTelemetryRef.current = sample;
+  useEffect(() => subscribeSamples((sample, sampleSource) => {
+    if (sampleSource === "serial") recordingTelemetryRef.current = sample;
   }), [subscribeSamples]);
+  const automatic = useArmAutoRecord({
+    subscribeSamples, source, connection, linkState,
+    inputKey: activeChannel?.id ?? "unassigned",
+    start: startDashboardRecording,
+    stop: finishDashboardRecording,
+    canEnable: () => recordPilotVideo && canStartDashboardRecording && !controlsLocked,
+    canObserve: videoState === "live" && localVideoRecording.state !== "error",
+  });
   const version = useVersionCheck();
   const trainingSession = useTrainingSession({
     telemetry,
@@ -533,8 +575,16 @@ export function FlightDashboard() {
     subscribeSamples,
     finishCompanionRecording,
     companionRecordingStarted,
+    stopOnTelemetryLoss: !automatic.state.enabled && !autoCaptureActive,
   });
-  const workstation = useWorkstationRuntime({ keepAwake: trainingSession.isRecording || localVideoRecording.isActive });
+  const workstation = useWorkstationRuntime({ keepAwake: automatic.state.enabled || trainingSession.isRecording || localVideoRecording.isActive });
+
+  useEffect(() => {
+    const attempt = recordingAttemptRef.current;
+    if (!attempt?.beta || (source === "serial" && connection === "live" && linkState === "ok")) return;
+    attempt.telemetryGap = true;
+    setAutoCaptureDataGap(true);
+  }, [connection, linkState, source]);
 
 
   const commitVideoWorkspace = useCallback((nextWorkspace: VideoWorkspaceConfig) => {
@@ -644,7 +694,7 @@ export function FlightDashboard() {
     recordingCompositorRef.current = null;
   }, [localVideoRecording.state]);
 
-  const controlsLocked = trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || trainingSession.hasPendingMedia || localVideoRecording.isActive;
+  const controlsLocked = automatic.state.enabled || autoCaptureActive || trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || trainingSession.hasPendingMedia || localVideoRecording.isActive;
   if (nameControlsWereLocked !== controlsLocked) {
     setNameControlsWereLocked(controlsLocked);
     if (!controlsLocked) setRecordingPilotName(null);
@@ -764,43 +814,53 @@ export function FlightDashboard() {
   const failLocalVideo = localVideoRecording.fail;
   const reportLocalVideoStartError = localVideoRecording.reportStartError;
 
-  async function startDashboardRecording() {
-    if (!canStartDashboardRecording) return;
+  async function startDashboardRecording(signal?: AbortSignal): Promise<boolean> {
+    if (!canStartDashboardRecording || recordingAttemptRef.current || signal?.aborted) return false;
+    let resolveSetup!: () => void;
+    const attempt: DashboardRecordingAttempt = {
+      beta: Boolean(signal), sessionId: null, setupAbort: new AbortController(),
+      setupDone: new Promise<void>((resolve) => { resolveSetup = resolve; }),
+      setupFinished: false, videoStarted: false, telemetryGap: false,
+      failure: null, finish: null, finishVideo: null, removeAbortListener: () => undefined,
+    };
+    recordingAttemptRef.current = attempt;
+    setAutoCaptureActive(attempt.beta);
+    setAutoCaptureDataGap(false);
+    const cancelSetup = () => {
+      if (!attempt.setupFinished) attempt.setupAbort.abort();
+      // ARM cancellation must freeze an already-started RC Session even if setup cleanup stalls.
+      void finishDashboardRecording();
+    };
+    signal?.addEventListener("abort", cancelSetup, { once: true });
+    attempt.removeAbortListener = () => signal?.removeEventListener("abort", cancelSetup);
     setWorkspaceView("live");
     if (activeChannel) setRecordingPilotName({ pilotChannelId: activeChannel.id, athleteCode });
     const startedAtEpochMs = captureInteractionEpochMs();
-    let startedSessionId: string | null;
-    try {
-      startedSessionId = await startTrainingSession();
-    } catch (startError) {
-      setRecordingPilotName(null);
-      throw startError;
-    }
-    if (!startedSessionId) setRecordingPilotName(null);
-    if (!startedSessionId || !recordPilotVideo) return;
-
     let writable: Awaited<ReturnType<typeof createExportFileWritable>> | null = null;
     let compositor: Awaited<ReturnType<typeof startStickVideoCompositor>> | null = null;
-    const setupAbort = new AbortController();
-    recordingSetupAbortRef.current = setupAbort;
     let delegatedToRecorder = false;
+    const assertActive = () => {
+      if (attempt.setupAbort.signal.aborted || !attempt.sessionId || !isTrainingSessionRecording(attempt.sessionId)) {
+        throw new DOMException("本次记录启动已取消", "AbortError");
+      }
+    };
     try {
+      attempt.sessionId = await startTrainingSession();
+      if (!attempt.sessionId) throw new Error("记录未能开始，请检查输入与本机存储");
+      assertActive();
+      if (!recordPilotVideo) return true;
       if (!activeRecordingSourceId || !activeRecordingPilotChannelId || !localVideoMimeType) {
         throw new Error("当前选手视频输出尚未准备好");
       }
-
       const filename = localVideoRecordingFilename({
         athleteCode,
-        sessionId: startedSessionId,
+        sessionId: attempt.sessionId,
         startedAtEpochMs,
         cropped: activeViewportIsCropped,
         mimeType: localVideoMimeType,
       });
       writable = await createExportFileWritable(filename);
-      if (!isTrainingSessionRecording(startedSessionId)) {
-        throw new Error("Session 已在视频编码器启动前结束；未启动孤立录像");
-      }
-
+      assertActive();
       const sourceStream = getVideoSourceStream(activeRecordingSourceId);
       if (!sourceStream || sourceStream.getVideoTracks().length === 0) {
         throw new Error("当前 HDMI 画面没有可录制的视频轨道");
@@ -813,14 +873,17 @@ export function FlightDashboard() {
         getTelemetry: () => recordingTelemetryRef.current,
         getLinkState: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).linkState,
         getConnection: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).connection,
-        onError: (recordingError) => { void failLocalVideo(recordingError); },
-        signal: setupAbort.signal,
+        onError: (recordingError) => {
+          if (attempt.setupAbort.signal.aborted && !attempt.setupFinished) return;
+          attempt.failure = recordingError;
+          void failLocalVideo(recordingError);
+        },
+        signal: attempt.setupAbort.signal,
       });
-      if (!isTrainingSessionRecording(startedSessionId) || setupAbort.signal.aborted) throw new Error("训练已结束，未启动孤立录像");
+      assertActive();
       recordingCompositorRef.current = compositor;
-
       delegatedToRecorder = true;
-      const started = await startLocalVideo({
+      attempt.videoStarted = await startLocalVideo({
         stream: compositor.stream,
         writable,
         filename,
@@ -828,26 +891,76 @@ export function FlightDashboard() {
         stopStreamTracksOnFinish: true,
         startedAtEpochMs: captureInteractionEpochMs(),
       });
-      recordingMediaStartedRef.current = started;
-      if (recordingSetupAbortRef.current === setupAbort) recordingSetupAbortRef.current = null;
-      if (!started) {
-        compositor.dispose();
-        recordingCompositorRef.current = null;
-      }
+      if (!attempt.videoStarted) throw new Error("视频编码器未能启动");
+      assertActive();
     } catch (recordingError) {
-      const currentSetup = recordingSetupAbortRef.current === setupAbort;
-      if (currentSetup) recordingSetupAbortRef.current = null;
-      compositor?.dispose();
-      if (!delegatedToRecorder) {
-        await writable?.close().catch(() => undefined);
+      const cancelled = recordingError instanceof DOMException && recordingError.name === "AbortError";
+      if (!cancelled) {
+        attempt.failure = recordingError instanceof Error ? recordingError : new Error("录像启动失败");
+        reportLocalVideoStartError(attempt.failure);
       }
-      if (currentSetup && !setupAbort.signal.aborted && isTrainingSessionRecording(startedSessionId)) reportLocalVideoStartError(recordingError);
+      if (!attempt.videoStarted) compositor?.dispose();
+      if (!delegatedToRecorder) {
+        try {
+          if (writable?.abort) await writable.abort(recordingError);
+          else await writable?.close();
+        } catch (closeError) {
+          attempt.failure = closeError instanceof Error ? closeError : new Error("临时录像文件未能关闭");
+          reportLocalVideoStartError(attempt.failure);
+        }
+      }
+    } finally {
+      attempt.setupFinished = true;
+      attempt.removeAbortListener();
+      resolveSetup();
     }
+    if (!attempt.sessionId || attempt.setupAbort.signal.aborted || (attempt.beta && attempt.failure)) {
+      await finishDashboardRecording(attempt.failure ? "signal_lost" : "disabled");
+      return false;
+    }
+    return !attempt.failure;
+  }
+
+  async function finishDashboardRecording(reason: ArmAutoRecordStopReason = "disabled") {
+    const attempt = recordingAttemptRef.current;
+    if (!attempt) return;
+    if (!attempt.setupFinished) attempt.setupAbort.abort();
+    if (!attempt.finish) {
+      attempt.finish = (async () => {
+        if (!attempt.sessionId) await attempt.setupDone;
+        try {
+          if (attempt.sessionId) await stopTrainingSession(attempt.beta && (attempt.telemetryGap || attempt.failure || reason === "signal_lost")
+            ? "telemetry_unavailable" : undefined);
+          // RC persistence above is independent. ARM completion still owns the old media lifetime.
+          await finishAttemptVideo(attempt).catch(() => undefined);
+        } finally {
+          attempt.removeAbortListener();
+          if (recordingAttemptRef.current === attempt) {
+            recordingAttemptRef.current = null;
+            setAutoCaptureActive(false);
+          }
+        }
+      })();
+    }
+    return attempt.finish;
   }
 
   async function stopDashboardRecording() {
-    await stopTrainingSession();
+    const finishing = finishDashboardRecording();
+    await Promise.all([automatic.disable(), finishing]);
   }
+
+  const finishFailedBetaVideo = useEffectEvent(() => {
+    const attempt = recordingAttemptRef.current;
+    if (!attempt?.beta) return;
+    attempt.failure ??= new Error(localVideoRecording.error ?? "视频录制失败");
+    if (attempt.finish) void stopTrainingSession("telemetry_unavailable");
+    void finishDashboardRecording("signal_lost");
+    void automatic.disable();
+  });
+  useEffect(() => {
+    if (localVideoRecording.state === "error") finishFailedBetaVideo();
+  }, [localVideoRecording.state]);
 
   const failVideoAfterSourceLoss = useEffectEvent(() => {
     void failLocalVideo(new Error("当前 HDMI 视频源已中断；断线前片段已关闭，但不算完整录像"));
@@ -981,7 +1094,7 @@ export function FlightDashboard() {
         isRecording: trainingSession.isRecording,
         isStarting: trainingSession.isStarting,
         isFinishing: trainingSession.isFinishing,
-        canStart: canStartDashboardRecording,
+        canStart: canStartDashboardRecording && !automatic.state.enabled,
         tabAllowsStart: true,
       });
       if (action === "stop") {
@@ -1081,10 +1194,19 @@ export function FlightDashboard() {
   }, [singleKeyShortcutsEnabled]);
   const completedSessionId = trainingSession.lastSession?.id;
   useEffect(() => {
+    const attempt = recordingAttemptRef.current;
+    if (!attempt?.setupFinished || attempt.sessionId !== completedSessionId || trainingSession.isRecording
+      || trainingSession.isStarting || sessionIsFinalizing || trainingSession.hasPendingMedia || localVideoRecording.isActive) return;
+    attempt.removeAbortListener();
+    recordingAttemptRef.current = null;
+    setAutoCaptureActive(false);
+  }, [completedSessionId, localVideoRecording.isActive, sessionIsFinalizing, trainingSession.hasPendingMedia, trainingSession.isRecording, trainingSession.isStarting]);
+  useEffect(() => {
     if (trainingSession.isRecording) recordingWasActive.current = true;
     if (!recordingWasActive.current || trainingSession.isRecording || sessionIsFinalizing || !completedSessionId) return;
     const timer = window.setTimeout(() => {
       recordingWasActive.current = false;
+      if (automatic.state.enabled) return;
       setSelectedSessionId(completedSessionId);
       setRevealSessionId(completedSessionId);
       setWorkspaceView("records");
@@ -1093,7 +1215,19 @@ export function FlightDashboard() {
       workspaceHeadingRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [trainingSession.isRecording, sessionIsFinalizing, completedSessionId]);
+  }, [automatic.state.enabled, trainingSession.isRecording, sessionIsFinalizing, completedSessionId]);
+
+  function openArmAutoRecordSettings() {
+    setWorkspaceView("live");
+    window.setTimeout(() => {
+      const details = armSettingsRef.current;
+      if (!details) return;
+      const parent = details.parentElement?.closest("details");
+      if (parent) parent.open = true;
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  }
 
   function navigateWorkspace(view: WorkspaceView) {
     setWorkspaceView(view);
@@ -1168,11 +1302,12 @@ export function FlightDashboard() {
               <option value="data">仅原始打杆数据</option>
             </select>
           </label>
+          <button className="button button--quiet" type="button" onClick={openArmAutoRecordSettings}>ARM 自动记录 · Beta</button>
           <button
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
             aria-pressed={trainingSession.isRecording}
-            disabled={trainingSession.isRecording ? sessionIsFinalizing : !canStartDashboardRecording || localVideoRecording.isActive}
+            disabled={trainingSession.isRecording ? sessionIsFinalizing : automatic.state.enabled || !canStartDashboardRecording || localVideoRecording.isActive}
             title={trainingSession.isRecording ? "结束并保存当前 Session" : startRequirement}
             onClick={() => void (trainingSession.isRecording ? stopDashboardRecording() : startDashboardRecording())}
           >
@@ -1201,6 +1336,18 @@ export function FlightDashboard() {
           </button>
         </div>
       </header>
+
+      <div data-testid="auto-phase" data-phase={automatic.state.phase}>
+        {automatic.state.enabled || automatic.state.error ? (
+          <aside className="workstation-banner" role="status">
+            <b>ARM 自动记录 · Beta</b>
+            <span>{automatic.state.disarmRemainingMs !== null
+              ? <span data-testid="disarm-countdown">{armAutoRecordStatus(automatic.state)}</span>
+              : armAutoRecordStatus(automatic.state)}</span>
+            {autoCaptureDataGap ? <span>本段有遥控数据缺口，视频继续记录。</span> : null}
+          </aside>
+        ) : null}
+      </div>
 
       {!controlsLocked ? (
         <section className="recording-readiness" aria-label="录制准备">
@@ -1768,7 +1915,7 @@ export function FlightDashboard() {
               ? `本机存储已就绪 · ${trainingSession.recentSessionCount} 条可读记录${quarantinedRecordCount > 0 ? ` · 隔离 ${quarantinedRecordCount} 条` : ""}`
               : "正在检查草稿与历史记录"}</small>
           </div>
-          <details className="recording-options"><summary>保存与录像设置 <small>{recordPilotVideo ? "视频＋摇杆" : "遥测 JSON"}{autoExport || recordPilotVideo ? " · 自动导出" : " · 手动导出"}</small></summary>
+          <details className="recording-options arm-recording-settings"><summary>保存与录像设置 <small>{recordPilotVideo ? "视频＋摇杆" : "遥测 JSON"}{autoExport || recordPilotVideo ? " · 自动导出" : " · 手动导出"}</small></summary>
           <div className="session-toggle-group">
             <label className="session-toggle">
               <input
@@ -1821,6 +1968,14 @@ export function FlightDashboard() {
               ) : null}
             </span>
           </div>
+          <ArmAutoRecordSettings
+            automatic={automatic}
+            detailsRef={armSettingsRef}
+            channels={telemetry.rcChannelsUs}
+            signalReady={groundRxReady}
+            locked={controlsLocked}
+            blockReason={!recordPilotVideo ? "请先选择“视频＋打杆 OSD＋数据”" : !canStartDashboardRecording ? startRequirement : null}
+          />
           </details>
           <div
             className={`session-video-status session-video-status--${localVideoRecording.state}`}
