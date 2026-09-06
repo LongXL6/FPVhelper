@@ -77,9 +77,9 @@
       "originalBytes": 1553,
       "originalSha256": "ec6937789abe69b1d2920d704d1e8011623fd1897ae790d0d6df6b87df0f13ca",
       "reviewPath": "docs/evidence/phase2a-rc-finalization/baseline-unit-red.log",
-      "reviewBytes": 1499,
-      "reviewSha256": "81812051e392d29ce84d83928f9fb0bfac7ac25d4272a9ed45ea1d271b97524c",
-      "transformation": "ANSI removal and local-home/worktree path substitution only",
+      "reviewBytes": 1498,
+      "reviewSha256": "e41743cdd5c54a9361e99378e1437663144c41471275c6296652896d4336319d",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
       "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
     },
     {
@@ -87,9 +87,9 @@
       "originalBytes": 1553,
       "originalSha256": "8ac67ac889dd0a531a8372bf61c086259e733f8c75d410bd58cddf64db6409e1",
       "reviewPath": "docs/evidence/phase2a-rc-finalization/stale-termination-red.log",
-      "reviewBytes": 1499,
-      "reviewSha256": "87b757797eba037bed294af797252243ecd416b8fb8fe5494d71073cef8c85c7",
-      "transformation": "ANSI removal and local-home/worktree path substitution only",
+      "reviewBytes": 1498,
+      "reviewSha256": "ad41be8700e9205b9b198b0fe679e14658a0049abe3dc24d19b90bbb7961f388",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
       "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
     },
     {
@@ -97,9 +97,9 @@
       "originalBytes": 248,
       "originalSha256": "f35eba05fee2639dffa813de924f6d0983ba4254c7d6cabde0a2c3ed5bee0a44",
       "reviewPath": "docs/evidence/phase2a-rc-finalization/stale-termination-green.log",
-      "reviewBytes": 194,
-      "reviewSha256": "43fc23e845adb5bf5bfe772fd39fc9ece49614c054eb16a986f8fba58e9bc289",
-      "transformation": "ANSI removal and local-home/worktree path substitution only",
+      "reviewBytes": 193,
+      "reviewSha256": "a43ef0189d9ce7a8127f95541102d2d34535b4856490deb0c976a3e18a3bb84e",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
       "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
     },
     {
@@ -107,9 +107,9 @@
       "originalBytes": 452,
       "originalSha256": "9e56bf7d6a53e586e0224b911600b1f5621c5a7a59eb1b04d856bbb6a5613d3a",
       "reviewPath": "docs/evidence/phase2a-rc-finalization/check-projection-fixed.log",
-      "reviewBytes": 398,
-      "reviewSha256": "6e57e3b42b6fc3d96f0ceaaf55c7ec170ef717bcc17e430f5a0248d11a16a6a9",
-      "transformation": "ANSI removal and local-home/worktree path substitution only",
+      "reviewBytes": 397,
+      "reviewSha256": "09dcbc68a05cfd1336b02a907aadc87ee1314428bf2c135b63eb2f722ea8c4bf",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
       "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
     },
     {
@@ -119,7 +119,7 @@
       "reviewPath": "docs/evidence/phase2a-rc-finalization/full-smoke-projection-fixed.log",
       "reviewBytes": 6685,
       "reviewSha256": "402f291d89aa4e5e1fe2699c83371df4035fa82f1d831e7f0e0d389cdb991b9c",
-      "transformation": "ANSI removal and local-home/worktree path substitution only",
+      "transformation": "ANSI removal and local-home/worktree path substitution only; trailing line whitespace and extra EOF blank lines removed",
       "originalScope": "local-only unless explicitly copied below; full sample arrays/profile/recorded media are not included"
     },
     {
@@ -164,9 +164,9 @@
       "originalBytes": 781,
       "originalSha256": "8b61e9deab58acee8d53645ea29d41470a0600bfc22a1363e93963253c3b7909",
       "reviewPath": "docs/evidence/phase2a-rc-finalization/ordinary-build.log",
-      "reviewBytes": 778,
-      "reviewSha256": "6afada055723c2a141a2e585e98ccb03d34f78462dd1c9c8c0e3a5f16d75ae6f",
-      "transformation": "local path substitution"
+      "reviewBytes": 774,
+      "reviewSha256": "27094095ae2d8a91f52a86b0dad779301130821cc41df503c2239717b54b4862",
+      "transformation": "local path substitution; trailing line whitespace and extra EOF blank lines removed"
     },
     {
       "originalLocalRelativePath": "output/playwright/phase2a/parent-cua-final/receipt.json",

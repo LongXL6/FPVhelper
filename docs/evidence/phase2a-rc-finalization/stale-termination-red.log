@@ -40,4 +40,3 @@ null
       Tests  2 failed | 8 skipped (10)
    Start at  17:21:31
    Duration  219ms (transform 54ms, setup 0ms, import 85ms, tests 11ms, environment 0ms)
-
