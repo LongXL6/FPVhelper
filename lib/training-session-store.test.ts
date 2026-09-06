@@ -279,7 +279,7 @@ describe("IndexedDB training session store", () => {
     expect(await store.getSession(session.id)).toMatchObject({ id: session.id, schemaVersion: 2, migratedFromSchemaVersion: 1 });
     expect(await store.getStorageIntegrity()).toMatchObject({ readableDraftCount: 1, readableSessionCount: 1, quarantinedSessionCount: 1 });
     const database = await openDatabase(factory, "legacy-migration");
-    expect(database.version).toBe(2);
+    expect(database.version).toBe(3);
     expect(await storedValue(database, "drafts", draft.id)).toEqual(draft);
     expect(await storedValue(database, "sessions", session.id)).toEqual(legacy);
     expect(await storedValue(database, "sessions", unreadable.id)).toEqual(unreadable);
@@ -488,7 +488,7 @@ describe("IndexedDB training session store", () => {
     await closing;
     const reader = createTrainingSessionStore(factory, "closing-save");
     expect(await reader.getActiveDraft()).toEqual(draft);
-    const newer = await requestValue(factory.open("closing-save", 3));
+    const newer = await requestValue(factory.open("closing-save", 4));
     await expect(reader.countSessions()).rejects.toThrow("已关闭");
     newer.close();
     await reader.close();
