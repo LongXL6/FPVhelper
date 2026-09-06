@@ -176,5 +176,19 @@
     "gpuReason": "Not observed; no hardware acceleration claim."
   },
   "receiptBinding": "Final plan commit/hash and product/driver source/build receipt are external to avoid self-reference. Frozen status alone does not prove checks/builds/formal runs.",
-  "localOnlyPaths": "roots and priorEvidenceRoots resolve relative to the B driver worktree; emitted absolute local paths need sanitization in a separate share copy."
+  "localOnlyPaths": "roots and priorEvidenceRoots resolve relative to the B driver worktree; emitted absolute local paths need sanitization in a separate share copy.",
+  "counterPublicationEvidence": {
+    "formalAB": "No new product probes. Raw/commit comparison keeps identical accepted Phase1A measurement boundaries on both arms.",
+    "functional": "Controlled-interval hook tests verify ordinary paired count changes, exact boundary values, transaction distinction, lifecycle invalidation and late callbacks. Isolated DOM recording test separately observes actual displayed changes and timestamps; these are not formal A/B performance counts.",
+    "unavailable": "Per-publication React state scheduling counts and exact paint latency are not exposed by the unchanged formal collector; do not substitute whole subtree callback counts or zero."
+  },
+  "analysisContract": {
+    "rawDenominator": "Each run owns its independently delivered RC cohort and drain. A/B delivered sample counts may differ.",
+    "perBoundary": "Retain callback/s and callback/eligible delivered RC frame for recording-ui, telemetry-display, workbench and throttle-timeline separately; never sum nested duration.",
+    "paired": "B minus A for the same condition, mode and repeat; all three repeats retained. Report per-run and paired values plus mean/median/min/max; no significance claim.",
+    "ordinary": "Compare S2 N using common CDP/fixture/save observables; internal probes remain unavailable.",
+    "rendererTask": "TaskDuration delta / CDP Timestamp delta including declared drain and control overhead; not whole-machine CPU.",
+    "outcome": "Mechanism, correctness, repeatable benefit and regressions reported separately. No benefit assumption or expansion to other product layers."
+  },
+  "driverObservationOverhead": "The same outer process checks cumulative evidence bytes/free disk once per second and between runs for both arms. These filesystem checks are common test-control overhead, not claimed zero overhead; evidence set grows in frozen order."
 }
