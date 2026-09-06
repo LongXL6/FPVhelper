@@ -140,6 +140,31 @@ afterEach(async () => {
 });
 
 describe("training library session actions", () => {
+  it.each([false, true])("keeps S2 RC failure when S1 late export settles (metadata failure: %s)", async (metadataFailure) => {
+    autoExport = true;
+    const d1: directoryModule.TrainingSessionDirectoryHandle = { kind: "directory", name: "D1", queryPermission: async () => "granted", getFileHandle: vi.fn() };
+    const d2: directoryModule.TrainingSessionDirectoryHandle = { ...d1, name: "D2" };
+    await mountWithExportDirectory(d1);
+    let finishS1!: () => void;
+    const close = new Promise<void>((resolve) => { finishS1 = resolve; });
+    vi.spyOn(directoryModule, "saveTrainingSessionToDirectory").mockImplementation(async (session) => { await close; return { filename: trainingSessionFilename(session), bytes: 100 }; });
+    let s1!: string, stoppedS1!: Promise<void>;
+    await act(async () => { s1 = (await controller.startRecording())!; });
+    await act(async () => { stoppedS1 = controller.stopRecording(); });
+    expect(records.has(s1)).toBe(true);expect(controller.hasPendingMedia).toBe(false);
+    vi.mocked(directoryModule.getBrowserTrainingSessionDirectoryPicker).mockReturnValue(async () => d2);
+    let s2!: string;
+    await act(async () => { await controller.configureExportDirectory(); s2 = (await controller.startRecording())!; });
+    act(() => sampleListener?.({ ...EMPTY_TELEMETRY, sequence: 1, monotonicTimestampMs: performance.now() }, "serial"));
+    vi.mocked(store.completeSession).mockRejectedValueOnce(new Error("S2 RC transaction failed"));
+    await act(async () => { await controller.stopRecording(); });
+    expect(controller.hasPendingSave).toBe(true);expect(controller.storageError).toContain("S2 RC transaction failed");const error=controller.storageError;
+    if (metadataFailure) vi.mocked(store.patchSession).mockImplementation(async (id, update) => { if(id===s1&&update.kind==="export")throw new Error("S1 export metadata failed"); return applyTrainingSessionMetadataPatch(toTrainingSessionSummary(records.get(id)!),update); });
+    await act(async () => { finishS1(); await stoppedS1; });
+    expect(controller.storageError).toBe(error);expect(controller.hasPendingSave).toBe(true);expect(records.has(s2)).toBe(false);expect(controller.lastSession?.id).toBe(s2);expect(controller.lastSession?.samples).toHaveLength(1);expect(controller.exportDirectoryName).toBe("D2");
+    if(metadataFailure) expect(controller.exportWarning).toContain("S1 export metadata failed");
+  });
+
   it.each(["clear", "revoke-D1"] as const)("preserves the queued automatic target after %s", async (action) => {
     autoExport = true;
     let mediaDone!: (receipt: LocalVideoRecordingReceipt) => void;

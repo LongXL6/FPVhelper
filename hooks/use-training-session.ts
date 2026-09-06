@@ -366,6 +366,10 @@ export function useTrainingSession({
       return { confirmed: false, reason: "尚未选择自动保存文件夹", localStateSaved: true };
     }
 
+    const ownsStorageStatus = () => {
+      const currentId = draftRef.current?.id ?? pendingSessionRef.current?.id ?? mediaOperationRef.current?.sessionId;
+      return !currentId || currentId === session.id;
+    };
     const permission = await getTrainingSessionDirectoryPermission(handle);
     if (permission !== "granted") {
       if (directoryHandleRef.current === handle) setExportDirectoryState("permission_required");
@@ -402,9 +406,11 @@ export function useTrainingSession({
     try {
       await store.patchSession(session.id, { kind: "export", exportedAtEpochMs, snapshotRevision: sessionFinalization(session).contentRevision });
       await refreshSessions(store);
-      setStorageError(null);
+      if (ownsStorageStatus()) setStorageError(null);
     } catch (saveError) {
-      setStorageError(`JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`);
+      const message = `记录 ${session.id.slice(0, 8)} 的 JSON 已写入“${handle.name}”，但导出状态未写入 IndexedDB：${storageErrorMessage(saveError)}`;
+      if (ownsStorageStatus()) setStorageError(message);
+      setExportWarning(message);
       return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: false };
     }
     return { confirmed: true, reason: null, filename: receipt.filename, localStateSaved: true };
