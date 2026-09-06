@@ -11,7 +11,7 @@ const gateSnapshot=(page:Page)=>page.evaluate(()=> (window as unknown as {__phas
 async function release(page:Page,json=false){await page.evaluate((json)=>{const gate=(window as unknown as {__phase2aMediaGate:{release():void;releaseJson():void}}).__phase2aMediaGate;if(json)gate.releaseJson();else gate.release();},json);}
 async function files(page:Page){return page.evaluate(async()=>{
  const root=await navigator.storage.getDirectory();const directory=await root.getDirectoryHandle("phase2a-e2e");const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
- for await(const [name,handle] of directory.entries())if(handle.kind==="file"){
+ for await(const [name,handle] of directory.entries())if(handle.kind==="file"&&/\.(json|mp4|webm)$/.test(name)){
   const file=await(handle as FileSystemFileHandle).getFile();rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
  }return rows;
 });}
@@ -35,7 +35,8 @@ test.afterEach(async({page})=>{if(!page.isClosed()){await release(page).catch(()
 
 test("normal stop confirms RC, real video close and exactly one final JSON",async({page},info)=>{
  const checkpoint=await prepare(page,"normal");await expect.poll(async()=> (await terminal(page)).video.recorded).toBe(true);
- await expect.poll(async()=> (await files(page)).filter(f=>f.json?.video.recorded).length).toBe(1);
+ await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
+ expect((await files(page)).filter(f=>f.json?.video.recorded)).toHaveLength(1);
  const stored=await terminal(page),artifacts=await files(page);const exported=artifacts.find(f=>f.json)!.json!;
  expect(stored.samples.length).toBeGreaterThan(checkpoint.samples.length);expect((await readStoredTrainingRecords(page)).drafts).toHaveLength(0);
  expect(exported.samples).toEqual(stored.samples);expect(exported.video).toEqual(stored.video);expect(exported.finalization?.confirmedExportRevision).toBe(stored.finalization?.contentRevision);
@@ -51,7 +52,7 @@ test("unclosed media does not block terminal RC, early export or same-origin rel
  expect((await gateSnapshot(page)).events.some(e=>e.kind==="media-underlying-close-resolved")).toBe(false);
  expect(stored.samples.length).toBeGreaterThan(checkpoint.samples.length);expect(stored.video.recorded).toBe(false);expect(stored.finalization?.media.state).toBe("pending");expect(stored.interrupted).toBe(false);
  await expect(page.locator(".session-detail-header")).toContainText("遥控数据已保存");await expect(page.locator(".session-detail").getByText("视频仍在收尾",{exact:false})).toBeVisible();
- await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=> (await files(page)).filter(f=>f.json).length).toBe(1);
+ await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
  const early=(await files(page)).find(f=>f.json)!.json!;expect(early.samples).toEqual(stored.samples);expect(early.video.recorded).toBe(false);
  let dialogType:string|null=null;page.once("dialog",async dialog=>{dialogType=dialog.type();await dialog.accept();});await page.reload();expect(dialogType).toBe("beforeunload");
  await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
@@ -99,7 +100,7 @@ test("a rejected media result never fabricates a receipt even when the underlyin
  await prepare(page,"reject-after-close");
  await expect.poll(async()=> (await terminal(page)).finalization?.media.state).toBe("failed");
  const stored=await terminal(page);expect(stored.video.recorded).toBe(false);expect(stored.interrupted).toBe(false);
- await expect.poll(async()=> (await files(page)).filter(f=>f.json).length).toBe(1);
+ await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
  const artifacts=await files(page);expect(artifacts.some(f=>/\.(mp4|webm)$/.test(f.name)&&f.bytes>0)).toBe(true);expect(artifacts.find(f=>f.json)!.json!.video.recorded).toBe(false);
  await attach(info,"rejected-media.json",{stored,artifacts,gate:await gateSnapshot(page),boundary:"Underlying real close resolved; test then rejected acknowledgement. File existence is not promoted into a success receipt."});
 });

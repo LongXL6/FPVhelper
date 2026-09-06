@@ -77,7 +77,9 @@ describe("terminal metadata and old-writer protection",()=>{
  });
  it("reports a blocked upgrade and can reopen after the old uncooperative connection is closed",async()=>{
   const factory=new IDBFactory(),session=terminal();delete session.finalization;const old=await legacy(factory,"blocked-upgrade",session);
-  const blocked=createTrainingSessionStore(factory,"blocked-upgrade");await expect(blocked.getActiveDraft()).rejects.toThrow("阻塞");old.close();await expect(blocked.close()).rejects.toThrow("阻塞");
-  const retry=createTrainingSessionStore(factory,"blocked-upgrade");expect((await retry.listSessions())[0].id).toBe(session.id);await retry.close();
+  const events:string[]=[];let ordinal=0;const open=factory.open.bind(factory);
+  const spy=vi.spyOn(factory,"open").mockImplementation((name,version)=>{const request=open(name,version);const index=++ordinal;request.addEventListener("blocked",()=>events.push(`${index}:blocked`));request.addEventListener("success",()=>events.push(`${index}:success`));return request;});
+  const blocked=createTrainingSessionStore(factory,"blocked-upgrade");await expect(blocked.getActiveDraft()).rejects.toThrow("阻塞");events.push("old:close");old.close();await expect(blocked.close()).rejects.toThrow("阻塞");
+  const retry=createTrainingSessionStore(factory,"blocked-upgrade");expect((await retry.listSessions())[0].id).toBe(session.id);expect(events).toEqual(["1:blocked","old:close","1:success","2:success"]);spy.mockRestore();await retry.close();
  });
 });
