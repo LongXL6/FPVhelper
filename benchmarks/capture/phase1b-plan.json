@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "protocol": "fpvhelper-phase1b-ab/v1",
+  "status": "draft_pending_checks",
+  "formalMeasurementAllowed": false,
+  "baselineSha": "9ab7d90b6d4a8f3eac3c0c2e7825fc6a75846b84",
+  "baselinePhase1ATestedSha": "62d757e1144d9dc93060d4f3243a52301fbcd4d0",
+  "baselinePhase1APlanSha256": "419ef43b9d54d759cea4cfe4abeab34343ad8040e43a0664d03447e20fd73159",
+  "roots": {
+    "A": "../fpvhelper-phase1b-control",
+    "B": "."
+  },
+  "priorEvidenceRoots": [
+    "../fpvhelper-phase1a-measurement/output/playwright"
+  ],
+  "port": 3124,
+  "warmupMs": 5000,
+  "windowMs": 20000,
+  "drainMs": 3000,
+  "repeats": 3,
+  "lifecyclePhaseMs": 5000,
+  "cleanupMs": 20000,
+  "maxRunMs": 120000,
+  "maxBatchMs": 1800000,
+  "maxEvents": 200000,
+  "fixtureMaxFrames": 30000,
+  "maxTraceBytes": 67108864,
+  "maxOutputBytes": 262144000,
+  "minDiskFreeBytes": 2147483648,
+  "maxHeapBytes": null,
+  "runOrder": [
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 1,
+      "arm": "A"
+    },
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 1,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 1,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 1,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 1,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 1,
+      "arm": "B"
+    },
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 2,
+      "arm": "B"
+    },
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 2,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 2,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 2,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 2,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 2,
+      "arm": "A"
+    },
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 3,
+      "arm": "A"
+    },
+    {
+      "condition": "S1-100",
+      "mode": "P1",
+      "repeat": 3,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 3,
+      "arm": "B"
+    },
+    {
+      "condition": "S2",
+      "mode": "P1",
+      "repeat": 3,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 3,
+      "arm": "A"
+    },
+    {
+      "condition": "S2",
+      "mode": "N",
+      "repeat": 3,
+      "arm": "B"
+    }
+  ],
+  "scope": "Only the existing recording progress count publication differs between A/B. No new product measurement probes; existing Phase1A runner, analyzer, fixture and accepted observer boundaries remain unchanged.",
+  "orderMeaning": "Nine adjacent A/B pairs alternate AB/BA. With three repeats per contrast, one arm starts twice and the other once; overall five AB and four BA pairs. Every arm/condition/mode/repeat occurs once.",
+  "childPlanContract": "Driver deterministically projects nine unique condition/mode/repeat rows accepted by each arm own unchanged Phase1A runner. Raw plan hash is the projected child hash; outer receipts link parent hash, child hash, global index, arm, product root/source/tree/BUILD_ID and actual raw path.",
+  "identityContract": "A product HEAD must equal reviewed baseline. Both arm HEAD/tree and served normal/profile BUILD_ID must match the separate build receipt; source stays clean before and after each run. Driver source/tree and file hashes are recorded separately. A tool HEAD cannot stand in for the served product source.",
+  "budgetContract": "Aggregate all retained bytes in both arm output/playwright trees and every priorEvidenceRoots tree, canonicalized without duplicate subtrees. Includes all failed/exploratory/formal artifacts, build logs, reports, original review ZIP and transport parts. Changing output directory does not reset the 250 MiB budget. Check before/during/after runs; stop partial and retain evidence on excess.",
+  "timingContract": "Page real performance.now actual delivery cohort [t0,t1), unchanged subscription/recording denominators and continuously running transport during 3 s drain. CDP has its own seconds domain and includes drain. 20 s x3 is not endurance/statistical-significance evidence.",
+  "metricContract": [
+    "Independent delivered RC cohort, decoded/published/subscriber/recorded/saved reconciliation and order/session/causal checks.",
+    "Per-boundary callback/s and callbacks per actual delivered RC frame; do not require identical A/B input counts or equate callbacks to FPS.",
+    "Render distributions within each boundary; nested boundaries overlap.",
+    "CDP TaskDuration/Timestamp delta, input interval distributions, storage/cleanup/buffer evidence.",
+    "Ordinary count publication, forced boundary updates and display freshness are established by separate deterministic functional tests; no unfair A/B probe is added."
+  ],
+  "stopContract": [
+    "Any old Phase1A observation/tool file changed.",
+    "Raw/source/session/subscription/persistence integrity failure or missing Profiler positive control.",
+    "Unexpected network/device/user-data access or collector/fixture overflow.",
+    "Source/build mismatch, resource ceiling, batch/run deadline or unresolved owned process cleanup."
+  ],
+  "cleanupContract": "One owned server and one child runner/browser at a time. TERM then bounded KILL of owned process groups; preserve abnormal cleanup evidence. Reserve final 20 s within the 30 min batch ceiling. Context/process exit is not product track.stop or write cancellation proof.",
+  "freezePrerequisites": [
+    "Separate A/B product SHA/tree and normal/profile BUILD_ID receipts.",
+    "Exact clean tested source and driver identity; immutable Phase1A hash check.",
+    "Observed P1 mount/update and P0 regression, actual browser/React/viewport or explicit unavailable fields.",
+    "Functional count/final-freeze/freshness tests and source checks complete.",
+    "Budget roots and local-only path disclosure reviewed; no formal start until root freezes/commits this plan."
+  ],
+  "runtimeFields": {
+    "actualBrowserVersion": null,
+    "profilingRuntimeReactVersion": null,
+    "normalRuntimeReactVersion": null,
+    "normalRuntimeReactVersionReason": "No direct observation yet; do not substitute installed package version.",
+    "viewport": null,
+    "headless": null,
+    "gpuBackend": null,
+    "gpuReason": "Not observed; no hardware acceleration claim."
+  },
+  "receiptBinding": "Final plan commit/hash and product/driver source/build receipt are external to avoid self-reference. Frozen status alone does not prove checks/builds/formal runs.",
+  "localOnlyPaths": "roots and priorEvidenceRoots resolve relative to the B driver worktree; emitted absolute local paths need sanitization in a separate share copy."
+}
