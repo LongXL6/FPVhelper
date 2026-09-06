@@ -24,7 +24,11 @@ describe("Phase1B arm identity and fixed plan", () => {
     const missing = plan(); missing.runOrder.pop(); expect(() => parsePhase1BPlan(missing)).toThrow();
     const duplicate = plan(); duplicate.runOrder[1] = duplicate.runOrder[0]; expect(() => parsePhase1BPlan(duplicate)).toThrow();
     const reordered = plan(); reordered.runOrder.reverse(); expect(() => parsePhase1BPlan(reordered)).toThrow();
-    for (const patch of [{ port: 3101 }, { warmupMs: 2000 }, { formalMeasurementAllowed: true }, { baselineSha: "bad" }]) expect(() => parsePhase1BPlan({ ...plan(), ...patch })).toThrow();
+    for (const patch of [
+      { port: 3101 }, { warmupMs: 2000 }, { baselineSha: "bad" },
+      { status: "draft_pending_checks", formalMeasurementAllowed: true },
+      { status: "frozen", formalMeasurementAllowed: false },
+    ]) expect(() => parsePhase1BPlan({ ...plan(), ...patch })).toThrow();
   });
   it("accepts only frozen/allowed together and keeps child status bound to the parent", () => {
     const frozen = parsePhase1BPlan({ ...plan(), status: "frozen", formalMeasurementAllowed: true });
