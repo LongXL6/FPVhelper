@@ -9,12 +9,18 @@ test.setTimeout(45000);
 const networkViolations = new WeakMap<Page, string[]>();
 const gateSnapshot=(page:Page)=>page.evaluate(()=> (window as unknown as {__phase2aMediaGate:{snapshot():{mode:string;events:Array<{kind:string}>}}}).__phase2aMediaGate.snapshot());
 async function release(page:Page,json=false){await page.evaluate((json)=>{const gate=(window as unknown as {__phase2aMediaGate:{release():void;releaseJson():void}}).__phase2aMediaGate;if(json)gate.releaseJson();else gate.release();},json);}
-async function files(page:Page){return page.evaluate(async()=>{
- const root=await navigator.storage.getDirectory();const directory=await root.getDirectoryHandle("phase2a-e2e");const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
- for await(const [name,handle] of directory.entries())if(handle.kind==="file"&&/\.(json|mp4|webm)$/.test(name)){
-  const file=await(handle as FileSystemFileHandle).getFile();rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
- }return rows;
-});}
+async function files(page:Page,jsonOnly=false){return page.evaluate(async(jsonOnly)=>{
+ let stage="open OPFS root";
+ try {
+  const root=await navigator.storage.getDirectory();stage="open phase2a-e2e directory";
+  const directory=await root.getDirectoryHandle("phase2a-e2e");const rows:Array<{name:string;bytes:number;json?:TrainingSession;header:number[]}>=[];
+  for await(const [name,handle] of directory.entries())if(handle.kind==="file"&&(jsonOnly?name.endsWith(".json"):/\.(json|mp4|webm)$/.test(name))){
+   stage=`getFile ${name}`;const file=await(handle as FileSystemFileHandle).getFile();stage=`read confirmed contents ${name}`;
+   rows.push({name,bytes:file.size,header:[...new Uint8Array(await file.slice(0,12).arrayBuffer())],...(name.endsWith(".json")?{json:JSON.parse(await file.text())}: {})});
+  }return rows;
+ }catch(error){throw new Error(`OPFS evidence read failed at ${stage}: ${String(error)}`);}
+},jsonOnly);}
+
 async function attach(info:TestInfo,name:string,value:unknown){const path=info.outputPath(name);await mkdir(info.outputDir,{recursive:true});await writeFile(path,JSON.stringify(value,null,2));await info.attach(name,{path,contentType:"application/json"});}
 async function prepare(page:Page,mode:string,extra=""){
  await page.addInitScript(installPhase2AMediaGate);
@@ -53,7 +59,7 @@ test("unclosed media does not block terminal RC, early export or same-origin rel
  expect(stored.samples.length).toBeGreaterThan(checkpoint.samples.length);expect(stored.video.recorded).toBe(false);expect(stored.finalization?.media.state).toBe("pending");expect(stored.interrupted).toBe(false);
  await expect(page.locator(".session-detail-header")).toContainText("遥控数据已保存");await expect(page.locator(".session-detail").getByText("视频仍在收尾",{exact:false})).toBeVisible();
  await page.getByRole("button",{name:"导出 JSON",exact:true}).click();await expect.poll(async()=> (await terminal(page)).exportCount).toBe(1);
- const early=(await files(page)).find(f=>f.json)!.json!;expect(early.samples).toEqual(stored.samples);expect(early.video.recorded).toBe(false);
+ const early=(await files(page,true)).find(f=>f.json)!.json!;expect(early.samples).toEqual(stored.samples);expect(early.video.recorded).toBe(false);
  let dialogType:string|null=null;page.once("dialog",async dialog=>{dialogType=dialog.type();await dialog.accept();});await page.reload();expect(dialogType).toBe("beforeunload");
  await expect.poll(async()=> (await readStoredTrainingRecords(page)).sessions.length).toBe(1);
  const reopened=(await readStoredTrainingRecords(page)).sessions[0];expect(reopened.samples).toEqual(stored.samples);expect(reopened.endedAt).toBe(stored.endedAt);expect(reopened.interruptionReason).toBe(stored.interruptionReason);expect(reopened.video.recorded).toBe(false);expect(reopened.finalization?.media.state).toBe("pending");
