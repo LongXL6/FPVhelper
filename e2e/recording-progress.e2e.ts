@@ -1,9 +1,16 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import type { TrainingSession } from "../lib/training-session";
 import { expect, readStoredTrainingRecords, test } from "./fixtures/fpv-hardware";
 
 test.use({ seedDataOnlyPreference: false });
 
 test("records every input while publishing paired DOM progress on a bounded cadence and exact final values", async ({ page }, info) => {
+  const attachJson = async (name: string, value: unknown) => {
+    const path = info.outputPath(name);
+    await mkdir(info.outputDir, { recursive: true });
+    await writeFile(path, JSON.stringify(value, null, 2));
+    await info.attach(name, { contentType: "application/json", path });
+  };
   // Separate UI functionality/freshness observation, not a formal A/B or video-FPS measurement.
   // Serial/video input is synthetic; MediaRecorder, composition, OPFS and IndexedDB remain real.
   const directoryName = "recording-progress-ui";
@@ -62,10 +69,10 @@ test("records every input while publishing paired DOM progress on a bounded cade
         rows, overflow, observerError, timeOriginEpochMs: performance.timeOrigin };
     } finally { observer.disconnect(); }
   });
-  await info.attach("recording-progress-dom-observation.json", { contentType: "application/json", body: JSON.stringify({
+  await attachJson("recording-progress-dom-observation.json", {
     ...observation, purpose: "Independent DOM count-publication functionality and freshness check; not formal A/B, RF throughput, or painted/video FPS",
     nominalProgressIntervalMs: 250, source: "existing synthetic serial/video fixture", counts: "Only changed total/unique pairs; elapsed and persisted-only mutations are excluded",
-  }, null, 2) });
+  });
 
   // Stop normally before asserting cadence, so a failing observation still exercises file finalization.
   await page.getByRole("button", { name: "■ 结束记录", exact: true }).click();
@@ -100,11 +107,11 @@ test("records every input while publishing paired DOM progress on a bounded cade
   }, { directoryName, filename: receipt.filename });
   const container = files.header.slice(4, 8).join() === "102,116,121,112" ? "mp4"
     : files.header.slice(0, 4).join() === "26,69,223,163" ? "webm" : "unknown";
-  await info.attach("recording-progress-final-values.json", { contentType: "application/json", body: JSON.stringify({
+  await attachJson("recording-progress-final-values.json", {
     sessionId: session.id, totalShown, uniqueShown, persistedSampleCount: session.sampleCount, storedSamples: session.samples.length,
     receipt, fileBytes: files.bytes, container, header: files.header, mp4Supported: files.mp4Supported,
     jsonSessionIds: files.json.map((entry) => entry.id), unexpectedRequests,
-  }, null, 2) });
+  });
 
   const durationMs = observation.endedAtMs - observation.startedAtMs;
   const publications = observation.rows.slice(1);

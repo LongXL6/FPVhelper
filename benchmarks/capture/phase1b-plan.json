@@ -166,12 +166,15 @@
     "Budget roots and local-only path disclosure reviewed; no formal start until root freezes/commits this plan."
   ],
   "runtimeFields": {
-    "actualBrowserVersion": null,
-    "profilingRuntimeReactVersion": null,
+    "actualBrowserVersion": "151.0.7922.34",
+    "profilingRuntimeReactVersion": "19.3.0-canary-cbb046ab-20260731",
     "normalRuntimeReactVersion": null,
-    "normalRuntimeReactVersionReason": "No direct observation yet; do not substitute installed package version.",
-    "viewport": null,
-    "headless": null,
+    "normalRuntimeReactVersionReason": "Not directly exposed in ordinary capture; installed React version is not substituted for runtime evidence.",
+    "viewport": {
+      "width": 1440,
+      "height": 1100
+    },
+    "headless": true,
     "gpuBackend": null,
     "gpuReason": "Not observed; no hardware acceleration claim."
   },
@@ -190,5 +193,22 @@
     "rendererTask": "TaskDuration delta / CDP Timestamp delta including declared drain and control overhead; not whole-machine CPU.",
     "outcome": "Mechanism, correctness, repeatable benefit and regressions reported separately. No benefit assumption or expansion to other product layers."
   },
-  "driverObservationOverhead": "The same outer process checks cumulative evidence bytes/free disk once per second and between runs for both arms. These filesystem checks are common test-control overhead, not claimed zero overhead; evidence set grows in frozen order."
+  "driverObservationOverhead": "The same outer process checks cumulative evidence bytes/free disk once per second and between runs for both arms. These filesystem checks are common test-control overhead, not claimed zero overhead; evidence set grows in frozen order.",
+  "hostEnvironment": {
+    "osVersion": "27.0",
+    "osBuild": "26A5388g",
+    "processor": "Apple M4 Max",
+    "physicalCores": 14,
+    "memoryBytes": 38654705664,
+    "node": "v25.8.1",
+    "npm": "11.11.0",
+    "gpu": "unqueried; no acceleration or hardware-rate claim"
+  },
+  "offlineSummarizer": {
+    "path": "output/playwright/phase1b-prerequisites/summarize_phase1b.py",
+    "bytes": 23449,
+    "sha256": "36289edfca36d906a8617fd3472f08d260e7f5ed118439e50e07dcf9c19702d9",
+    "selfTest": "11 mathematical/edge checks passed; real-input execution occurs only after formal batch",
+    "percentiles": "Per-boundary render duration uses linear interpolation; do not equate these values with different percentile methods or sum nested durations."
+  }
 }
