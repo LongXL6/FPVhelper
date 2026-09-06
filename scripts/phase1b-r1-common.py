@@ -52,3 +52,18 @@ def stop_owned(proc):
         except ProcessLookupError:return {'pid':proc.pid,'exitCode':proc.returncode,'groupGone':True}
         time.sleep(.1)
     raise RuntimeError('Owned process group still alive')
+def record_final_budget(receipt,read_budget):
+    try:receipt['finalBudget']=read_budget()
+    except Exception as error:
+        receipt['finalBudget']={'error':type(error).__name__+': '+str(error)}
+        receipt['status']='partial'
+        receipt.setdefault('stopReason','Final budget verification failed')
+def remaining_seconds(start,limit_ms,cleanup_ms=0,now=None):
+    import time
+    left=start+(limit_ms-cleanup_ms)/1000-(time.monotonic() if now is None else now)
+    if left<=0:raise TimeoutError('Global deadline exhausted')
+    return left
+def record_elapsed(receipt,elapsed,limit_ms):
+    receipt['wallSeconds']=elapsed
+    if elapsed*1000>=limit_ms:
+        receipt['status']='partial';receipt.setdefault('stopReason','Global deadline exceeded including finalization')

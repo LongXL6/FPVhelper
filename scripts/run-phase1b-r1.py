@@ -11,11 +11,14 @@ child=root/'benchmarks/capture/phase1b-r1-child.json';planhash=c.digest(planpath
 out=root/'output/playwright/phase1b-r1'/(opts.exploration_id if opts.exploratory else p['run_id']);out.mkdir(exist_ok=False)
 receipt={'status':'running','driverTestedSha':driver,'driverTree':c.git(root,'rev-parse','HEAD^{tree}'),'planSha256':planhash,'childPlanSha256':childhash,'buildReceiptSha256':c.digest(buildpath.read_bytes()),'driverDiffSha256':c.digest(subprocess.check_output(['git','diff','HEAD'],cwd=root)),'driverFiles':{str(f.relative_to(root)):c.digest(f.read_bytes()) for f in sorted((root/'scripts').glob('*phase1b*r1*')) if f.is_file()},'products':builds,'startedEpochMs':int(time.time()*1000),'runs':[],'diagnosticTriggers':[],'externalOperations':[]}
 started=time.monotonic();server=None;runner=None
-source_before={a:c.source_inventory(r) for a,r in p['roots'].items()}
-(out/'source-inventories.json').write_text(json.dumps(source_before,indent=2)+'\n')
+def deadline_signal(signum,frame): raise TimeoutError('Global deadline interrupted synchronous work')
+signal.signal(signal.SIGALRM,deadline_signal)
+signal.setitimer(signal.ITIMER_REAL,c.remaining_seconds(started,p['maxBatchMs'],p['cleanupMs']))
+source_before={}
 
 def save(): (out/'orchestrator.json').write_text(json.dumps(receipt,indent=2)+'\n')
 def budget():
+ c.remaining_seconds(started,p['maxBatchMs'])
  rows=[]
  for r in p['budgetRoots']:
   q=Path(r); files=list(q.rglob('*')) if q.exists() else []
@@ -25,6 +28,7 @@ def budget():
  if free<p['minDiskFreeBytes'] or total>p['maxOutputBytes']:raise RuntimeError('Resource guard')
  return dict(roots=rows,totalBytes=total,freeBytes=free)
 def verify():
+ c.remaining_seconds(started,p['maxBatchMs'],p['cleanupMs'])
  if c.digest(planpath.read_bytes())!=planhash or c.digest(child.read_bytes())!=childhash or c.git(root,'rev-parse','HEAD')!=driver:raise RuntimeError('Driver/plan changed')
  for f,h in receipt['driverFiles'].items():
   if c.digest((root/f).read_bytes())!=h:raise RuntimeError('Driver tool bytes changed')
@@ -80,6 +84,8 @@ def execute(pair,position,arm,diagnostic=False):
  run.update(status='completed',wallSeconds=time.monotonic()-runstart,rawPath=str(artifacts[0]),rawSha256=c.digest(artifacts[0].read_bytes()),decodedBytes=len(rawbytes),decodedSha256=c.digest(rawbytes),metrics=metrics(raw),summaryPath=str(artifacts[0].with_suffix('').with_suffix('.summary.json')))
  verify();run['budgetAfter']=budget();save();print(json.dumps({k:run[k] for k in ['index','pairId','arm','kind','status','wallSeconds']}),flush=True)
 try:
+ source_before={a:c.source_inventory(r) for a,r in p['roots'].items()}
+ (out/'source-inventories.json').write_text(json.dumps(source_before,indent=2)+'\n')
  receipt['initialBudget']=budget();verify();save()
  if opts.exploratory:
   for condition,mode,trace in [('S1-100','N',False),('S1-100','P1',True),('S2','P1',False)]:
@@ -102,11 +108,18 @@ except BaseException as e:
  receipt.update(status='partial',stopReason=type(e).__name__+': '+str(e))
  if receipt['runs'] and receipt['runs'][-1]['status']=='running':receipt['runs'][-1].update(status='failed',stopReason=receipt['stopReason'])
 finally:
+ # Reserve a distinct hard alarm for all cleanup, final budget traversal and receipt writes.
+ signal.setitimer(signal.ITIMER_REAL,max(.001,started+p['maxBatchMs']/1000-time.monotonic()))
  for name,proc in [('runner',runner),('server',server)]:
   try:receipt[name+'FinalCleanup']=stop(proc)
   except Exception as e:receipt[name+'FinalCleanup']={'error':str(e),'pid':proc.pid};receipt['status']='partial'
- receipt['wallSeconds']=time.monotonic()-started;receipt['finishedEpochMs']=int(time.time()*1000)
- try:receipt['finalBudget']=budget()
- except Exception as e:receipt['finalBudget']={'error':str(e)}
- save();print(json.dumps({'status':receipt['status'],'completed':sum(r['status']=='completed' for r in receipt['runs']),'receipt':str(out/'orchestrator.json')}),flush=True)
+ receipt['finishedEpochMs']=int(time.time()*1000)
+ c.record_final_budget(receipt,budget)
+ c.record_elapsed(receipt,time.monotonic()-started,p['maxBatchMs'])
+ try:save()
+ except TimeoutError:
+  receipt['status']='partial';receipt['stopReason']='Global deadline during receipt write';save()
+ signal.setitimer(signal.ITIMER_REAL,0)
+ c.record_elapsed(receipt,time.monotonic()-started,p['maxBatchMs']);save()
+ print(json.dumps({'status':receipt['status'],'completed':sum(r['status']=='completed' for r in receipt['runs']),'receipt':str(out/'orchestrator.json')}),flush=True)
 if receipt['status']!='needs_review':raise SystemExit(1)

@@ -44,4 +44,20 @@ class Tests(unittest.TestCase):
    with self.assertRaises(ValueError):c.verify_source(root)
    (root/'product.ts').write_text('const a=2;\n')
    with self.assertRaises(ValueError):c.verify_source(root,True)
+ def test_final_budget_failure_never_success(self):
+  r={'status':'needs_review','runs':[{'status':'completed'}]}
+  def fail():raise RuntimeError('over budget')
+  c.record_final_budget(r,fail)
+  self.assertEqual(r['status'],'partial');self.assertEqual(len(r['runs']),1);self.assertIn('over budget',r['finalBudget']['error'])
+ def test_global_deadline_reserved_and_final(self):
+  self.assertEqual(c.remaining_seconds(100,1800000,20000,101),1779)
+  with self.assertRaises(TimeoutError):c.remaining_seconds(100,1800000,20000,1880)
+  r={'status':'needs_review'};c.record_elapsed(r,1800.01,1800000);self.assertEqual(r['status'],'partial')
+ def test_real_alarm_interrupts_synchronous_work(self):
+  import signal,time
+  old=signal.signal(signal.SIGALRM,lambda *_: (_ for _ in ()).throw(TimeoutError('test deadline')))
+  try:
+   signal.setitimer(signal.ITIMER_REAL,.02)
+   with self.assertRaises(TimeoutError):time.sleep(1)
+  finally:signal.setitimer(signal.ITIMER_REAL,0);signal.signal(signal.SIGALRM,old)
 if __name__=='__main__':unittest.main()
