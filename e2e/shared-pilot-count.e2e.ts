@@ -41,6 +41,7 @@ test("shared input remembers the chosen pilot count and records only the active 
   await setup.getByRole("button", { name: /连接当前选手/ }).click();
   await setup.getByRole("button", { name: /打开当前输入/ }).click();
   await setup.getByRole("button", { name: /选择保存目录/ }).click();
+  await expect.poll(() => page.locator('[data-pilot-channel-id="video-source-1-pilot-2"] video').evaluate((element) => (element as HTMLVideoElement).videoWidth)).toBeGreaterThan(0);
   const sourceSize = await page.locator('[data-pilot-channel-id="video-source-1-pilot-2"] video').evaluate((element) => {
     const video = element as HTMLVideoElement;
     return { width: video.videoWidth, height: video.videoHeight };
