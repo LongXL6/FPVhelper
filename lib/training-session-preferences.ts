@@ -3,6 +3,7 @@ export type StickOverlayPreferenceMode = "trail" | "simple";
 export interface TrainingSessionPreferences {
   autoExport: boolean;
   recordPilotVideo: boolean;
+  videoOnly?: boolean;
   showStickOverlays: boolean;
   stickOverlayMode: StickOverlayPreferenceMode;
 }
@@ -16,6 +17,7 @@ export const TRAINING_SESSION_PREFERENCES_KEY = "fpvhelper.training-preferences.
 export const DEFAULT_TRAINING_SESSION_PREFERENCES: TrainingSessionPreferences = {
   autoExport: false,
   recordPilotVideo: true,
+  videoOnly: false,
   showStickOverlays: true,
   stickOverlayMode: "trail",
 };
@@ -40,6 +42,7 @@ export function loadTrainingSessionPreferences(storage: PreferenceStorage): {
       !isPreferenceRecord(parsed) ||
       typeof parsed.autoExport !== "boolean" ||
       ("recordPilotVideo" in parsed && typeof parsed.recordPilotVideo !== "boolean") ||
+      ("videoOnly" in parsed && typeof parsed.videoOnly !== "boolean") ||
       typeof parsed.showStickOverlays !== "boolean" ||
       (parsed.stickOverlayMode !== "trail" && parsed.stickOverlayMode !== "simple")
     ) {
@@ -51,6 +54,7 @@ export function loadTrainingSessionPreferences(storage: PreferenceStorage): {
         recordPilotVideo: typeof parsed.recordPilotVideo === "boolean"
           ? parsed.recordPilotVideo
           : DEFAULT_TRAINING_SESSION_PREFERENCES.recordPilotVideo,
+        videoOnly: parsed.recordPilotVideo !== false && parsed.videoOnly === true,
         showStickOverlays: parsed.showStickOverlays,
         stickOverlayMode: parsed.stickOverlayMode,
       },
@@ -66,7 +70,13 @@ export function saveTrainingSessionPreferences(
   preferences: TrainingSessionPreferences,
 ) {
   try {
-    storage.setItem(TRAINING_SESSION_PREFERENCES_KEY, JSON.stringify(preferences));
+    if (preferences.videoOnly !== undefined && typeof preferences.videoOnly !== "boolean") {
+      return "本机偏好格式无效，已恢复默认设置";
+    }
+    storage.setItem(TRAINING_SESSION_PREFERENCES_KEY, JSON.stringify({
+      ...preferences,
+      videoOnly: preferences.recordPilotVideo !== false && preferences.videoOnly === true,
+    }));
     return null;
   } catch (error) {
     return preferenceErrorMessage(error);

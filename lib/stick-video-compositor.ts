@@ -6,6 +6,7 @@ export interface StickVideoCompositorOptions {
   sourceStream: MediaStream;
   crop?: VideoCropRect;
   frameRate: number;
+  drawOverlay?: boolean;
   getTelemetry: () => FlightTelemetry;
   getLinkState?: () => LinkState;
   getConnection?: () => ConnectionState;
@@ -35,11 +36,11 @@ const CONNECTION_LABEL: Record<ConnectionState, string> = {
 };
 
 function asError(error: unknown) {
-  return error instanceof Error ? error : new Error("摇杆叠层视频合成失败");
+  return error instanceof Error ? error : new Error("视频合成失败");
 }
 
 function abortedError() {
-  return new DOMException("摇杆叠层视频录制已取消", "AbortError");
+  return new DOMException("视频录制已取消", "AbortError");
 }
 
 export function drawStickVideoOverlay(
@@ -136,6 +137,7 @@ export async function startStickVideoCompositor({
   sourceStream,
   crop = FULL_FRAME,
   frameRate,
+  drawOverlay = true,
   getTelemetry,
   getLinkState,
   getConnection,
@@ -148,11 +150,11 @@ export async function startStickVideoCompositor({
     throw new Error("录像帧率必须在 1–120 fps 之间");
   }
   const sourceTracks = sourceStream.getVideoTracks().filter((track) => track.readyState === "live");
-  if (sourceTracks.length === 0) throw new Error("没有可用的视频输入，无法录制摇杆叠层视频");
+  if (sourceTracks.length === 0) throw new Error("没有可用的视频输入，无法录制视频");
   const video = document.createElement("video");
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d", { alpha: false });
-  if (!context || typeof canvas.captureStream !== "function") throw new Error("此浏览器不支持摇杆叠层视频录制");
+  if (!context || typeof canvas.captureStream !== "function") throw new Error("此浏览器不支持视频合成录制");
   video.muted = true;
   video.playsInline = true;
   video.autoplay = true;
@@ -194,8 +196,8 @@ export async function startStickVideoCompositor({
     rejectReady?.(error);
     if (running) onError?.(error);
   };
-  function handleSourceEnded() { fail(new Error("视频输入已断开，摇杆叠层录像中止")); }
-  function handleVideoError() { fail(new Error(video.error?.message || "视频输入解码失败，摇杆叠层录像中止")); }
+  function handleSourceEnded() { fail(new Error("视频输入已断开，录像中止")); }
+  function handleVideoError() { fail(new Error(video.error?.message || "视频输入解码失败，录像中止")); }
   function handleAbort() { fail(abortedError()); }
 
   sourceTracks.forEach((track) => track.addEventListener("ended", handleSourceEnded));
@@ -245,12 +247,14 @@ export async function startStickVideoCompositor({
       context.fillStyle = "#000000";
       context.fillRect(0, 0, width, height);
       context.drawImage(video, rect.x, rect.y, rect.width, rect.height, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-      drawStickVideoOverlay(context, { width, height, telemetry: getTelemetry(), linkState: getLinkState?.(), connection: getConnection?.(), athleteCode });
+      if (drawOverlay) {
+        drawStickVideoOverlay(context, { width, height, telemetry: getTelemetry(), linkState: getLinkState?.(), connection: getConnection?.(), athleteCode });
+      }
     };
     draw();
     outputStream = canvas.captureStream(frameRate);
-    if (!outputStream.getVideoTracks().some((track) => track.readyState === "live")) throw new Error("浏览器未能创建摇杆叠层视频流");
-    // Paint after captureStream as well, so the first encoded frame includes both the image and the sticks.
+    if (!outputStream.getVideoTracks().some((track) => track.readyState === "live")) throw new Error("浏览器未能创建录制视频流");
+    // Paint after captureStream as well, so the first encoded frame is initialized.
     draw();
 
     const render = (nowMs: number) => {
@@ -260,7 +264,7 @@ export async function startStickVideoCompositor({
         lastVideoProgressMs = nowMs;
       }
       if (nowMs - lastVideoProgressMs >= VIDEO_STALL_TIMEOUT_MS) {
-        fail(new Error("视频输入连续 5 秒未更新，摇杆叠层录像中止"));
+        fail(new Error("视频输入连续 5 秒未更新，录像中止"));
         return;
       }
       if (nowMs - lastDrawMs < frameInterval - 0.5) return;

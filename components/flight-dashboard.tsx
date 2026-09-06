@@ -9,6 +9,8 @@ import {
 import { Icon, type IconName } from "@/components/ui/icon";
 import { WorkspaceVideoElement, PilotViewportTelemetry } from "@/components/video-workspace-display";
 import { SessionLibrary } from "@/components/session-library";
+import { DvrRecordingPanel } from "@/components/dvr-recording-panel";
+import { useDvrRecording } from "@/hooks/use-dvr-recording";
 import { ThrottleTimeline } from "@/components/throttle-timeline";
 import { withMeasurementProfiler } from "@/components/measurement-profiler";
 import { SessionReportLoader } from "@/components/session-report-loader";
@@ -429,6 +431,8 @@ const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; d
 ];
 
 export function FlightDashboard() {
+  const dvr = useDvrRecording();
+  const [recordingModeOverride, setRecordingModeOverride] = useState<"video" | "data" | "dvr" | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("live");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [liveGateSummary, setLiveGateSummary] = useState<LiveGateSummaryData | null>(null);
@@ -449,7 +453,10 @@ export function FlightDashboard() {
     getWorkstationShortcutsSnapshot,
     () => false,
   );
-  const { autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
+  const { autoExport, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
+  const recordingMode = recordingModeOverride ?? (loadedPreferences.preferences.videoOnly ? "dvr" : loadedPreferences.preferences.recordPilotVideo ? "video" : "data");
+  const isDvrMode = dvr.isActive || recordingMode === "dvr";
+  const recordPilotVideo = isDvrMode || recordingMode === "video";
   const [preferenceWriteError, setPreferenceWriteError] = useState<string | null>(null);
   const videoWorkspaceSnapshot = useSyncExternalStore(
     subscribeToVideoWorkspace,
@@ -562,7 +569,7 @@ export function FlightDashboard() {
     inputKey: activeChannel?.id ?? "unassigned",
     start: startDashboardRecording,
     stop: finishDashboardRecording,
-    canEnable: () => recordPilotVideo && canStartDashboardRecording && !controlsLocked,
+    canEnable: () => !isDvrMode && !dvr.isBusy() && recordPilotVideo && canStartDashboardRecording && !controlsLocked,
     canObserve: videoState === "live" && localVideoRecording.state !== "error",
   });
   const version = useVersionCheck();
@@ -579,7 +586,7 @@ export function FlightDashboard() {
     companionRecordingStarted,
     stopOnTelemetryLoss: !automatic.state.enabled && !autoCaptureActive,
   });
-  const workstation = useWorkstationRuntime({ keepAwake: automatic.state.enabled || trainingSession.isRecording || localVideoRecording.isActive });
+  const workstation = useWorkstationRuntime({ keepAwake: automatic.state.enabled || trainingSession.isRecording || localVideoRecording.isActive || dvr.isActive });
 
   useEffect(() => {
     const attempt = recordingAttemptRef.current;
@@ -632,9 +639,9 @@ export function FlightDashboard() {
     return () => window.clearTimeout(timer);
   }, [overlayLayoutNotice]);
 
-  const updateTrainingPreferences = useCallback((preferences: TrainingSessionPreferences) => {
+  const updateTrainingPreferences = useCallback((preferences: Partial<TrainingSessionPreferences>) => {
     try {
-      const saveError = saveTrainingSessionPreferences(window.localStorage, preferences);
+      const saveError = saveTrainingSessionPreferences(window.localStorage, { ...loadedPreferences.preferences, recordPilotVideo, videoOnly: isDvrMode, ...preferences });
       setPreferenceWriteError(saveError);
       if (!saveError) window.dispatchEvent(new Event(TRAINING_PREFERENCES_EVENT));
       return saveError === null;
@@ -642,7 +649,7 @@ export function FlightDashboard() {
       setPreferenceWriteError(saveError instanceof Error ? saveError.message : "无法保存本机界面偏好");
       return false;
     }
-  }, []);
+  }, [isDvrMode, loadedPreferences.preferences, recordPilotVideo]);
 
   const updateSingleKeyShortcuts = useCallback((enabled: boolean) => {
     try {
@@ -696,7 +703,8 @@ export function FlightDashboard() {
     recordingCompositorRef.current = null;
   }, [localVideoRecording.state]);
 
-  const controlsLocked = automatic.state.enabled || autoCaptureActive || trainingSession.isRecording || trainingSession.isStarting || trainingSession.isFinishing || trainingSession.hasPendingSave || trainingSession.hasPendingMedia || localVideoRecording.isActive;
+  const recordingResourcesBusy = automatic.state.enabled || autoCaptureActive || trainingSession.isRecording || trainingSession.isStarting || trainingSession.mediaPhase === "finishing" || localVideoRecording.isActive || dvr.isActive;
+  const controlsLocked = recordingResourcesBusy || trainingSession.isFinishing || trainingSession.hasPendingSave || trainingSession.hasPendingMedia;
   if (nameControlsWereLocked !== controlsLocked) {
     setNameControlsWereLocked(controlsLocked);
     if (!controlsLocked) setRecordingPilotName(null);
@@ -759,7 +767,7 @@ export function FlightDashboard() {
             )
               ? "当前浏览器不能合成摇杆录像；可关闭视频录像后只记录打杆数据"
               : null;
-  const startRequirement = tabStartBlockReason
+  const trainingStartRequirement = tabStartBlockReason
     ? tabStartBlockReason
     : !trainingSession.storageReady
       ? "正在准备浏览器本地存储"
@@ -776,7 +784,17 @@ export function FlightDashboard() {
                 : linkState === "unknown"
                   ? "等待飞控确认遥控链路"
                   : localVideoStartBlockReason ?? "已满足开始条件";
-  const canStartDashboardRecording = trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
+  const canStartDashboardRecording = !isDvrMode && !dvr.isActive && trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
+  const dvrDirectoryReady = dvr.hasDirectory || trainingSession.exportDirectoryState === "ready";
+  const dvrDirectoryName = dvr.hasDirectory ? dvr.directoryName : trainingSession.exportDirectoryName;
+  const dvrStartRequirement = tabStartBlockReason
+    ?? (recordingResourcesBusy ? "先结束当前录制或 ARM 监听"
+      : !activeSource || !activeViewport || videoState !== "live" ? "先打开要录制的视频输入"
+        : !localVideoMimeType || typeof HTMLCanvasElement === "undefined" || typeof HTMLCanvasElement.prototype.captureStream !== "function" ? "当前浏览器不支持本地视频录制"
+          : !dvrDirectoryReady ? "选择 DVR 保存目录即可录制，无需飞控或打杆数据"
+            : null);
+  const canStartDvr = dvrStartRequirement === null;
+  const startRequirement = isDvrMode ? dvrStartRequirement ?? "可直接开始 DVR" : trainingStartRequirement;
   const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
     ? `本地保存目录：${trainingSession.exportDirectoryName}`
     : trainingSession.exportDirectoryState === "permission_required"
@@ -816,8 +834,23 @@ export function FlightDashboard() {
   const failLocalVideo = localVideoRecording.fail;
   const reportLocalVideoStartError = localVideoRecording.reportStartError;
 
+  async function startDvrRecording() {
+    if (!isDvrMode || !canStartDvr || dvr.isBusy() || recordingAttemptRef.current?.setupFinished === false) return;
+    const stream = activeSource ? getVideoSourceStream(activeSource.id) : null;
+    if (!stream || !localVideoMimeType) { setWorkstationNotice("视频输入已断开，请重新打开后录制"); return; }
+    setWorkspaceView("live");
+    if (activeChannel) setRecordingPilotName({ pilotChannelId: activeChannel.id, athleteCode });
+    await dvr.start({
+      sourceStream: stream,
+      ...(activeViewportIsCropped && activeViewport ? { crop: activeViewport.crop } : {}),
+      frameRate: Math.max(1, Math.min(60, captureFrameRate ?? 30)),
+      athleteCode, mimeType: localVideoMimeType,
+      createWritable: dvr.hasDirectory ? dvr.createWritable : createExportFileWritable,
+    });
+  }
+
   async function startDashboardRecording(signal?: AbortSignal): Promise<boolean> {
-    if (!canStartDashboardRecording || recordingAttemptRef.current || signal?.aborted) return false;
+    if (isDvrMode || dvr.isBusy() || !canStartDashboardRecording || recordingAttemptRef.current || signal?.aborted) return false;
     let resolveSetup!: () => void;
     const attempt: DashboardRecordingAttempt = {
       beta: Boolean(signal), sessionId: null, setupAbort: new AbortController(),
@@ -1092,6 +1125,12 @@ export function FlightDashboard() {
     if (shortcut === "toggle_fullscreen") {
       void toggleCoachMode();
     } else if (shortcut === "record_hold") {
+      if (isDvrMode) {
+        if (dvr.isBusy()) void dvr.stop();
+        else if (canStartDvr) void startDvrRecording();
+        else setWorkstationNotice(dvrStartRequirement);
+        return;
+      }
       const action = workstationRecordHoldAction({
         isRecording: trainingSession.isRecording,
         isStarting: trainingSession.isStarting,
@@ -1110,7 +1149,7 @@ export function FlightDashboard() {
       }
     } else if (shortcut === "add_marker" && trainingSession.isRecording) {
       void trainingSession.addMarker(selectedMarkerKind);
-    } else if (shortcut === "export_latest" && !trainingSession.isRecording && !trainingSession.hasPendingSave && !trainingSession.isFinishing && trainingSession.lastSession) {
+    } else if (shortcut === "export_latest" && !isDvrMode && !trainingSession.isRecording && !trainingSession.hasPendingSave && !trainingSession.isFinishing && trainingSession.lastSession) {
       if (exportShortcutInFlightRef.current) return;
       exportShortcutInFlightRef.current = true;
       void trainingSession.exportSession(trainingSession.lastSession.id)
@@ -1208,7 +1247,7 @@ export function FlightDashboard() {
     if (!recordingWasActive.current || trainingSession.isRecording || sessionIsFinalizing || !completedSessionId) return;
     const timer = window.setTimeout(() => {
       recordingWasActive.current = false;
-      if (automatic.state.enabled) return;
+      if (automatic.state.enabled || isDvrMode) return;
       setSelectedSessionId(completedSessionId);
       setRevealSessionId(completedSessionId);
       setWorkspaceView("records");
@@ -1217,7 +1256,7 @@ export function FlightDashboard() {
       workspaceHeadingRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [automatic.state.enabled, trainingSession.isRecording, sessionIsFinalizing, completedSessionId]);
+  }, [automatic.state.enabled, isDvrMode, trainingSession.isRecording, sessionIsFinalizing, completedSessionId]);
 
   function openArmAutoRecordSettings() {
     setWorkspaceView("live");
@@ -1275,7 +1314,7 @@ export function FlightDashboard() {
           <span className="session-meta">采集目标 <b>100 Hz</b></span>
           {source === "serial" ? <span className="session-meta">实收 <b>{telemetryControl.rcReceiveHz === null ? "—" : `${telemetryControl.rcReceiveHz} Hz`}</b></span> : null}
           <span className="session-meta">链路 <b>{source === "demo" ? "演示 · 20 Hz" : !bridgeIsLive ? "等待数据" : linkState === "ok" ? "RX 正常" : linkState === "lost" ? "RX 丢失" : "RX 待确认"}</b></span>
-          {trainingSession.isRecording ? <span className="session-meta">记录中 <b>{formatSessionDuration(trainingSession.elapsedMs)}</b></span> : null}
+          {dvr.isActive ? <span className="session-meta">DVR <b>{formatSessionDuration(dvr.elapsedMs)}</b></span> : trainingSession.isRecording ? <span className="session-meta">记录中 <b>{formatSessionDuration(trainingSession.elapsedMs)}</b></span> : null}
         </div>
 
         <div className="top-actions">
@@ -1291,21 +1330,29 @@ export function FlightDashboard() {
             <span>录制内容</span>
             <select
               aria-label="录制内容"
-              value={recordPilotVideo ? "video" : "data"}
-              disabled={controlsLocked}
-              onChange={(event) => updateTrainingPreferences({
-                autoExport,
-                recordPilotVideo: event.target.value === "video",
-                showStickOverlays,
-                stickOverlayMode,
-              })}
+              value={isDvrMode ? "dvr" : recordingMode}
+              disabled={recordingResourcesBusy}
+              onChange={(event) => {
+                const nextMode = event.target.value;
+                if (nextMode !== "video" && nextMode !== "data" && nextMode !== "dvr") return;
+                setRecordingModeOverride(nextMode);
+                updateTrainingPreferences({ recordPilotVideo: nextMode !== "data", videoOnly: nextMode === "dvr" });
+              }}
             >
               <option value="video">视频＋打杆 OSD＋数据</option>
               <option value="data">仅原始打杆数据</option>
+              <option value="dvr">仅视频 DVR（无需飞控）</option>
             </select>
           </label>
-          <button className="button button--quiet" type="button" onClick={openArmAutoRecordSettings}>ARM 自动记录 · Beta</button>
-          <button
+          <button className="button button--quiet" type="button" disabled={isDvrMode} onClick={openArmAutoRecordSettings}>ARM 自动记录 · Beta</button>
+          {isDvrMode ? (
+            <button className={`button button--record ${dvr.isActive ? "button--recording" : ""}`} type="button"
+              aria-pressed={dvr.isActive} disabled={dvr.isStopping || (!dvr.isActive && !canStartDvr)}
+              title={dvr.isActive ? "结束并保存当前 DVR 视频" : dvrStartRequirement ?? "直接录制当前视频，无需飞控"}
+              onClick={() => void (dvr.isBusy() ? dvr.stop() : startDvrRecording())}>
+              {dvr.isStarting ? "取消 DVR 准备" : dvr.isStopping ? "正在保存视频…" : dvr.isRecording ? "■ 结束 DVR" : "● 强制录制 DVR"}
+            </button>
+          ) : <button
             className={`button button--record ${trainingSession.isRecording ? "button--recording" : ""}`}
             type="button"
             aria-pressed={trainingSession.isRecording}
@@ -1314,7 +1361,7 @@ export function FlightDashboard() {
             onClick={() => void (trainingSession.isRecording ? stopDashboardRecording() : startDashboardRecording())}
           >
             {sessionIsFinalizing ? "保存遥控数据…" : trainingSession.hasPendingMedia ? "等待视频完成…" : trainingSession.isStarting || localVideoRecording.state === "starting" ? "准备记录…" : trainingSession.isRecording ? "■ 结束记录" : "● 开始记录"}
-          </button>
+          </button>}
           {source === "serial" ? (
             <button
               className="button button--quiet"
@@ -1351,7 +1398,17 @@ export function FlightDashboard() {
         ) : null}
       </div>
 
-      {!controlsLocked ? (
+      {isDvrMode ? <DvrRecordingPanel
+        dvr={dvr} canStart={canStartDvr} blockReason={dvrStartRequirement ?? "可直接开始 DVR"}
+        videoReady={videoState === "live"} videoConnecting={videoState === "connecting"}
+        canOpenVideo={tabAllowsStart && Boolean(activeSource) && !recordingResourcesBusy}
+        onOpenVideo={() => { if (activeSource) void videoCapture.connectSource(activeSource.id); }}
+        directoryReady={dvrDirectoryReady} directoryName={dvrDirectoryName}
+        onChooseDirectory={() => void dvr.chooseDirectory()}
+        format={localVideoFormatLabel} cropped={activeViewportIsCropped}
+      /> : null}
+
+      {!controlsLocked && !isDvrMode ? (
         <section className="recording-readiness" aria-label="录制准备">
           <div className="recording-readiness__summary">
             <b>{recordPilotVideo ? "视频与打杆，一起留下。" : "本次仅保存原始打杆数据"}</b>
@@ -1405,7 +1462,7 @@ export function FlightDashboard() {
         </aside>
       ) : null}
 
-      {trainingSession.isRecording && workstation.wakeState !== "active" ? (
+      {(trainingSession.isRecording || dvr.isActive) && workstation.wakeState !== "active" ? (
         <aside className="workstation-banner workstation-banner--blocked" role="alert">
           <b>屏幕唤醒</b>
           <span>{workstation.wakeState === "requesting"
@@ -1448,10 +1505,10 @@ export function FlightDashboard() {
         <aside className="update-banner" role="status">
           <div>
             <b>发现新版本 {version.latest?.version}</b>
-            <span>{trainingSession.isRecording ? "本次记录结束后刷新" : "可手动刷新以使用最新版本"}</span>
+            <span>{trainingSession.isRecording || dvr.isActive ? "本次记录结束后刷新" : "可手动刷新以使用最新版本"}</span>
           </div>
-          {!trainingSession.isRecording ? (
-            <button className="mini-button mini-button--active" type="button" onClick={() => window.location.reload()}>
+          {!trainingSession.isRecording && !dvr.isActive ? (
+            <button className="mini-button mini-button--active" type="button" onClick={() => { if (!dvr.isBusy()) window.location.reload(); }}>
               刷新更新
             </button>
           ) : null}
@@ -1470,7 +1527,7 @@ export function FlightDashboard() {
         /> : null}
         <span className={groundRxReady ? "is-ready" : ""}><Icon name={groundRxReady ? "check" : "usb"} size={16} />{groundRxReady ? "遥控输入就绪" : source === "demo" ? "正在预览演示输入" : "等待真实遥控输入"}</span>
         <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : recordPilotVideo ? "视频录制需接入画面" : "视频可选接入"}</span>
-        <small>{trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
+        <small>{dvr.isActive ? `DVR ${formatSessionDuration(dvr.elapsedMs)}` : trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
       </div>
       <div className="workspace-grid">
         <section className="video-console">
@@ -1553,7 +1610,7 @@ export function FlightDashboard() {
                 aria-pressed={showStickOverlays}
                 onClick={() => updateTrainingPreferences({ autoExport, recordPilotVideo, showStickOverlays: !showStickOverlays, stickOverlayMode })}
               >{showStickOverlays ? "叠层开启" : "叠层关闭"}</button>
-              {showStickOverlays || coachMode ? (
+              {!isDvrMode && (showStickOverlays || coachMode) ? (
                 <>
                   <button
                     className={`mini-button ${stickOverlayMode === "trail" ? "mini-button--active" : ""}`}
@@ -1707,7 +1764,7 @@ export function FlightDashboard() {
                       sourceId={sourceConfig.id}
                       pilotChannelId={viewport.pilotChannelId}
                       cropped={isCropped}
-                      keepFramesActive={localVideoRecording.isActive && isActive}
+                      keepFramesActive={(localVideoRecording.isActive || dvr.isActive) && isActive}
                       crop={viewport.crop}
                       registerVideoElement={videoCapture.registerVideoElement}
                       registerOutputCanvas={registerPilotOutputCanvas}
@@ -1764,15 +1821,15 @@ export function FlightDashboard() {
 
                     {isActive ? (
                       <>
-                        <DemoTelemetryWatermark source={source} />
+                        {!isDvrMode ? <DemoTelemetryWatermark source={source} /> : null}
                         <div className={`coach-status coach-status--${connection}`}>
                           <span><i />{statusCopy[connection]} · {source === "demo" ? "DEMO" : "真实 GROUND_RC"}</span>
-                          <b>{trainingSession.isRecording
+                          <b>{dvr.isActive ? `● DVR ${formatSessionDuration(dvr.elapsedMs)}` : trainingSession.isRecording
                             ? `● REC ${formatSessionDuration(trainingSession.elapsedMs)}${localVideoRecording.state === "recording" ? " · VIDEO" : " · RC"}`
                             : "REC 待命"}</b>
                           <strong>THR {Math.round(telemetry.throttleStickPercent)}%</strong>
                         </div>
-                        {showStickOverlays || coachMode ? (
+                        {!isDvrMode && (showStickOverlays || coachMode) ? (
                           <>
                             <DraggableStickOverlay
                               member="left"
@@ -1902,7 +1959,7 @@ export function FlightDashboard() {
         {withMeasurementProfiler("throttle-timeline", <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />)}
       </section>
 
-      {withMeasurementProfiler("recording-ui", <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
+      {!isDvrMode ? withMeasurementProfiler("recording-ui", <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
         <div className="session-heading">
           <div>
             <span>LOCAL SESSION RECORDER</span>
@@ -2072,7 +2129,7 @@ export function FlightDashboard() {
             <button className="button button--export" type="button" onClick={() => void trainingSession.retryPendingSave()}>{trainingSession.pendingTerminationSessionId ? "重试保存终止状态" : "重试保存 Session"}</button>
           ) : null}
         </div>
-      </section>)}
+      </section>) : null}
 
       </div>
 
