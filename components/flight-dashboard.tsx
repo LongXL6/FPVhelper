@@ -100,6 +100,8 @@ import {
   setVideoSourceDevice,
   setVideoSourceLabel,
   setVideoSourceLayout,
+  setVideoSourcePilotCount,
+  videoSourcePilotCount,
   updatePilotChannel,
   LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
   VIDEO_WORKSPACE_STORAGE_KEY,
@@ -483,7 +485,7 @@ export function FlightDashboard() {
   const activeViewport = activeVideoViewport(videoWorkspace);
   const sourceChannels = activeSource
     ? videoWorkspace.pilotChannels
-        .filter((channel) => channel.sourceId === activeSource.id)
+        .filter((channel) => channel.sourceId === activeSource.id && channel.slot < videoSourcePilotCount(activeSource))
         .sort((left, right) => left.slot - right.slot)
     : [];
   const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
@@ -1657,6 +1659,9 @@ export function FlightDashboard() {
               }}
               onSourceLayoutChange={(layout) => {
                 commitVideoWorkspace(setVideoSourceLayout(videoWorkspace, activeSource.id, layout));
+              }}
+              onPilotCountChange={(count) => {
+                commitVideoWorkspace(setVideoSourcePilotCount(videoWorkspace, activeSource.id, count));
               }}
               onChannelChange={(channelId) => {
                 commitVideoWorkspace(selectPilotChannel(videoWorkspace, channelId));

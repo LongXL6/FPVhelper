@@ -19,12 +19,14 @@ import {
   setVideoSourceDevice,
   setVideoSourceLabel,
   setVideoSourceLayout,
+  setVideoSourcePilotCount,
   transformVideoCrop,
   updatePilotChannel,
   LEGACY_VIDEO_WORKSPACE_STORAGE_KEY,
   VIDEO_WORKSPACE_STORAGE_KEY,
   videoCropPixelRect,
   videoViewportsForSource,
+  videoSourcePilotCount,
   videoViewportTransform,
 } from "./video-workspace";
 
@@ -130,6 +132,106 @@ describe("local video workspace", () => {
       leftPercent: -100,
       topPercent: -100,
     });
+  });
+
+  it.each([1, 2, 3])("shows %i shared pilots without stretching their default crops", (count) => {
+    const initial = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    const originalViewports = videoViewportsForSource(initial, initial.sources[0]);
+    const workspace = setVideoSourcePilotCount(initial, "video-source-1", count);
+    expect(videoSourcePilotCount(workspace.sources[0])).toBe(count);
+    expect(videoViewportsForSource(workspace, workspace.sources[0])).toEqual(originalViewports.slice(0, count));
+    expect(workspace.pilotChannels).toBe(initial.pilotChannels);
+  });
+
+  it("falls back when the active pilot is hidden and rejects hidden selections", () => {
+    let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    const [first, second, third, fourth] = workspace.pilotChannels;
+    workspace = selectPilotChannel(workspace, fourth.id);
+    workspace = setVideoSourcePilotCount(workspace, "video-source-1", 3);
+    expect(workspace.activePilotChannelId).toBe(first.id);
+    expect(selectPilotChannel(workspace, fourth.id)).toBe(workspace);
+    workspace = selectPilotChannel(workspace, third.id);
+    expect(setVideoSourcePilotCount(workspace, "video-source-1", 3)).toBe(workspace);
+    workspace = setVideoSourcePilotCount(workspace, "video-source-1", 2);
+    expect(activePilotChannel(workspace)?.id).toBe(first.id);
+    workspace = selectPilotChannel(workspace, second.id);
+    expect(activeVideoViewport(workspace)?.pilotChannelId).toBe(second.id);
+    expect(activePilotChannel({ ...workspace, activePilotChannelId: fourth.id })?.id).toBe(first.id);
+  });
+
+  it("restores hidden pilot identities, names, crop overrides and profile bindings", () => {
+    let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    const hidden = workspace.pilotChannels[3];
+    workspace = updatePilotChannel(workspace, hidden.id, { athleteCode: "HIDDEN-4", gateProfileId: "GATE-4", videoProfileId: "VIDEO-4" });
+    workspace = setPilotChannelCrop(workspace, hidden.id, { xPercent: 10, yPercent: 15, widthPercent: 70, heightPercent: 65 });
+    workspace = setPilotChannelViewMode(workspace, workspace.pilotChannels[2].id, "full");
+    const channels = workspace.pilotChannels;
+    const viewports = videoViewportsForSource(workspace, workspace.sources[0]);
+    workspace = setVideoSourcePilotCount(workspace, "video-source-1", 1);
+    const storage = memoryStorage();
+    saveVideoWorkspace(storage, workspace);
+    workspace = setVideoSourcePilotCount(loadVideoWorkspace(storage).workspace, "video-source-1", 4);
+    expect(workspace.pilotChannels).toEqual(channels);
+    expect(videoViewportsForSource(workspace, workspace.sources[0])).toEqual(viewports);
+    expect(activePilotChannel(selectPilotChannel(workspace, hidden.id))?.athleteCode).toBe("HIDDEN-4");
+  });
+
+  it("keeps full layout at one viewport while remembering the shared pilot count", () => {
+    let workspace = setVideoSourcePilotCount(createDefaultVideoWorkspace(), "video-source-1", 3);
+    expect(videoSourcePilotCount(workspace.sources[0])).toBe(1);
+    expect(videoViewportsForSource(workspace, workspace.sources[0])).toHaveLength(1);
+    expect(selectPilotChannel(workspace, workspace.pilotChannels[1].id)).toBe(workspace);
+    workspace = setVideoSourceLayout(workspace, "video-source-1", "quad");
+    expect(videoViewportsForSource(workspace, workspace.sources[0])).toHaveLength(3);
+    workspace = selectPilotChannel(workspace, workspace.pilotChannels[2].id);
+    workspace = setVideoSourceLayout(workspace, "video-source-1", "full");
+    expect(workspace.activePilotChannelId).toBe(workspace.pilotChannels[0].id);
+    expect(workspace.sources[0].pilotCount).toBe(3);
+  });
+
+  it("changes another source's count without changing the current pilot", () => {
+    let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    workspace = addVideoSource(workspace);
+    const active = workspace.activePilotChannelId;
+    workspace = setVideoSourcePilotCount(workspace, "video-source-1", 2);
+    expect(workspace.activePilotChannelId).toBe(active);
+    expect(workspace.activeSourceId).toBe("video-source-2");
+    expect(videoViewportsForSource(workspace, workspace.sources[0])).toHaveLength(2);
+  });
+
+  it("round-trips the optional count without a schema change and repairs a hidden saved selection", () => {
+    let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    workspace = setVideoSourcePilotCount(workspace, "video-source-1", 2);
+    workspace = selectPilotChannel(workspace, workspace.pilotChannels[1].id);
+    const storage = memoryStorage();
+    expect(saveVideoWorkspace(storage, workspace)).toBeNull();
+    expect(loadVideoWorkspace(storage)).toEqual({ workspace, error: null });
+    expect(JSON.parse(storage.getItem(VIDEO_WORKSPACE_STORAGE_KEY)!)).toMatchObject({ schemaVersion: 2, sources: [{ pilotCount: 2 }] });
+    const hiddenActive = loadVideoWorkspace(memoryStorage(JSON.stringify({ ...workspace, activePilotChannelId: workspace.pilotChannels[3].id })));
+    expect(hiddenActive.error).toBeNull();
+    expect(hiddenActive.workspace.activePilotChannelId).toBe(workspace.pilotChannels[0].id);
+    expect(hiddenActive.workspace.pilotChannels).toHaveLength(4);
+  });
+
+  it.each([1, 2])("defaults legacy schema %i shared sources without pilotCount to four", (schemaVersion) => {
+    const initial = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    const loaded = loadVideoWorkspace(memoryStorage(JSON.stringify({ ...initial, schemaVersion })));
+    expect(loaded.error).toBeNull();
+    expect(loaded.workspace.sources[0].pilotCount).toBeUndefined();
+    expect(videoSourcePilotCount(loaded.workspace.sources[0])).toBe(4);
+    expect(videoViewportsForSource(loaded.workspace, loaded.workspace.sources[0])).toHaveLength(4);
+  });
+
+  it("ignores invalid count commands and rejects malformed persisted counts", () => {
+    const workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    for (const count of [0, -1, 5, 2.5, NaN, Infinity, -Infinity]) {
+      expect(setVideoSourcePilotCount(workspace, "video-source-1", count)).toBe(workspace);
+    }
+    expect(setVideoSourcePilotCount(workspace, "missing-source", 2)).toBe(workspace);
+    for (const count of [0, -1, 5, 2.5, "2", null, true]) {
+      const result = loadVideoWorkspace(memoryStorage(JSON.stringify({ ...workspace, sources: [{ ...workspace.sources[0], pilotCount: count }] })));
+      expect(result.error).toBe("视频工作区格式无效，已恢复默认设置");
+    }
   });
 
   it("lets each pilot choose a full input or an independent crop", () => {

@@ -258,7 +258,7 @@ test("four-up workspace keeps each pilot channel and crop selection local", asyn
   if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "已了解" }).click();
   await openInputSettings(page);
 
-  await page.getByRole("button", { name: "输入布局：四分屏" }).click();
+  await page.getByRole("button", { name: "输入布局：共享画面" }).click();
   const firstPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 1" });
   const secondPilot = page.locator(".video-viewport-tabs").getByRole("button", { name: "位置 2" });
   await expect(secondPilot).toBeVisible();

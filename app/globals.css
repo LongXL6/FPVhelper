@@ -1498,6 +1498,10 @@ input[type="date"], input[type="number"] { color-scheme: light; }
 .pilot-binding-card label > span, .pilot-binding-card__choice > span { color: var(--muted); font: 500 11px/1.5 var(--body); letter-spacing: 0; }
 .pilot-binding-card input, .pilot-binding-card select { height: 41px; padding-inline: 11px; border-color: #dce1e4; border-radius: 6px; background: white; color: var(--ink); font: 400 12px/1.4 var(--body); }
 .pilot-binding-card__choice { gap: 8px; }
+.pilot-count-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pilot-count-picker > span { margin-right: 4px; color: var(--muted); font: 500 11px/1.5 var(--body); }
+.pilot-count-picker > button { min-width: 44px; min-height: 36px; }
+.pilot-count-picker > small { flex-basis: 100%; color: var(--muted); font: 400 11px/1.6 var(--body); }
 .pilot-binding-card__choice > button { min-height: 65px; padding: 10px; gap: 5px; border-color: var(--line); border-radius: 7px; background: white; }
 .pilot-binding-card__choice > button b { color: var(--ink); font: 500 12px/1.4 var(--body); }
 .pilot-binding-card__choice > button small { color: var(--muted); font: 400 10px/1.5 var(--body); }
