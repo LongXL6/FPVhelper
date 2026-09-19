@@ -1,4 +1,5 @@
 import { test as base, type Page } from "@playwright/test";
+import { createDefaultVideoWorkspace } from "../../lib/video-workspace";
 import type { TrainingSession, TrainingSessionDraft, TrainingSessionSample } from "../../lib/training-session";
 
 export async function readStoredTrainingRecords(page: Page) {
@@ -103,10 +104,14 @@ declare global {
   }
 }
 
-export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: boolean }>({
+export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: boolean; seedPilotWorkspace: boolean }>({
   seedDataOnlyPreference: [true, { option: true }],
-  fakeHardware: [async ({ context, seedDataOnlyPreference }, use) => {
-    await context.addInitScript(({ seedDataOnlyPreference }) => {
+  seedPilotWorkspace: [true, { option: true }],
+  fakeHardware: [async ({ context, seedDataOnlyPreference, seedPilotWorkspace }, use) => {
+    // Hardware regressions start with an existing configured workspace. Pilot setup tests opt out.
+    const configuredWorkspace = createDefaultVideoWorkspace();
+    delete configuredWorkspace.addedPilotChannelIds;
+    await context.addInitScript(({ seedDataOnlyPreference, seedPilotWorkspace, configuredWorkspace }) => {
       const metrics: FakeSerialMetrics = {
         requestPortCalls: 0,
         openCalls: 0,
@@ -158,6 +163,9 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
         `fpvh_ingest_${"a".repeat(43)}`,
       );
       window.localStorage.setItem("fpvhelper.onboarding.v1", "acknowledged");
+      if (seedPilotWorkspace && !window.localStorage.getItem("fpvhelper.video-workspace.v2")) {
+        window.localStorage.setItem("fpvhelper.video-workspace.v2", JSON.stringify(configuredWorkspace));
+      }
       if (seedDataOnlyPreference && !window.localStorage.getItem("fpvhelper.training-preferences.v1")) window.localStorage.setItem("fpvhelper.training-preferences.v1", JSON.stringify({
         autoExport: false,
         recordPilotVideo: false,
@@ -449,7 +457,7 @@ export const test = base.extend<{ fakeHardware: void; seedDataOnlyPreference: bo
         configurable: true,
         value: serial,
       });
-    }, { seedDataOnlyPreference });
+    }, { seedDataOnlyPreference, seedPilotWorkspace, configuredWorkspace });
     await use();
   }, { auto: true }],
 });

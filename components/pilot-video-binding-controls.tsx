@@ -298,7 +298,7 @@ export function PilotVideoBindingControls({
             ><b>共享画面</b><small>四合一或同路多选手</small></button>
           </div>
 
-          {source.layout === "quad" ? (
+          {sourceChannels.length > 1 ? (
             <div className="video-viewport-tabs" aria-label="共享输入的选手位置">
               {sourceChannels.map((sourceChannel) => (
                 <button
