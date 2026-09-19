@@ -35,3 +35,28 @@ it("keeps the draft open and reports a persistence failure instead of claiming s
   expect(root.findByProps({ placeholder: "姓名或飞手代号" }).props.value).toBe("Alpha");
   expect(onClose).not.toHaveBeenCalled();
 });
+
+it("offers a new input when legacy hidden positions are configured or connected", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const workspace = createDefaultVideoWorkspace();
+  delete workspace.addedPilotChannelIds;
+  workspace.pilotChannels[1].gateProfileId = "preserve-gate";
+  workspace.pilotChannels[2].athleteCodeMode = "manual";
+  act(() => { renderer = create(<AddPilotDialog workspace={workspace} occupiedPilotIds={[workspace.pilotChannels[3].id]} disabled={false} onAdd={() => true} onClose={vi.fn()} />); });
+  expect(renderer!.root.findByType("select").props.value).toBe("new");
+  expect(renderer!.root.findByProps({ value: workspace.activeSourceId }).props.disabled).toBe(true);
+});
+
+it("restores a preserved pilot without submitting a new name or binding", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const workspace = createDefaultVideoWorkspace();
+  workspace.pilotChannels[1].athleteCode = "Hidden";
+  workspace.pilotChannels[1].athleteCodeMode = "manual";
+  const onAdd = vi.fn(), onRestore = vi.fn(() => true), onClose = vi.fn();
+  act(() => { renderer = create(<AddPilotDialog workspace={workspace} disabled={false} onAdd={onAdd} onRestore={onRestore} onClose={onClose} />); });
+  const button = renderer!.root.findAllByType("button").find((node) => node.children.join("") === "恢复 Hidden")!;
+  act(() => button.props.onClick());
+  expect(onRestore).toHaveBeenCalledExactlyOnceWith(workspace.pilotChannels[1].id);
+  expect(onAdd).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalledOnce();
+});

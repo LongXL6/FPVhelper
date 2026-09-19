@@ -26,7 +26,9 @@ async function attach(info:TestInfo,name:string,value:unknown){const path=info.o
 async function prepare(page:Page,mode:string,extra=""){
  await page.addInitScript(installPhase2AMediaGate);
  await page.addInitScript(()=>Object.defineProperty(window,"showDirectoryPicker",{configurable:true,value:async()=> (await navigator.storage.getDirectory()).getDirectoryHandle("phase2a-e2e",{create:true})}));
- const origin="http://127.0.0.1:3137";const violations:string[]=[];networkViolations.set(page,violations);
+ const baseURL=test.info().project.use.baseURL;
+ if(!baseURL)throw new Error("RC finalization tests require an explicit Playwright baseURL");
+ const origin=new URL(baseURL).origin;const violations:string[]=[];networkViolations.set(page,violations);
  await page.route("**/*",route=>{const req=route.request(),url=new URL(req.url());if(["http:","https:"].includes(url.protocol)&&(url.origin!==origin||!["GET","HEAD"].includes(req.method()))){violations.push(req.method()+" "+url.origin+url.pathname);return route.abort();}return route.continue();});
  await page.goto(`/?analytics=off&mediaGate=${mode}${extra}`);
  const setup=page.getByRole("region",{name:"录制准备",exact:true});

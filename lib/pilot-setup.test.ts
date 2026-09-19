@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeVideoViewport, addPilotToWorkspace, addedPilotIds, addVideoSource, createDefaultVideoWorkspace,
-  loadVideoWorkspace, removeVideoSource, saveVideoWorkspace, selectPilotChannel, selectVideoSource,
+  activeVideoViewport, addPilotToWorkspace, addedPilotIds, addVideoSource, availablePilotChannels, createDefaultVideoWorkspace,
+  loadVideoWorkspace, removeVideoSource, restorePilotToWorkspace, saveVideoWorkspace, selectPilotChannel, selectVideoSource,
   setVideoSourceLayout, videoViewportsForSource, type VideoWorkspaceConfig,
 } from "./video-workspace";
 
@@ -79,5 +79,55 @@ describe("pilot-first setup", () => {
     const added = roundTrip(addPilotToWorkspace(loaded, { athleteCode: "New", sourceId: "new", picture: "full" }));
     expect(visible(added).slice(0, 4)).toEqual(visible(loaded));
     expect(added.pilotChannels[2]).toEqual(loaded.pilotChannels[2]);
+  });
+
+  it("preserves configured hidden pilots across legacy migration, repeated adds and reload", () => {
+    const legacy = createDefaultVideoWorkspace();
+    delete legacy.addedPilotChannelIds;
+    Object.assign(legacy.pilotChannels[1], {
+      athleteCode: "Hidden", athleteCodeMode: "manual", gateProfileId: "old-gate", videoProfileId: "old-camera",
+      viewMode: "crop", crop: { xPercent: 15, yPercent: 25, widthPercent: 40, heightPercent: 35 },
+    });
+    const original = roundTrip(legacy).pilotChannels[1];
+    let workspace = addPilotToWorkspace(roundTrip(legacy), { athleteCode: "New", sourceId: legacy.activeSourceId, picture: "full" });
+    expect(workspace.activePilotChannelId).toBe(legacy.pilotChannels[2].id);
+    expect(workspace.pilotChannels[2]).toMatchObject({ gateProfileId: null, videoProfileId: null });
+    workspace = roundTrip(addPilotToWorkspace(roundTrip(workspace), { athleteCode: "Next", sourceId: legacy.activeSourceId, picture: "top-left" }));
+    expect(workspace.pilotChannels[1]).toEqual(original);
+    expect(visible(workspace)).toHaveLength(3);
+    expect(availablePilotChannels(workspace, legacy.activeSourceId)).toEqual([]);
+    expect(addPilotToWorkspace(workspace, { athleteCode: "Overflow", sourceId: legacy.activeSourceId, picture: "full" })).toBe(workspace);
+    const restored = roundTrip(restorePilotToWorkspace(workspace, original.id));
+    expect(visible(restored)).toHaveLength(4);
+    expect(restored.pilotChannels[1]).toEqual(original);
+    expect(activeVideoViewport(restored)?.pilotChannelId).toBe(original.id);
+    expect(activeVideoViewport(restored)?.crop).toEqual(original.crop);
+    expect(restorePilotToWorkspace(restored, original.id)).toBe(restored);
+  });
+
+  it("does not reuse a hidden connected channel even when automatic names are absent from storage", () => {
+    const legacy = createDefaultVideoWorkspace();
+    delete legacy.addedPilotChannelIds;
+    const occupied = [legacy.pilotChannels[1].id];
+    expect(availablePilotChannels(legacy, legacy.activeSourceId, occupied).map((channel) => channel.slot)).toEqual([2, 3]);
+    const workspace = addPilotToWorkspace(legacy, { athleteCode: "New", sourceId: legacy.activeSourceId, picture: "full" }, occupied);
+    expect(workspace.activePilotChannelId).toBe(legacy.pilotChannels[2].id);
+    expect(workspace.pilotChannels[1]).toEqual(legacy.pilotChannels[1]);
+    const restored = restorePilotToWorkspace(workspace, occupied[0], occupied);
+    expect(restored.activePilotChannelId).toBe(occupied[0]);
+    expect(restored.pilotChannels[1]).toEqual(legacy.pilotChannels[1]);
+  });
+
+  it.each([
+    { athleteCodeMode: "manual" as const },
+    { gateProfileId: "gate" },
+    { videoProfileId: "camera" },
+    { viewMode: "full" as const },
+    { crop: { xPercent: 12, yPercent: 10, widthPercent: 40, heightPercent: 45 } },
+  ])("reserves hidden settings even without a saved name: %j", (settings) => {
+    const legacy = createDefaultVideoWorkspace();
+    delete legacy.addedPilotChannelIds;
+    Object.assign(legacy.pilotChannels[1], settings);
+    expect(availablePilotChannels(roundTrip(legacy), legacy.activeSourceId).map((channel) => channel.slot)).toEqual([2, 3]);
   });
 });

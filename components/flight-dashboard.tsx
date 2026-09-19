@@ -91,6 +91,7 @@ import {
   addVideoSource,
   addPilotToWorkspace,
   addedPilotIds,
+  restorePilotToWorkspace,
   createDefaultVideoWorkspace,
   loadVideoWorkspace,
   removeVideoSource,
@@ -487,6 +488,10 @@ export function FlightDashboard() {
   const activeSource = activeVideoSource(videoWorkspace);
   const candidateChannel = activePilotChannel(videoWorkspace);
   const configuredPilotIds = addedPilotIds(videoWorkspace);
+  const occupiedPilotIds = () => videoWorkspace.pilotChannels.filter((channel) => {
+    const controller = telemetryWorkspaceStore.getSnapshot(channel.id);
+    return controller.source === "serial" || controller.connection === "connecting";
+  }).map((channel) => channel.id);
   const hasPilots = configuredPilotIds.length > 0;
   const activeChannel = candidateChannel && configuredPilotIds.includes(candidateChannel.id) ? candidateChannel : undefined;
   const activeViewport = activeVideoViewport(videoWorkspace);
@@ -1478,11 +1483,20 @@ export function FlightDashboard() {
         <button className="button button--primary" type="button" disabled={controlsLocked || !tabAllowsStart} onClick={() => setAddingPilot(true)}>＋ 添加飞手</button>
         <small>可以逐个添加，稍后继续连接视频与遥控。</small>
       </section>}
-      {addingPilot && <AddPilotDialog workspace={videoWorkspace} disabled={controlsLocked || !tabAllowsStart} onClose={() => setAddingPilot(false)} onAdd={(input) => {
+      {addingPilot && <AddPilotDialog workspace={videoWorkspace} occupiedPilotIds={occupiedPilotIds()} disabled={controlsLocked || !tabAllowsStart} onClose={() => setAddingPilot(false)} onRestore={(channelId) => {
         if (controlsLocked || !tabAllowsStart) return false;
         try {
           const current = loadVideoWorkspace(window.localStorage).workspace;
-          const next = addPilotToWorkspace(current, input);
+          const next = restorePilotToWorkspace(current, channelId, occupiedPilotIds());
+          return next !== current && commitVideoWorkspace(next);
+        } catch {
+          return false;
+        }
+      }} onAdd={(input) => {
+        if (controlsLocked || !tabAllowsStart) return false;
+        try {
+          const current = loadVideoWorkspace(window.localStorage).workspace;
+          const next = addPilotToWorkspace(current, input, occupiedPilotIds());
           return next !== current && commitVideoWorkspace(next);
         } catch {
           return false;
