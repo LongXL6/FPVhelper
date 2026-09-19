@@ -101,23 +101,20 @@ describe("local video workspace", () => {
     expect(loaded.workspace.pilotChannels[1]).toMatchObject({ athleteCodeMode: "auto", viewMode: "full" });
   });
 
-  it("starts with one full-frame source and one active pilot channel", () => {
+  it("prepares an input but shows no pilot window until one is added", () => {
     const workspace = createDefaultVideoWorkspace();
     expect(workspace.sources).toEqual([
       { id: "video-source-1", label: "视频输入 1", deviceId: "", layout: "full" },
     ]);
     expect(workspace.pilotChannels).toHaveLength(4);
     expect(activePilotChannel(workspace)?.slot).toBe(0);
-    expect(activeVideoViewport(workspace)?.crop).toEqual({
-      xPercent: 0,
-      yPercent: 0,
-      widthPercent: 100,
-      heightPercent: 100,
-    });
+    expect(workspace.addedPilotChannelIds).toEqual([]);
+    expect(activeVideoViewport(workspace)).toBeNull();
   });
 
-  it("builds four deterministic viewports for a four-up source", () => {
+  it("preserves four deterministic viewports for a legacy four-up source", () => {
     const workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    delete workspace.addedPilotChannelIds;
     expect(videoViewportsForSource(workspace, workspace.sources[0]).map((viewport) => viewport.crop)).toEqual([
       { xPercent: 0, yPercent: 0, widthPercent: 50, heightPercent: 50 },
       { xPercent: 50, yPercent: 0, widthPercent: 50, heightPercent: 50 },
@@ -134,6 +131,7 @@ describe("local video workspace", () => {
 
   it("lets each pilot choose a full input or an independent crop", () => {
     let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    delete workspace.addedPilotChannelIds;
     const source = workspace.sources[0];
     const secondPilot = workspace.pilotChannels[1];
 
@@ -201,6 +199,7 @@ describe("local video workspace", () => {
 
   it("preserves pilot metadata when switching between full and four-up layouts", () => {
     let workspace = setVideoSourceLayout(createDefaultVideoWorkspace(), "video-source-1", "quad");
+    delete workspace.addedPilotChannelIds;
     const secondPilot = workspace.pilotChannels.find((channel) => channel.slot === 1)!;
     workspace = updatePilotChannel(workspace, secondPilot.id, {
       athleteCode: "PILOT-02",

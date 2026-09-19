@@ -51,7 +51,7 @@ function ChecklistItem({
   );
 }
 
-export function OnboardingChecklist() {
+export function OnboardingChecklist({ autoOpen = true }: { autoOpen?: boolean }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [environment, setEnvironment] = useState<OnboardingEnvironment | null>(null);
   const [open, setOpen] = useState(false);
@@ -60,10 +60,10 @@ export function OnboardingChecklist() {
   useEffect(() => {
     const inspection = window.setTimeout(() => {
       setEnvironment(inspectBrowserEnvironment());
-      setOpen(shouldAutoOpenOnboarding(loadOnboardingDecision(browserStorage())));
+      setOpen(autoOpen && shouldAutoOpenOnboarding(loadOnboardingDecision(browserStorage())));
     }, 0);
     return () => window.clearTimeout(inspection);
-  }, []);
+  }, [autoOpen]);
 
   useEffect(() => {
     const dialog = dialogRef.current;

@@ -49,6 +49,8 @@ export interface VideoWorkspaceConfig {
   pilotChannels: PilotChannelConfig[];
   activeSourceId: string;
   activePilotChannelId: string;
+  // Missing in older saved workspaces, whose visible channels stay unchanged.
+  addedPilotChannelIds?: string[];
 }
 
 interface VideoWorkspaceStorage {
@@ -143,6 +145,7 @@ export function createDefaultVideoWorkspace(): VideoWorkspaceConfig {
     pilotChannels,
     activeSourceId: source,
     activePilotChannelId: pilotChannels[0].id,
+    addedPilotChannelIds: [],
   };
 }
 
@@ -163,7 +166,9 @@ export function videoViewportsForSource(
   const sourceChannels = workspace.pilotChannels
     .filter((channel) => channel.sourceId === source.id)
     .sort((left, right) => left.slot - right.slot);
-  const channels = source.layout === "quad" ? sourceChannels : sourceChannels.slice(0, 1);
+  const channels = workspace.addedPilotChannelIds
+    ? sourceChannels.filter((channel) => workspace.addedPilotChannelIds!.includes(channel.id))
+    : source.layout === "quad" ? sourceChannels : sourceChannels.slice(0, 1);
 
   return channels.map((channel, index) => ({
     id: `${source.id}-viewport-${channel.slot + 1}`,
@@ -187,8 +192,8 @@ export function selectVideoSource(workspace: VideoWorkspaceConfig, selectedSourc
   if (selectedSourceId === workspace.activeSourceId) return workspace;
   if (!workspace.sources.some((source) => source.id === selectedSourceId)) return workspace;
   const firstChannel = workspace.pilotChannels.find(
-    (channel) => channel.sourceId === selectedSourceId && channel.slot === 0,
-  );
+    (channel) => channel.sourceId === selectedSourceId && workspace.addedPilotChannelIds?.includes(channel.id),
+  ) ?? workspace.pilotChannels.find((channel) => channel.sourceId === selectedSourceId && channel.slot === 0);
   if (!firstChannel) return workspace;
   return { ...workspace, activeSourceId: selectedSourceId, activePilotChannelId: firstChannel.id };
 }
@@ -197,7 +202,9 @@ export function selectPilotChannel(workspace: VideoWorkspaceConfig, selectedChan
   const source = activeVideoSource(workspace);
   const channel = workspace.pilotChannels.find((candidate) => candidate.id === selectedChannelId);
   if (!source || !channel || channel.sourceId !== source.id) return workspace;
-  if (source.layout === "full" && channel.slot !== 0) return workspace;
+  if (workspace.addedPilotChannelIds) {
+    if (!workspace.addedPilotChannelIds.includes(channel.id)) return workspace;
+  } else if (source.layout === "full" && channel.slot !== 0) return workspace;
   return { ...workspace, activePilotChannelId: channel.id };
 }
 
@@ -210,7 +217,7 @@ export function setVideoSourceLayout(
   const sources = workspace.sources.map((source) => source.id === selectedSourceId ? { ...source, layout } : source);
   if (sources.every((source, index) => source === workspace.sources[index])) return workspace;
   const activeChannel = activePilotChannel(workspace);
-  const shouldSelectFirst = workspace.activeSourceId === selectedSourceId && layout === "full" && activeChannel?.slot !== 0;
+  const shouldSelectFirst = !workspace.addedPilotChannelIds && workspace.activeSourceId === selectedSourceId && layout === "full" && activeChannel?.slot !== 0;
   const firstChannel = workspace.pilotChannels.find(
     (channel) => channel.sourceId === selectedSourceId && channel.slot === 0,
   );
@@ -360,19 +367,81 @@ export function addVideoSource(workspace: VideoWorkspaceConfig) {
   };
 }
 
+export type PilotPicture = "full" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export interface AddPilotInput {
+  athleteCode: string;
+  sourceId: string;
+  picture: PilotPicture;
+}
+
+export function addedPilotIds(workspace: VideoWorkspaceConfig): string[] {
+  return workspace.addedPilotChannelIds ?? workspace.sources.flatMap((source) => (
+    videoViewportsForSource(workspace, source).map((viewport) => viewport.pilotChannelId)
+  ));
+}
+
+export function availablePilotChannels(workspace: VideoWorkspaceConfig, selectedSourceId: string, occupiedPilotIds: readonly string[] = []) {
+  const source = workspace.sources.find((candidate) => candidate.id === selectedSourceId);
+  if (!source) return [];
+  const unavailable = new Set([...addedPilotIds(workspace), ...occupiedPilotIds]);
+  return workspace.pilotChannels.filter((channel) => {
+    if (channel.sourceId !== source.id || unavailable.has(channel.id)) return false;
+    // Legacy layouts can hide configured pilots. Their identity and profiles are not empty slots.
+    if (channel.athleteCodeMode === "manual" || channel.athleteCode.trim() || channel.gateProfileId || channel.videoProfileId || channel.viewMode !== "source-default") return false;
+    const crop = defaultCropForSlot(source.layout, channel.slot);
+    return (Object.keys(crop) as (keyof VideoCropRect)[]).every((key) => channel.crop[key] === crop[key]);
+  });
+}
+
+export function restorablePilotChannels(workspace: VideoWorkspaceConfig, occupiedPilotIds: readonly string[] = []) {
+  const visible = new Set(addedPilotIds(workspace));
+  const unused = new Set(workspace.sources.flatMap((source) => availablePilotChannels(workspace, source.id, occupiedPilotIds).map((channel) => channel.id)));
+  return workspace.pilotChannels.filter((channel) => !visible.has(channel.id) && !unused.has(channel.id));
+}
+
+export function restorePilotToWorkspace(workspace: VideoWorkspaceConfig, selectedChannelId: string, occupiedPilotIds: readonly string[] = []): VideoWorkspaceConfig {
+  const channel = restorablePilotChannels(workspace, occupiedPilotIds).find((candidate) => candidate.id === selectedChannelId);
+  if (!channel) return workspace;
+  return { ...workspace, addedPilotChannelIds: [...addedPilotIds(workspace), channel.id], activeSourceId: channel.sourceId, activePilotChannelId: channel.id };
+}
+
+export function addPilotToWorkspace(workspace: VideoWorkspaceConfig, input: AddPilotInput, occupiedPilotIds: readonly string[] = []): VideoWorkspaceConfig {
+  const athleteCode = input.athleteCode.trim().slice(0, 40);
+  const pictures: PilotPicture[] = ["full", "top-left", "top-right", "bottom-left", "bottom-right"];
+  if (!athleteCode || !pictures.includes(input.picture)) return workspace;
+  // Capture the old visible set before creating an input, so it cannot add a phantom pilot.
+  const added = addedPilotIds(workspace);
+  const next = input.sourceId === "new" ? addVideoSource(workspace) : workspace;
+  const targetSourceId = input.sourceId === "new" ? next.activeSourceId : input.sourceId;
+  const channel = availablePilotChannels({ ...next, addedPilotChannelIds: added }, targetSourceId, occupiedPilotIds)[0];
+  if (!channel) return workspace;
+  const crop = input.picture === "full" ? FULL_CROP : QUAD_CROPS[pictures.indexOf(input.picture) - 1];
+  return {
+    ...next,
+    addedPilotChannelIds: [...added, channel.id],
+    activeSourceId: targetSourceId,
+    activePilotChannelId: channel.id,
+    pilotChannels: next.pilotChannels.map((candidate) => candidate.id === channel.id ? {
+      ...candidate, athleteCode, athleteCodeMode: "manual", viewMode: input.picture === "full" ? "full" : "crop", crop: { ...crop },
+    } : candidate),
+  };
+}
+
 export function removeVideoSource(workspace: VideoWorkspaceConfig, selectedSourceId: string) {
   if (workspace.sources.length <= 1 || !workspace.sources.some((source) => source.id === selectedSourceId)) {
     return workspace;
   }
   const sources = workspace.sources.filter((source) => source.id !== selectedSourceId);
   const pilotChannels = workspace.pilotChannels.filter((channel) => channel.sourceId !== selectedSourceId);
-  if (workspace.activeSourceId !== selectedSourceId) return { ...workspace, sources, pilotChannels };
+  const addedPilotChannelIds = workspace.addedPilotChannelIds?.filter((id) => pilotChannels.some((channel) => channel.id === id));
+  if (workspace.activeSourceId !== selectedSourceId) return { ...workspace, sources, pilotChannels, addedPilotChannelIds };
   const nextSource = sources[0];
   const nextChannel = pilotChannels.find((channel) => channel.sourceId === nextSource.id && channel.slot === 0);
   return {
     ...workspace,
     sources,
     pilotChannels,
+    addedPilotChannelIds,
     activeSourceId: nextSource.id,
     activePilotChannelId: nextChannel?.id ?? pilotChannels[0].id,
   };
@@ -517,7 +586,10 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
     ? value.activeSourceId
     : sources[0].id;
   const activeSource = sources.find((source) => source.id === activeSourceId) ?? sources[0];
-  const allowedSlots = activeSource.layout === "quad" ? [0, 1, 2, 3] : [0];
+  const addedPilotChannelIds = Array.isArray(value.addedPilotChannelIds)
+    ? [...new Set(value.addedPilotChannelIds.filter((id): id is string => typeof id === "string" && pilotChannels.some((channel) => channel.id === id)))]
+    : undefined;
+  const allowedSlots = addedPilotChannelIds || activeSource.layout === "quad" ? [0, 1, 2, 3] : [0];
   const requestedChannel = typeof value.activePilotChannelId === "string"
     ? pilotChannels.find((channel) => channel.id === value.activePilotChannelId)
     : null;
@@ -533,6 +605,7 @@ function parseWorkspace(value: unknown): VideoWorkspaceConfig | null {
     pilotChannels,
     activeSourceId,
     activePilotChannelId,
+    ...(addedPilotChannelIds ? { addedPilotChannelIds } : {}),
   };
 }
 

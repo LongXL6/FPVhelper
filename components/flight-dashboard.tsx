@@ -1,5 +1,8 @@
 "use client";
 
+import { AddPilotDialog } from "@/components/add-pilot-dialog";
+import pilotSetupStyles from "@/components/pilot-setup.module.css";
+
 import { sessionMediaStatusText } from "@/lib/training-session-metadata";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -86,6 +89,9 @@ import {
   activeVideoSource,
   activeVideoViewport,
   addVideoSource,
+  addPilotToWorkspace,
+  addedPilotIds,
+  restorePilotToWorkspace,
   createDefaultVideoWorkspace,
   loadVideoWorkspace,
   removeVideoSource,
@@ -461,6 +467,7 @@ export function FlightDashboard() {
   const [recordingPilotName, setRecordingPilotName] = useState<FrozenPilotName | null>(null);
   const [nameControlsWereLocked, setNameControlsWereLocked] = useState(false);
   const [videoWorkspaceWriteError, setVideoWorkspaceWriteError] = useState<string | null>(null);
+  const [addingPilot, setAddingPilot] = useState(false);
   const [coachMode, setCoachMode] = useState(false);
   const [selectedMarkerKind, setSelectedMarkerKind] = useState<Exclude<TrainingSessionMarkerKind, "manual">>("clean");
   const [analyticsTokenDraft, setAnalyticsTokenDraft] = useState("");
@@ -479,11 +486,18 @@ export function FlightDashboard() {
   const pilotOutputCanvasesRef = useRef(new Map<string, HTMLCanvasElement>());
   const diagnosticTransitionsRef = useRef<LocalDiagnosticTransition[]>([]);
   const activeSource = activeVideoSource(videoWorkspace);
-  const activeChannel = activePilotChannel(videoWorkspace);
+  const candidateChannel = activePilotChannel(videoWorkspace);
+  const configuredPilotIds = addedPilotIds(videoWorkspace);
+  const occupiedPilotIds = () => videoWorkspace.pilotChannels.filter((channel) => {
+    const controller = telemetryWorkspaceStore.getSnapshot(channel.id);
+    return controller.source === "serial" || controller.connection === "connecting";
+  }).map((channel) => channel.id);
+  const hasPilots = configuredPilotIds.length > 0;
+  const activeChannel = candidateChannel && configuredPilotIds.includes(candidateChannel.id) ? candidateChannel : undefined;
   const activeViewport = activeVideoViewport(videoWorkspace);
   const sourceChannels = activeSource
     ? videoWorkspace.pilotChannels
-        .filter((channel) => channel.sourceId === activeSource.id)
+        .filter((channel) => channel.sourceId === activeSource.id && configuredPilotIds.includes(channel.id))
         .sort((left, right) => left.slot - right.slot)
     : [];
   const videoCapture = useVideoWorkspaceCapture(videoWorkspace.sources);
@@ -592,8 +606,10 @@ export function FlightDashboard() {
       const saveError = saveVideoWorkspace(window.localStorage, nextWorkspace);
       setVideoWorkspaceWriteError(saveError);
       if (!saveError) window.dispatchEvent(new Event(VIDEO_WORKSPACE_EVENT));
+      return !saveError;
     } catch (storageError) {
       setVideoWorkspaceWriteError(storageError instanceof Error ? storageError.message : "无法保存视频工作区设置");
+      return false;
     }
   }, []);
 
@@ -774,7 +790,7 @@ export function FlightDashboard() {
                 : linkState === "unknown"
                   ? "等待飞控确认遥控链路"
                   : localVideoStartBlockReason ?? "已满足开始条件";
-  const canStartDashboardRecording = trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
+  const canStartDashboardRecording = !!activeChannel && trainingSession.canStart && tabAllowsStart && localVideoStartBlockReason === null;
   const exportDirectoryCopy = trainingSession.exportDirectoryState === "ready"
     ? `本地保存目录：${trainingSession.exportDirectoryName}`
     : trainingSession.exportDirectoryState === "permission_required"
@@ -1260,14 +1276,14 @@ export function FlightDashboard() {
       <main id="workspace-main" className={`workspace-main dashboard-shell ${coachMode ? "dashboard-shell--coach" : ""}`}>
       <div className="workspace-page-heading">
         <div><p>{currentPage.description}</p><h1 ref={workspaceHeadingRef} tabIndex={-1}>{currentPage.label}<span className="heading-dot">.</span></h1></div>
-        <span className={`status-chip status-chip--${connection}`}><i />{statusCopy[connection]}</span>
+        <span className={`status-chip status-chip--${connection}`}><i />{hasPilots ? statusCopy[connection] : "待添加飞手"}</span>
       </div>
       <PilotTelemetryWorkspaceHost
         pilotChannelIds={pilotChannelIds}
         activePilotChannelId={activeChannel?.id}
         store={telemetryWorkspaceStore}
       />
-      <header className="topbar">
+      <header className="topbar" hidden={!hasPilots}>
         <div className="session-strip">
           <span className="session-meta">当前选手 <b>{athleteCode.trim() || "待填写"}</b></span>
           <span className="session-meta">采集目标 <b>100 Hz</b></span>
@@ -1277,7 +1293,7 @@ export function FlightDashboard() {
         </div>
 
         <div className="top-actions">
-          <OnboardingChecklist />
+          <OnboardingChecklist autoOpen={videoWorkspace.addedPilotChannelIds === undefined} />
           <button
             className={`button button--quiet button--coach ${coachMode ? "button--coach-active" : ""}`}
             type="button"
@@ -1349,7 +1365,7 @@ export function FlightDashboard() {
         ) : null}
       </div>
 
-      {!controlsLocked ? (
+      {hasPilots && !controlsLocked ? (
         <section className="recording-readiness" aria-label="录制准备">
           <div className="recording-readiness__summary">
             <b>{recordPilotVideo ? "视频与打杆，一起留下。" : "本次仅保存原始打杆数据"}</b>
@@ -1457,6 +1473,36 @@ export function FlightDashboard() {
       ) : null}
 
       <div className="workspace-view workspace-view--live" hidden={workspaceView !== "live"}>
+      {hasPilots ? <div className={pilotSetupStyles.bar}>
+        <div><b>{configuredPilotIds.length} 位飞手</b><span>每位飞手对应一个画面，点击画面切换当前飞手。</span></div>
+        <button className="button button--primary" type="button" disabled={controlsLocked || !tabAllowsStart} onClick={() => setAddingPilot(true)}>＋ 添加飞手</button>
+      </div> : <section className={pilotSetupStyles.empty} aria-label="添加第一位飞手">
+        <div className={pilotSetupStyles.emptyFrame} aria-hidden="true">＋</div>
+        <h2>先添加一位飞手</h2>
+        <p>为飞手选择对应的视频输入或画面区域。<br />添加几位飞手，就显示几个画面。</p>
+        <button className="button button--primary" type="button" disabled={controlsLocked || !tabAllowsStart} onClick={() => setAddingPilot(true)}>＋ 添加飞手</button>
+        <small>可以逐个添加，稍后继续连接视频与遥控。</small>
+      </section>}
+      {addingPilot && <AddPilotDialog workspace={videoWorkspace} occupiedPilotIds={occupiedPilotIds()} disabled={controlsLocked || !tabAllowsStart} onClose={() => setAddingPilot(false)} onRestore={(channelId) => {
+        if (controlsLocked || !tabAllowsStart) return false;
+        try {
+          const current = loadVideoWorkspace(window.localStorage).workspace;
+          const next = restorePilotToWorkspace(current, channelId, occupiedPilotIds());
+          return next !== current && commitVideoWorkspace(next);
+        } catch {
+          return false;
+        }
+      }} onAdd={(input) => {
+        if (controlsLocked || !tabAllowsStart) return false;
+        try {
+          const current = loadVideoWorkspace(window.localStorage).workspace;
+          const next = addPilotToWorkspace(current, input, occupiedPilotIds());
+          return next !== current && commitVideoWorkspace(next);
+        } catch {
+          return false;
+        }
+      }} />}
+      <div hidden={!hasPilots}>
       <div className="preflight-strip">
         {activeChannel ? <PilotNameField
           compact
@@ -2068,6 +2114,8 @@ export function FlightDashboard() {
           ) : null}
         </div>
       </section>)}
+
+      </div>
 
       </div>
 
