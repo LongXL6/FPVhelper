@@ -1,5 +1,16 @@
 import { expect, readStoredTrainingRecords, test } from "./fixtures/fpv-hardware";
 
+test("pilot video fills the workbench across the former two-column desktop breakpoint", async ({ page }) => {
+  await page.goto("/?analytics=off");
+  for (const width of [1180, 1200, 1280, 1281]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.locator(".workspace-grid").evaluate((grid) => {
+      const video = grid.querySelector(".video-console")!;
+      return Math.abs(grid.getBoundingClientRect().width - video.getBoundingClientRect().width);
+    })).toBeLessThan(1);
+  }
+});
+
 test("ordinary workspaces leave vision storage unopened until experiments are explicitly opened", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

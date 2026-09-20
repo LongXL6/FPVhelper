@@ -2077,6 +2077,6 @@ body, .dashboard-shell { background-image: none; }
   .workspace-nav-item small { padding-inline: 4px; }
 }
 @media (min-width: 1180px) and (max-width: 1280px) {
-  .workspace-shell:not(.workspace-shell--coach) .workspace-grid { grid-template-columns: minmax(0, 1fr) 270px; gap: 18px; }
+  .workspace-shell:not(.workspace-shell--coach) .workspace-grid:not(.workspace-grid--simple) { grid-template-columns: minmax(0, 1fr) 270px; gap: 18px; }
   .workspace-shell:not(.workspace-shell--coach) .telemetry-rail { display: block; padding: 14px; }
 }
