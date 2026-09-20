@@ -5,7 +5,7 @@ const pilotField = (page: Page) => page.getByRole("textbox", { name: "当前训�
 
 async function connectCurrentPilot(page: Page) {
   await page.getByRole("region", { name: "录制准备", exact: true }).getByRole("button", { name: /连接当前选手/ }).click();
-  await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
+  await expect(page.locator(".session-strip")).toContainText("RX 正常");
 }
 
 async function openBindings(page: Page) {
@@ -68,7 +68,7 @@ for (const scenario of [
     await connectCurrentPilot(page);
     await expect.poll(() => page.evaluate(() => window.__fpvFakeSerialPorts[0].rcResponses)).toBeGreaterThan(150);
     await expect(pilotField(page)).toHaveValue("");
-    await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
+    await expect(page.locator(".session-strip")).toContainText("RX 正常");
     await expect(page.getByRole("button", { name: "● 开始记录", exact: true })).toBeDisabled();
     await pilotField(page).fill("MANUAL-PILOT");
     await expect(page.getByRole("button", { name: "● 开始记录", exact: true })).toBeEnabled();

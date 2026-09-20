@@ -8,6 +8,8 @@ export const LIVE_VISION_EXIT_DELAY_MS = 150;
 export const LIVE_VISION_MAX_JSON_BYTES = 64 * 1024 ** 2;
 
 export interface LiveVisionOptions {
+  /** False when the operator leaves the experimental workspace; capture ownership stays elsewhere. */
+  active?: boolean;
   stream: MediaStream | null;
   sourceId: string | null;
   pilotChannelId: string | null;

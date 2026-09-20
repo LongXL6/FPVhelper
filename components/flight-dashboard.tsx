@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { AddPilotDialog } from "@/components/add-pilot-dialog";
 import pilotSetupStyles from "@/components/pilot-setup.module.css";
 
@@ -22,11 +23,9 @@ import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { PilotVideoBindingControls } from "@/components/pilot-video-binding-controls";
 import { PilotNameField } from "@/components/pilot-name-field";
-import { LiveGatePanel } from "@/components/live-gate-panel";
 import { ArmAutoRecordSettings, armAutoRecordStatus } from "@/components/arm-auto-record-settings";
 import { useArmAutoRecord } from "@/hooks/use-arm-auto-record";
 import type { ArmAutoRecordStopReason } from "@/lib/arm-auto-record";
-import { LiveGateSummary, type LiveGateSummaryData } from "@/components/live-gate-summary";
 import {
   quarantinedTrainingRecordCount,
   TrainingStorageIntegrityNotice,
@@ -425,7 +424,11 @@ function Gauge({ label, value, detail, accent = "blue" }: { label: string; value
   );
 }
 
-type WorkspaceView = "live" | "records" | "settings";
+const LiveGatePanel = dynamic(() => import("@/components/live-gate-panel").then((module) => module.LiveGatePanel), {
+  loading: () => <p role="status">正在打开实时过门实验…</p>,
+});
+
+type WorkspaceView = "live" | "records" | "settings" | "experiments";
 const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; description: string }[] = [
   { id: "live", label: "飞行工作台", icon: "live", description: "每一次练习，都值得被看见。" },
   { id: "records", label: "训练记录", icon: "folder", description: "从记录里，找到下一次进步。" },
@@ -435,7 +438,8 @@ const workspaceNavigation: { id: WorkspaceView; label: string; icon: IconName; d
 export function FlightDashboard() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("live");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [liveGateSummary, setLiveGateSummary] = useState<LiveGateSummaryData | null>(null);
+  const [experimentsOpened, setExperimentsOpened] = useState(false);
+  const [telemetryDetailsOpen, setTelemetryDetailsOpen] = useState(false);
   const [revealSessionId, setRevealSessionId] = useState<string | null>(null);
   const workspaceHeadingRef = useRef<HTMLHeadingElement>(null);
   const recordingWasActive = useRef(false);
@@ -1246,10 +1250,13 @@ export function FlightDashboard() {
   }
 
   function navigateWorkspace(view: WorkspaceView) {
+    if (view === "experiments") setExperimentsOpened(true);
     setWorkspaceView(view);
     workspaceHeadingRef.current?.focus();
   }
-  const currentPage = workspaceNavigation.find((item) => item.id === workspaceView)!;
+  const currentPage = workspaceView === "experiments"
+    ? { label: "实时过门实验", description: "单路画面识别，过门结果由你复核。" }
+    : workspaceNavigation.find((item) => item.id === workspaceView)!;
   const librarySessions = trainingSession.lastSession && !trainingSession.isRecording && (trainingSession.hasPendingSave || !trainingSession.allSessions.some((session) => session.id === trainingSession.lastSession?.id))
     ? [trainingSession.lastSession, ...trainingSession.allSessions.filter((session) => session.id !== trainingSession.lastSession?.id)]
     : trainingSession.allSessions;
@@ -1269,7 +1276,6 @@ export function FlightDashboard() {
               <Icon name={item.icon} /><span>{item.label}</span>{item.id === "records" && trainingSession.allSessions.length > 0 ? <small>{trainingSession.allSessions.length}</small> : null}
             </button>
           ))}
-          <a className="workspace-nav-item" href="/vision-lab" target="_blank" rel="noopener noreferrer" aria-label="打开视觉实验台（新标签页）"><Icon name="camera" /><span>视觉实验台</span><small>实验</small></a>
         </nav>
         <div className="workspace-nav-footer"><Icon name="shield" /><p>留在本机，专注飞行<small>实时画面与训练记录本机处理</small></p><span>LongXL <small>Made for pilots.</small></span></div>
       </aside>
@@ -1516,7 +1522,7 @@ export function FlightDashboard() {
         <span><Icon name="camera" size={16} />{liveVideoSourceCount ? `${liveVideoSourceCount} 路画面在线` : recordPilotVideo ? "视频录制需接入画面" : "视频可选接入"}</span>
         <small>{trainingSession.isRecording ? `已标记 ${trainingSession.markerCount} 个片段` : startRequirement}</small>
       </div>
-      <div className="workspace-grid">
+      <div className="workspace-grid workspace-grid--simple">
         <section className="video-console">
           <div className="section-bar">
             <div>
@@ -1642,8 +1648,6 @@ export function FlightDashboard() {
               </div></details>
             </div>
           </div>
-
-          <LiveGateSummary summary={liveGateSummary} />
 
           <details className="video-setup-details" ref={videoSetupRef} tabIndex={-1}>
             <summary><span>输入与选手设置</span><small>{activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "配置视频输入"} · {videoWorkspace.sources.length} 路输入 · {activeViewport?.label ?? ""}</small></summary>
@@ -1866,82 +1870,72 @@ export function FlightDashboard() {
           </div>
         </section>
 
-        {withMeasurementProfiler("telemetry-display", <aside className="telemetry-rail">
-          <div className="rail-heading">
-            <div><span>CONTROL INPUT</span><h2>遥控输入</h2></div>
-            <span className={`source-badge source-badge--${source}`}>{rcSourceLabel}</span>
-          </div>
-
-          <div className="stick-grid">
-            <StickPlot eyebrow={`左摇杆 · ${rcSourceLabel}`} xLabel="YAW" yLabel="THR" x={telemetry.yawStickPercent} y={telemetry.throttleStickPercent * 2 - 100} tone="orange" />
-            <StickPlot eyebrow={`右摇杆 · ${rcSourceLabel}`} xLabel="ROLL" yLabel="PITCH" x={telemetry.rollStickPercent} y={telemetry.pitchStickPercent} tone="blue" />
-          </div>
-          <p className="stick-scale-note">行程 ±1000 · 油门中心 0 = 50%</p>
-
-          <div className="gauge-grid gauge-grid--primary">
-            <Gauge label="遥控油门指令" value={telemetry.throttleStickPercent} detail={`${Math.round(telemetry.rcThrottleUs)} μs · ${rcSourceLabel}${source === "serial" ? " / MSP_RC" : ""}`} accent="orange" />
-          </div>
-
-          <details className="telemetry-details">
-            <summary>采集桥诊断</summary>
-            <section className="bridge-card">
-              <div className="card-heading"><span>GROUND BRIDGE</span><b>{!bridgeIsLive
-                ? "MSP WAIT"
-                : linkState === "ok"
-                  ? "RX OK"
-                  : linkState === "lost"
-                    ? "RX LOST"
-                    : "RX UNKNOWN"}</b></div>
-              <div className="bridge-path">
-                <div className={groundRxReady ? "is-active" : ""}><i />ELRS RX</div>
-                <span>→</span>
-                <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
-                <span>→</span>
-                <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
-              </div>
-              <p>地面桥电压：{telemetry.groundBridgeVoltage === null ? "—" : `${telemetry.groundBridgeVoltage.toFixed(1)} V`}{source === "demo" ? "（演示值）" : ""}。</p>
-              <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；MSP_ANALOG 仅用于地面桥供电诊断，不代表飞行器。</p>
-              <p>遥控链路：{linkStateCopy[linkState]}。Bridge FC 在线不等于遥控器在线。</p>
-              <p>
-                解析质量：{parserQualityCopy[telemetryControl.parserQuality]} · 有效帧 {telemetryControl.parserStats.checksumValidFrames.toLocaleString()}
-                {" · "}校验错误 {telemetryControl.parserStats.checksumErrors.toLocaleString()}
-                {" · "}协议错误 {telemetryControl.parserStats.protocolErrors.toLocaleString()}
-              </p>
-            </section>
-            <section className="link-card">
-              <div>
-                <span className="metric-label">AIRCRAFT TELEMETRY</span>
-                <strong>未接入</strong>
-              </div>
-              <SignalMark active={false} />
-              <p>真实机上 LQ、电池和姿态尚未接入。</p>
-            </section>
-          </details>
-        </aside>)}
       </div>
 
-      <LiveGatePanel
-        stream={activeSource ? videoCapture.getSourceStream(activeSource.id) : null}
-        sourceId={activeSource?.id ?? null}
-        sourceLabel={activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "当前视频输入"}
-        pilotChannelId={activeChannel?.id ?? null}
-        pilotName={athleteCode}
-        crop={liveVisionCrop}
-        profileId={activeChannel?.gateProfileId ?? null}
-        trainingSessionId={trainingSession.isRecording ? trainingSession.sessionId : null}
-        configurationLocked={controlsLocked}
-        startBlockReason={tabStartBlockReason}
-        onProfileChange={setPilotGateProfile}
-        onSummaryChange={setLiveGateSummary}
-      />
+      <details className="telemetry-disclosure" onToggle={(event) => setTelemetryDetailsOpen(event.currentTarget.open)}>
+        <summary><span>遥控详细数据</span><small>摇杆数值、油门曲线与连接诊断</small></summary>
+        {telemetryDetailsOpen ? <div className="telemetry-detail-content">
+          {withMeasurementProfiler("telemetry-display", <aside className="telemetry-rail">
+            <div className="rail-heading">
+              <div><span>CONTROL INPUT</span><h2>遥控输入</h2></div>
+              <span className={`source-badge source-badge--${source}`}>{rcSourceLabel}</span>
+            </div>
 
-      <section className="timeline-card">
-        <div className="timeline-heading">
-          <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
-          <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
-        </div>
-        {withMeasurementProfiler("throttle-timeline", <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />)}
-      </section>
+            <div className="stick-grid">
+              <StickPlot eyebrow={`左摇杆 · ${rcSourceLabel}`} xLabel="YAW" yLabel="THR" x={telemetry.yawStickPercent} y={telemetry.throttleStickPercent * 2 - 100} tone="orange" />
+              <StickPlot eyebrow={`右摇杆 · ${rcSourceLabel}`} xLabel="ROLL" yLabel="PITCH" x={telemetry.rollStickPercent} y={telemetry.pitchStickPercent} tone="blue" />
+            </div>
+            <p className="stick-scale-note">行程 ±1000 · 油门中心 0 = 50%</p>
+
+            <div className="gauge-grid gauge-grid--primary">
+              <Gauge label="遥控油门指令" value={telemetry.throttleStickPercent} detail={`${Math.round(telemetry.rcThrottleUs)} μs · ${rcSourceLabel}${source === "serial" ? " / MSP_RC" : ""}`} accent="orange" />
+            </div>
+
+            <details className="telemetry-details">
+              <summary>采集桥诊断</summary>
+              <section className="bridge-card">
+                <div className="card-heading"><span>GROUND BRIDGE</span><b>{!bridgeIsLive
+                  ? "MSP WAIT"
+                  : linkState === "ok"
+                    ? "RX OK"
+                    : linkState === "lost"
+                      ? "RX LOST"
+                      : "RX UNKNOWN"}</b></div>
+                <div className="bridge-path">
+                  <div className={groundRxReady ? "is-active" : ""}><i />ELRS RX</div>
+                  <span>→</span>
+                  <div className={bridgeIsLive ? "is-active" : ""}><i />BETAFLIGHT</div>
+                  <span>→</span>
+                  <div className={bridgeIsLive ? "is-active" : ""}><i />DASHBOARD</div>
+                </div>
+                <p>地面桥电压：{telemetry.groundBridgeVoltage === null ? "—" : `${telemetry.groundBridgeVoltage.toFixed(1)} V`}{source === "demo" ? "（演示值）" : ""}。</p>
+                <p>只读 MSP_RC + MSP_ANALOG + MSP_STATUS_EX；MSP_ANALOG 仅用于地面桥供电诊断，不代表飞行器。</p>
+                <p>遥控链路：{linkStateCopy[linkState]}。Bridge FC 在线不等于遥控器在线。</p>
+                <p>
+                  解析质量：{parserQualityCopy[telemetryControl.parserQuality]} · 有效帧 {telemetryControl.parserStats.checksumValidFrames.toLocaleString()}
+                  {" · "}校验错误 {telemetryControl.parserStats.checksumErrors.toLocaleString()}
+                  {" · "}协议错误 {telemetryControl.parserStats.protocolErrors.toLocaleString()}
+                </p>
+              </section>
+              <section className="link-card">
+                <div>
+                  <span className="metric-label">AIRCRAFT TELEMETRY</span>
+                  <strong>未接入</strong>
+                </div>
+                <SignalMark active={false} />
+                <p>真实机上 LQ、电池和姿态尚未接入。</p>
+              </section>
+            </details>
+          </aside>)}
+          <section className="timeline-card">
+            <div className="timeline-heading">
+              <div><span>LIVE TRACE · 3 S</span><h2>油门时间轴</h2></div>
+              <div className="legend"><span><i className="legend-rc" />遥控油门指令 · {rcSourceLabel}</span><b>{Math.round(telemetry.throttleStickPercent)}%</b></div>
+            </div>
+            {withMeasurementProfiler("throttle-timeline", <ThrottleTimeline samples={throttleHistory} active={workspaceView === "live"} />)}
+          </section>
+        </div> : null}
+      </details>
 
       {withMeasurementProfiler("recording-ui", <section className={`session-card ${trainingSession.isRecording ? "session-card--recording" : ""}`}>
         <div className="session-heading">
@@ -2119,6 +2113,29 @@ export function FlightDashboard() {
 
       </div>
 
+      <div className="workspace-view workspace-view--experiments" hidden={workspaceView !== "experiments"}>
+        <div className="experiment-heading">
+          <p>离开此页会停止识别，视频和打杆录制继续。已有门档案与计时记录保留。</p>
+          <button className="button button--quiet" type="button" onClick={() => navigateWorkspace("live")}><Icon name="arrow-left" size={16} />回到工作台</button>
+        </div>
+        {experimentsOpened ? (
+          <LiveGatePanel
+            active={workspaceView === "experiments"}
+            stream={activeSource ? videoCapture.getSourceStream(activeSource.id) : null}
+            sourceId={activeSource?.id ?? null}
+            sourceLabel={activeSource ? videoSourceDisplayName(videoWorkspace.sources, activeSource) : "当前视频输入"}
+            pilotChannelId={activeChannel?.id ?? null}
+            pilotName={athleteCode}
+            crop={liveVisionCrop}
+            profileId={activeChannel?.gateProfileId ?? null}
+            trainingSessionId={trainingSession.isRecording ? trainingSession.sessionId : null}
+            configurationLocked={controlsLocked}
+            startBlockReason={tabStartBlockReason}
+            onProfileChange={setPilotGateProfile}
+          />
+        ) : null}
+      </div>
+
       <div className="workspace-view workspace-view--records" hidden={workspaceView !== "records"}>
         <TrainingStorageIntegrityNotice integrity={trainingSession.storageIntegrity} />
         <SessionLibrary
@@ -2141,6 +2158,13 @@ export function FlightDashboard() {
         <details className="review-tool"><summary>检查导出文件 <small>重新校验 JSON 的完整性与有效条件</small></summary><TrainingSessionFileValidator /></details>
       </div>
       <div className="workspace-view workspace-view--settings" hidden={workspaceView !== "settings"}>
+        <section className="experimental-entry" aria-label="实验功能">
+          <div><h2>实验功能</h2><p>尝试过门识别或分析已有录像，结果需要人工复核。</p></div>
+          <div className="experimental-entry-actions">
+            <a className="button button--quiet" href="/vision-lab" target="_blank" rel="noopener noreferrer">录像视觉实验台<Icon name="arrow-right" size={15} /></a>
+            <button className="button button--quiet" type="button" onClick={() => navigateWorkspace("experiments")}>实时过门实验<Icon name="arrow-right" size={15} /></button>
+          </div>
+        </section>
         <section className="connection-guide">
           <div><span>GET READY</span><h2>三步，准备好下一次训练</h2><p>真实训练需要地面接收机、桥接飞控与浏览器串口连接。视频可独立接入。</p></div>
           <ol><li><b>连接输入</b><p>遥控器 → 地面接收机 → Betaflight 桥接飞控 → USB。点击上方「连接桥接飞控」，等待 RX 正常。</p></li><li><b>选择画面与选手</b><p>在工作台展开「输入与选手设置」，连接采集卡；单画面、四分屏与每位选手的独立裁切都保留在本机。</p></li><li><b>开始与复盘</b><p>填写选手代号后开始。训练中可标记片段，结束后保存备注并导出 JSON；开启视频录制前先选择保存文件夹。</p></li></ol>

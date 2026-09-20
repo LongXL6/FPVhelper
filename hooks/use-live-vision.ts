@@ -192,6 +192,11 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     if (previous.stream !== options.stream || identityOf(previous) !== identity) transientAbort.current?.abort();
     optionsRef.current = options;
     const runtime = activeRef.current;
+    if (options.active === false) {
+      transientAbort.current?.abort();
+      if (runtime) interrupt("已离开实时过门实验，后续画面未分析");
+      return;
+    }
     if (runtime && (runtime.stream !== options.stream || runtime.identity !== identity)) interrupt("视频来源、选手、裁切、计时门或训练记录发生变化");
   }, [identity, interrupt, options]);
   useEffect(() => {
@@ -322,6 +327,7 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
     if (activeRef.current || mutationRef.current) throw new Error("请先结束当前实时分析或保存操作");
     if (runRef.current && protectedRef.current !== runRef.current) throw new Error("当前实时记录尚未保存，请先重试保存或导出 JSON 并确认下载，再开始新一轮");
     const input = optionsRef.current;
+    if (input.active === false) throw new Error("请打开实时过门实验后再开始识别");
     const selected = profileRef.current;
     const stream = input.stream;
     const track = stream?.getVideoTracks()[0];
@@ -423,7 +429,7 @@ export function useLiveVision(options: LiveVisionOptions): LiveVisionController 
   };
 
   return {
-    state, isActive: state === "loading" || state === "monitoring", hasUnsavedChanges: Boolean(run && savedSnapshot !== run), backupAwaitingConfirmation: Boolean(run && exportedSnapshot === run && protectedSnapshot !== run), canStart: !["loading", "monitoring"].includes(state) && (!run || protectedSnapshot === run) && Boolean(options.stream?.getVideoTracks()[0]?.readyState === "live" && options.sourceId && options.pilotChannelId && options.pilotName.trim() && profile?.id === options.profileId), elapsedMs, progress, diagnostics, attachDiagnosticCanvas, error, notice, profile, profiles, run,
+    state, isActive: state === "loading" || state === "monitoring", hasUnsavedChanges: Boolean(run && savedSnapshot !== run), backupAwaitingConfirmation: Boolean(run && exportedSnapshot === run && protectedSnapshot !== run), canStart: options.active !== false && !["loading", "monitoring"].includes(state) && (!run || protectedSnapshot === run) && Boolean(options.stream?.getVideoTracks()[0]?.readyState === "live" && options.sourceId && options.pilotChannelId && options.pilotName.trim() && profile?.id === options.profileId), elapsedMs, progress, diagnostics, attachDiagnosticCanvas, error, notice, profile, profiles, run,
     events: run ? resolveVisionEvents(run) : [], laps: run ? deriveVisionLaps(run) : [], savedRuns, start, stop: () => finish("stopped", "用户停止了实时分析"), getCurrentTimeMs,
     exportDiagnostics: () => operation(async () => {
       const collector = diagnosticsRef.current;
