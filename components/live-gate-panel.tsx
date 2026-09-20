@@ -234,8 +234,8 @@ export const LiveGatePanel = memo(function LiveGatePanel({ configurationLocked =
   const currentContext = `${options.pilotName.trim() || "未命名选手"} · ${options.sourceId ? sourceLabel : "未接入画面"}`;
   const cropped = options.crop.x !== 0 || options.crop.y !== 0 || options.crop.width !== 1 || options.crop.height !== 1;
   const readinessReason = startBlockReason
-    ?? (!options.stream ? "先在上方打开当前选手的视频画面。"
-      : !options.pilotName.trim() ? "先在上方填写当前选手姓名，或连接飞控读取名称。"
+    ?? (!options.stream ? "先在工作台打开当前飞手的视频画面。"
+      : !options.pilotName.trim() ? "先在工作台填写当前飞手姓名，或连接飞控读取名称。"
         : !options.profileId ? "请选择本机计时门，或展开下方配置新的计时门。"
           : live.profile?.id !== options.profileId ? "正在读取所选门档案；若读取失败，请刷新档案或重新选择。"
             : live.hasUnsavedChanges && !live.canStart ? "上轮结果尚未保存，请先重试保存，或导出 JSON 并确认下载。"

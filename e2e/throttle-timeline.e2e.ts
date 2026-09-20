@@ -22,6 +22,7 @@ test("live throttle shows a partial receive-time window, ages through silence, a
     return route.abort();
   });
   await page.goto("/?analytics=off");
+  await page.locator(".telemetry-disclosure > summary").click();
   await page.getByRole("region", { name: "录制准备", exact: true }).getByRole("button", { name: /连接当前选手/ }).click();
   await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
   await expect.poll(() => traceXs(page)).toEqual(expect.arrayContaining([expect.any(Number)]));

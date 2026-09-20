@@ -71,12 +71,18 @@ function checkFailures() {
 }
 try {
   await page.goto(baseURL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.getByRole("button", { name: "＋ 添加飞手", exact: true }).click();
+  const pilotDialog = page.getByRole("dialog", { name: "添加飞手", exact: true });
+  await pilotDialog.getByLabel("飞手名称", { exact: true }).fill("SYNTHETIC-LIVE");
+  await pilotDialog.getByRole("button", { name: "添加飞手", exact: true }).click();
   const panel = page.getByRole("region", { name: "实时过门计时", exact: true });
-  await expect(panel).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "打开画面", exact: true }).click();
   await expect(page.getByText("1/1 路 UVC 在线", { exact: true })).toBeVisible();
   await page.getByRole("textbox", { name: "当前训练选手代号", exact: true }).fill("SYNTHETIC-LIVE");
   await page.getByRole("textbox", { name: "当前训练选手代号", exact: true }).blur();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "工作站设置", exact: true }).click();
+  await page.getByRole("button", { name: "实时过门实验", exact: true }).click();
+  await expect(panel).toBeVisible({ timeout: 60_000 });
   await panel.locator("summary").filter({ hasText: "配置新的计时门" }).click();
   await panel.getByRole("button", { name: "截取当前取景", exact: true }).click();
   await expect(panel.getByLabel("门框宽百分比")).toBeVisible();

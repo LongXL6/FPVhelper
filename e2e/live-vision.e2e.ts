@@ -1,10 +1,16 @@
 import { readFile } from "node:fs/promises";
+import type { Page } from "@playwright/test";
 import type { LiveVisionRun } from "../lib/live-vision-types";
 import type { TrainingSession } from "../lib/training-session";
 import { VISION_MODEL_MANIFEST, type VisionModelRequest, type VisionModelResponse } from "../lib/vision-model";
 import { expect, readStoredTrainingRecords, test } from "./fixtures/fpv-hardware";
 
-test("live gate review shares the video-and-OSD recording stream and preserves both saved session associations", async ({ page }, info) => {
+async function openExperiments(page: Page) {
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "工作站设置", exact: true }).click();
+  await page.getByRole("button", { name: "实时过门实验", exact: true }).click();
+}
+
+test("leaving live gate experiments stops analysis, preserves review and keeps video-and-OSD recording", async ({ page }, info) => {
   // MediaRecorder, video composition, OPFS and IndexedDB are real; only model responses are deterministic.
   // The synthetic proposals are not evidence of model accuracy or physical gate timing.
   await page.addInitScript((manifest) => {
@@ -72,11 +78,13 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await expect(page.getByRole("combobox", { name: "录制内容", exact: true })).toHaveValue("video");
   await expect(page.getByRole("button", { name: "保存文件夹 已授权", exact: true })).toBeVisible();
   const panel = page.getByRole("region", { name: "实时过门计时", exact: true });
-  await expect(panel.getByRole("button", { name: "开始过门计时", exact: true })).toBeDisabled();
+  await expect(panel).toHaveCount(0);
   await page.getByRole("textbox", { name: "当前训练选手代号", exact: true }).fill("VISION-LIVE");
   await page.getByRole("button", { name: "打开画面", exact: true }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
 
+  await openExperiments(page);
+  await expect(panel.getByRole("button", { name: "开始过门计时", exact: true })).toBeDisabled();
   await panel.locator("summary").filter({ hasText: "配置新的计时门" }).click();
   await panel.getByRole("button", { name: "截取当前取景", exact: true }).click();
   await expect(panel.getByRole("img", { name: "本机计时门参考照片", exact: true })).toBeVisible();
@@ -90,17 +98,15 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
     return workspace.pilotChannels.find((channel: { id: string }) => channel.id === workspace.activePilotChannelId).gateProfileId;
   })).toBe(profileId);
 
+  await page.getByRole("button", { name: "回到工作台", exact: true }).click();
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
   await page.getByRole("button", { name: "● 开始记录", exact: true }).click();
   await expect(page.getByRole("heading", { name: "正在记录 VISION-LIVE", exact: true })).toBeVisible();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
+  await openExperiments(page);
   await panel.getByRole("button", { name: "开始过门计时", exact: true }).click();
   await expect(panel).toHaveAttribute("data-state", "monitoring");
-  const compact = page.getByRole("region", { name: "视频旁过门计时", exact: true });
-  await expect(compact).toHaveAttribute("data-state", "monitoring");
-  await expect(compact).toContainText("合成直播测试门");
-  await expect(compact.getByRole("link", { name: "配置与复核实时过门计时", exact: true })).toHaveAttribute("href", "#live-gate-panel");
   const manualReason = panel.getByRole("textbox", { name: "现场人工确认理由", exact: true });
   await manualReason.fill("合成流程：现场确认起点");
   await panel.getByRole("button", { name: "人工确认一次穿越", exact: true }).click();
@@ -112,10 +118,7 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
   await expect(panel.getByTestId("live-analysis-fps")).not.toHaveText("—");
   await expect(panel.locator('canvas[aria-label="最近分析画面"]')).toHaveJSProperty("width", 448);
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "训练记录", exact: true }).click();
-  await expect(page.locator('[aria-label="实时过门计时"]')).toHaveAttribute("data-state", "monitoring");
   await expect.poll(() => page.evaluate(() => (window as Window & { __liveVisionE2e?: { analyzedFrames: number } }).__liveVisionE2e!.analyzedFrames)).toBeGreaterThanOrEqual(5);
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "飞行工作台", exact: true }).click();
   await expect(panel.getByRole("button", { name: "待确认 1", exact: true })).toBeVisible();
   await manualReason.fill("合成流程：现场确认终点");
   await panel.getByRole("button", { name: "人工确认一次穿越", exact: true }).click();
@@ -128,11 +131,15 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await expect(results.getByRole("row")).toHaveCount(2);
   await expect(results).not.toContainText("区间内还有待复核候选");
 
-  await panel.getByRole("button", { name: "停止过门计时", exact: true }).click();
-  await expect(panel).toHaveAttribute("data-state", "stopped");
-  await expect(compact).toHaveAttribute("data-state", "stopped");
-  await expect(compact).toContainText("最近记录 · VISION-LIVE");
+  await page.getByRole("button", { name: "回到工作台", exact: true }).click();
+  await expect(page.locator('[aria-label="实时过门计时"]')).toHaveAttribute("data-state", "interrupted");
+  const framesAfterLeaving = await page.evaluate(() => (window as Window & { __liveVisionE2e?: { analyzedFrames: number } }).__liveVisionE2e!.analyzedFrames);
+  await openExperiments(page);
+  await expect(panel).toHaveAttribute("data-state", "interrupted");
   await expect(panel.getByRole("status")).toContainText("已保存在本机");
+  await expect(results.getByRole("row")).toHaveCount(2);
+  expect(await page.evaluate(() => (window as Window & { __liveVisionE2e?: { analyzedFrames: number } }).__liveVisionE2e!.analyzedFrames)).toBe(framesAfterLeaving);
+  await page.getByRole("button", { name: "回到工作台", exact: true }).click();
   await expect(page.getByText("1/1 路 UVC 在线")).toBeVisible();
   await expect(page.getByRole("heading", { name: "正在记录 VISION-LIVE", exact: true })).toBeVisible();
   await expect(page.getByTestId("local-video-recording-status")).toContainText("REC");
@@ -173,8 +180,8 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   expect(savedFiles.sessions[0].id).toBe(training.sessions[0].id);
   expect(savedFiles.sessions[0].video).toEqual(receipt);
   expect(savedFiles.sessions[0].samples).toEqual(training.sessions[0].samples);
-  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "飞行工作台", exact: true }).click();
-  await expect(panel).toHaveAttribute("data-state", "stopped");
+  await openExperiments(page);
+  await expect(panel).toHaveAttribute("data-state", "interrupted");
 
   const downloadPromise = page.waitForEvent("download");
   await results.getByRole("button", { name: "JSON", exact: true }).click();
@@ -183,7 +190,8 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   await download.saveAs(path);
   expect(await download.failure()).toBeNull();
   const run = JSON.parse(await readFile(path, "utf8")) as LiveVisionRun;
-  expect(run).toMatchObject({ kind: "fpvhelper-live-vision", state: "stopped", source: { pilotName: "VISION-LIVE", trainingSessionId: training.sessions[0].id, crop: { x: 0, y: 0, width: 1, height: 1 } }, clock: { kind: "host_presentation_estimate", physicalCaptureTimeKnown: false, trainingSynchronized: false }, profile: { id: profileId }, settings: { sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150 } });
+  expect(run).toMatchObject({ kind: "fpvhelper-live-vision", state: "interrupted", source: { pilotName: "VISION-LIVE", trainingSessionId: training.sessions[0].id, crop: { x: 0, y: 0, width: 1, height: 1 } }, clock: { kind: "host_presentation_estimate", physicalCaptureTimeKnown: false, trainingSynchronized: false }, profile: { id: profileId }, settings: { sampleFps: 30, maxObservationGapMs: 1500, exitDelayMs: 150 } });
+  expect(run.stopReason).toContain("已离开实时过门实验");
   expect(run.observations.length).toBeGreaterThanOrEqual(5);
   expect(run.pipelineVersion).toBe("reference-motion-v2");
   expect(run.observations.every((observation) => observation.diagnostics?.bestMatch)).toBe(true);
@@ -204,8 +212,11 @@ test("live gate review shares the video-and-OSD recording stream and preserves b
   expect(remoteRequests).toEqual([]);
 
   await page.reload();
+  await expect(panel).toHaveCount(0);
+  await openExperiments(page);
+  await expect(profile).toHaveValue(profileId);
   await panel.getByRole("combobox", { name: "恢复实时计时记录", exact: true }).selectOption(run.id);
-  await expect(panel).toHaveAttribute("data-state", "stopped");
+  await expect(panel).toHaveAttribute("data-state", "interrupted");
   await expect(panel.getByRole("button", { name: "全部 3", exact: true })).toBeVisible();
   await expect(results).toContainText("已关联训练记录，未校准同步");
 });

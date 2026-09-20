@@ -17,6 +17,8 @@ async function expectSavedSession(page: Page, athleteCode: string) {
 }
 
 async function expectStickInputs(page: Page, { roll, pitch, yaw, throttle }: { roll: number; pitch: number; yaw: number; throttle: number }) {
+  const details = page.locator(".telemetry-disclosure");
+  if (!await details.evaluate((element) => (element as HTMLDetailsElement).open)) await details.locator("summary").first().click();
   const axis = (value: number) => value > 0 ? `+${value}` : String(value);
   const fields = page.locator(".telemetry-rail .stick-field");
   await expect(fields.nth(0)).toHaveAttribute("aria-label", `左摇杆 · GROUND_RC，YAW ${axis(yaw * 10)}，THR ${axis(throttle * 20 - 1000)}；归一化行程 −1000 至 +1000，中心 0`);
@@ -817,8 +819,8 @@ test("fake media and read-only MSP bridge persist a local training session", asy
 
   await page.getByRole("button", { name: "连接桥接飞控" }).click();
   await expect(page.locator(".status-chip")).toContainText("数据桥在线");
-  await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
   await expectStickInputs(page, { roll: 20, pitch: -20, yaw: 10, throttle: 25 });
+  await expect(page.locator(".source-badge")).toHaveText("GROUND_RC");
   await expect(page.locator(".gauge-grid--primary")).toContainText("1250 μs · GROUND_RC / MSP_RC");
 
   await page.getByText("采集桥诊断", { exact: true }).click();

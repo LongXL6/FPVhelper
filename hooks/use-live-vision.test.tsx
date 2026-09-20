@@ -226,6 +226,37 @@ describe("live vision runtime isolation", () => {
     expect(controller.isActive).toBe(false);
   });
 
+  it("stops analysis when leaving experiments without stopping the shared capture or resuming on return", async () => {
+    const model = client();
+    vi.mocked(models.createVisionModelClient).mockReturnValueOnce(model);
+    await start(); await advance(500); await advance(100, false);
+    const runId = controller.run!.id;
+    await change({ active: false });
+    expect(controller.state).toBe("interrupted");
+    expect(controller.run?.stopReason).toContain("已离开实时过门实验");
+    expect(runs.get(runId)?.state).toBe("interrupted");
+    expect(model.dispose).toHaveBeenCalledOnce();
+    expect((input.stream as unknown as FakeStream).track.stop).not.toHaveBeenCalled();
+    await expect(controller.start()).rejects.toThrow("请打开实时过门实验");
+    await change({ active: true });
+    expect(controller.isActive).toBe(false);
+    expect(controller.run?.id).toBe(runId);
+  });
+
+  it("cancels pending model preparation when leaving experiments and ignores its late result", async () => {
+    const loading = deferred<typeof VISION_MODEL_MANIFEST>();
+    const model = client(); model.load.mockImplementationOnce(() => loading.promise);
+    vi.mocked(models.createVisionModelClient).mockReturnValueOnce(model);
+    let pending!: Promise<void>;
+    await act(async () => { pending = controller.start(); });
+    await change({ active: false });
+    expect(model.dispose).toHaveBeenCalledOnce();
+    await act(async () => { loading.resolve(VISION_MODEL_MANIFEST); await pending; });
+    expect(model.setReference).not.toHaveBeenCalled();
+    expect(controller.isActive).toBe(false);
+    expect((input.stream as unknown as FakeStream).track.stop).not.toHaveBeenCalled();
+  });
+
   it("interrupts on track loss and prolonged missing frames", async () => {
     await start(); await advance(500);
     await advance(3000, false);
