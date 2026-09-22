@@ -75,6 +75,41 @@ beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "perf
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("burned-in stick video compositor", () => {
+  it("preserves width-relative sizing and dock spacing for a tall coach preview", () => {
+    const context = makeContext();
+    drawStickVideoOverlay(context as unknown as CanvasRenderingContext2D, {
+      width: 1280, height: 720, telemetry: makeTelemetry(), athleteCode: "07",
+      appearance: {
+        pair: { left: { xPercent: 10, yPercent: 20, size: 72 }, right: { xPercent: 21.25, yPercent: 20, size: 72 }, docked: true, locked: true },
+        stageWidth: 640, stageHeight: 800, opacity: 1, mode: "simple",
+      },
+    });
+    expect(context.fillRect).toHaveBeenCalledWith(128, 144, 144, 144);
+    expect(context.fillRect).toHaveBeenCalledWith(272, 144, 144, 144);
+  });
+
+  it("scales the preview layout into the recording and reads updated size, position and opacity on subsequent frames", async () => {
+    const { options, video, context } = setup();
+    let appearance = {
+      pair: { left: { xPercent: 10, yPercent: 20, size: 72 }, right: { xPercent: 50, yPercent: 20, size: 180 }, docked: false, locked: false },
+      stageWidth: 640, stageHeight: 360, opacity: 0.5, mode: "trail" as const,
+    };
+    const alpha = vi.fn();
+    Object.defineProperty(context, "globalAlpha", { set: alpha });
+    const result = await startStickVideoCompositor({ ...options, getOverlayAppearance: () => appearance });
+    expect(context.fillRect).toHaveBeenCalledWith(128, 144, 144, 144);
+    expect(context.fillRect).toHaveBeenCalledWith(640, 144, 360, 360);
+    expect(context.strokeRect).toHaveBeenCalledWith(162, 188, 76, 76);
+    expect(alpha).toHaveBeenLastCalledWith(0.5);
+    appearance = { ...appearance, opacity: 0.3, pair: { ...appearance.pair, left: { xPercent: 5, yPercent: 10, size: 100 } } };
+    context.fillRect.mockClear();
+    video.currentTime = 0.1;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(context.fillRect).toHaveBeenCalledWith(64, 72, 200, 200);
+    expect(alpha).toHaveBeenLastCalledWith(0.3);
+    result.dispose();
+  });
+
   it("records the actual crop with an independent video and canvas without stopping the borrowed camera", async () => {
     const { options, video, context, canvas, sourceStream, sourceTrack, outputTrack, outputStream } = setup();
     const result = await startStickVideoCompositor({ ...options, crop: { xPercent: 50, yPercent: 0, widthPercent: 50, heightPercent: 50 } });

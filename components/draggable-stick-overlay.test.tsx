@@ -14,6 +14,30 @@ afterEach(() => {
 });
 
 describe("accessible stick overlay layout", () => {
+  it.each([[-40, 0], [0, -40], [-40, 5]])("shrinks with pointer movement %s, %s instead of discarding the negative delta", (deltaX, deltaY) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const pair: StickOverlayPairLayout = {
+      left: { xPercent: 10, yPercent: 30, size: 140 },
+      right: { xPercent: 50, yPercent: 30, size: 140 }, docked: false, locked: false,
+    };
+    const onPairChange = vi.fn();
+    act(() => {
+      renderer = create(<DraggableStickOverlay member="left" pairLayout={pair} label="左摇杆" xLabel="YAW" yLabel="THR" x={0} y={0} tone="orange" mode="trail" trail={[]} peak={null} onPairChange={onPairChange} onToggleLock={() => undefined} />, {
+        createNodeMock: () => ({ parentElement: { getBoundingClientRect: () => ({ width: 1000, height: 600 }) } }),
+      });
+    });
+    const target = { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() };
+    const event = (clientX: number, clientY: number) => ({ clientX, clientY, pointerId: 1, currentTarget: target, preventDefault: vi.fn() });
+    const handle = renderer!.root.findByProps({ "aria-label": "调整左摇杆大小" });
+    act(() => handle.props.onPointerDown(event(100, 100)));
+    act(() => handle.props.onPointerMove(event(100 + deltaX, 100 + deltaY)));
+    expect(onPairChange.mock.lastCall?.[0].left.size).toBe(100);
+    expect(onPairChange.mock.lastCall?.[0].right.size).toBe(140);
+    act(() => handle.props.onPointerUp(event(100 + deltaX, 100 + deltaY)));
+    expect(onPairChange.mock.lastCall?.[1]).toBe(true);
+  });
+
   it.each(["trail", "simple"] as const)("keeps endpoints and origin in %s mode with matching readout units", (mode) => {
     const pair: StickOverlayPairLayout = {
       left: { xPercent: 10, yPercent: 30, size: 132 },

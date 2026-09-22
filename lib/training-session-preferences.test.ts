@@ -24,6 +24,7 @@ describe("local training and overlay preferences", () => {
         recordPilotVideo: true,
         showStickOverlays: true,
         stickOverlayMode: "trail",
+        stickOverlayOpacity: 1,
       },
       error: null,
     });
@@ -31,7 +32,7 @@ describe("local training and overlay preferences", () => {
 
   it.each([true, false])("preserves an explicit video choice of %s after saving and reloading", (recordPilotVideo) => {
     const storage = memoryStorage();
-    const preferences = { autoExport: true, recordPilotVideo, showStickOverlays: false, stickOverlayMode: "simple" as const };
+    const preferences = { stickOverlayOpacity: 0.5, autoExport: true, recordPilotVideo, showStickOverlays: false, stickOverlayMode: "simple" as const };
 
     expect(saveTrainingSessionPreferences(storage, preferences)).toBeNull();
     const reloadedStorage = memoryStorage(storage.getItem(TRAINING_SESSION_PREFERENCES_KEY));
@@ -43,7 +44,7 @@ describe("local training and overlay preferences", () => {
     const migrated = loadTrainingSessionPreferences(storage);
 
     expect(migrated).toEqual({
-      preferences: { autoExport: true, recordPilotVideo: true, showStickOverlays: false, stickOverlayMode: "simple" },
+      preferences: { autoExport: true, recordPilotVideo: true, showStickOverlays: false, stickOverlayMode: "simple", stickOverlayOpacity: 1 },
       error: null,
     });
     expect(saveTrainingSessionPreferences(storage, migrated.preferences)).toBeNull();
@@ -54,7 +55,7 @@ describe("local training and overlay preferences", () => {
   it("keeps an existing explicit data-only choice when loading older preferences", () => {
     const preferences = { autoExport: false, recordPilotVideo: false, showStickOverlays: true, stickOverlayMode: "trail" };
 
-    expect(loadTrainingSessionPreferences(memoryStorage(JSON.stringify(preferences)))).toEqual({ preferences, error: null });
+    expect(loadTrainingSessionPreferences(memoryStorage(JSON.stringify(preferences)))).toEqual({ preferences: { ...preferences, stickOverlayOpacity: 1 }, error: null });
   });
 
   it("falls back explicitly when stored preferences are malformed", () => {
@@ -93,6 +94,13 @@ describe("local training and overlay preferences", () => {
       preferences: DEFAULT_TRAINING_SESSION_PREFERENCES,
       error: "storage blocked",
     });
+  });
+
+  it.each([[0.1, 0.25], [2, 1], ["bad", 1], [null, 1]])("normalizes opacity %s without losing the video preference", (stored, expected) => {
+    const preferences = { ...DEFAULT_TRAINING_SESSION_PREFERENCES, recordPilotVideo: false, stickOverlayOpacity: stored };
+    const loaded = loadTrainingSessionPreferences(memoryStorage(JSON.stringify(preferences)));
+    expect(loaded.preferences.stickOverlayOpacity).toBe(expected);
+    expect(loaded.preferences.recordPilotVideo).toBe(false);
   });
 
   it("surfaces storage write failures instead of silently dropping a change", () => {

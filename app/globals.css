@@ -1225,7 +1225,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-shell--coach .coach-status b { color: var(--alert); font: 900 22px/1 var(--display); }
 .dashboard-shell--coach .coach-status strong { font: 900 24px/1 var(--display); }
 .dashboard-shell--coach .demo-watermark { top: auto; bottom: 24px; }
-.dashboard-shell--coach .video-stick-overlay { min-width: 180px; min-height: 180px; }
+.dashboard-shell--coach .video-stick-overlay { min-width: 0; min-height: 0; }
 .dashboard-shell--coach .video-stick-overlay__drag b { font-size: 12px; }
 .dashboard-shell--coach .throttle-ladder > div { height: 180px; width: 13px; }
 .dashboard-shell--coach .throttle-ladder b { font-size: 20px; }
@@ -1333,7 +1333,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .dashboard-shell--coach .coach-status span { font-size: 12px; }
   .dashboard-shell--coach .coach-status b { font-size: 17px; }
   .dashboard-shell--coach .coach-status strong { grid-column: 1 / -1; font-size: 18px; }
-  .dashboard-shell--coach .video-stick-overlay { min-width: 120px; min-height: 120px; max-width: 42vw; max-height: 42vw; }
+  .dashboard-shell--coach .video-stick-overlay { min-width: 0; min-height: 0; }
   .dashboard-shell--coach .throttle-ladder { right: 12px; bottom: 12px; }
   .dashboard-shell--coach .throttle-ladder > div { height: 110px; }
   .onboarding-card { padding: 16px; }
@@ -2079,4 +2079,33 @@ body, .dashboard-shell { background-image: none; }
 @media (min-width: 1180px) and (max-width: 1280px) {
   .workspace-shell:not(.workspace-shell--coach) .workspace-grid:not(.workspace-grid--simple) { grid-template-columns: minmax(0, 1fr) 270px; gap: 18px; }
   .workspace-shell:not(.workspace-shell--coach) .telemetry-rail { display: block; padding: 14px; }
+}
+
+/* Small stick layouts keep a usable field instead of squeezing the full readout. */
+.video-stick-overlay--compact .video-stick-overlay__drag { height: 18px; padding: 0 4px; gap: 3px; }
+.video-stick-overlay--compact .video-stick-overlay__drag > span { font-size: 8px; }
+.video-stick-overlay--compact .video-stick-overlay__drag b,
+.dashboard-shell--coach .video-stick-overlay--compact .video-stick-overlay__drag b { font-size: 7px; letter-spacing: 0; }
+.video-stick-overlay--compact .video-stick-overlay__drag small,
+.video-stick-overlay--compact .video-stick-overlay__values,
+.video-stick-overlay--compact .axis-label,
+.video-stick-overlay--compact .video-stick-overlay__trace { display: none; }
+.video-stick-overlay--compact .video-stick-overlay__field,
+.video-stick-overlay--simple .video-stick-overlay__field { top: 22px; width: calc(100% - 34px); }
+.video-stick-overlay--compact .stick-tick { font-size: 5px; }
+.video-stick-overlay--compact .video-stick-overlay__resize { width: 20px; height: 20px; }
+.video-stick-overlay--compact .video-stick-overlay__dot { width: 7px; height: 7px; margin: -3.5px; }
+.video-stick-overlay--compact .video-stick-overlay__pair-lock { top: auto; bottom: 1px; right: 1px; width: 30px; height: 16px; }
+.stick-overlay-controls { flex: 1 0 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding-top: 8px; }
+.stick-overlay-setting { min-width: 0; display: grid; gap: 8px; color: var(--muted); font-size: 11px; }
+.stick-overlay-setting > span { display: flex; justify-content: space-between; gap: 8px; }
+.stick-overlay-setting output { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.stick-overlay-setting input { width: 100%; min-width: 0; margin: 0; accent-color: var(--accent); }
+.stick-overlay-controls p { grid-column: 1 / -1; margin: 0; color: var(--quiet); font-size: 11px; line-height: 1.7; }
+.dashboard-shell--coach .video-controls { display: flex; }
+.dashboard-shell--coach .video-controls > :not(.overlay-options),
+.dashboard-shell--coach .overlay-visibility-toggle { display: none; }
+.dashboard-shell--coach .overlay-options-body { position: absolute; z-index: 30; top: 100%; right: 0; width: min(420px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: 0 8px 24px #0003; }
+@media (max-width: 640px) {
+  .stick-overlay-controls { grid-template-columns: 1fr; }
 }

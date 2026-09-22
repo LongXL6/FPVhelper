@@ -16,8 +16,9 @@ import { SessionLibrary } from "@/components/session-library";
 import { ThrottleTimeline } from "@/components/throttle-timeline";
 import { withMeasurementProfiler } from "@/components/measurement-profiler";
 import { SessionReportLoader } from "@/components/session-report-loader";
-import { startStickVideoCompositor } from "@/lib/stick-video-compositor";
+import { startStickVideoCompositor, type StickOverlayAppearance } from "@/lib/stick-video-compositor";
 import { StickAxes } from "@/components/stick-axes";
+import { StickOverlayControls } from "@/components/stick-overlay-controls";
 import { formatStickAxisValue } from "@/lib/stick-display";
 import { DemoTelemetryWatermark } from "@/components/demo-telemetry-watermark";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
@@ -69,6 +70,7 @@ import {
 } from "@/lib/local-diagnostics";
 import { clamp, type ConnectionState } from "@/lib/telemetry";
 import {
+  resizeStickOverlayPairLayout,
   stickOverlayPairIsDefault,
   type StickOverlayPairLayout,
 } from "@/lib/stick-overlay-layout";
@@ -457,7 +459,7 @@ export function FlightDashboard() {
     getWorkstationShortcutsSnapshot,
     () => false,
   );
-  const { autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode } = loadedPreferences.preferences;
+  const { autoExport, recordPilotVideo, showStickOverlays, stickOverlayMode, stickOverlayOpacity } = loadedPreferences.preferences;
   const [preferenceWriteError, setPreferenceWriteError] = useState<string | null>(null);
   const videoWorkspaceSnapshot = useSyncExternalStore(
     subscribeToVideoWorkspace,
@@ -485,6 +487,8 @@ export function FlightDashboard() {
     loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName,
   ), [loadedVideoWorkspace.workspace, pilotDeviceNames, recordingPilotName]);
   const videoSetupRef = useRef<HTMLDetailsElement>(null);
+  const activeVideoStageRef = useRef<HTMLDivElement>(null);
+  const recordingOverlayAppearanceRef = useRef<StickOverlayAppearance | undefined>(undefined);
   const armSettingsRef = useRef<HTMLDetailsElement>(null);
   const exportShortcutInFlightRef = useRef(false);
   const pilotOutputCanvasesRef = useRef(new Map<string, HTMLCanvasElement>());
@@ -650,9 +654,9 @@ export function FlightDashboard() {
     return () => window.clearTimeout(timer);
   }, [overlayLayoutNotice]);
 
-  const updateTrainingPreferences = useCallback((preferences: TrainingSessionPreferences) => {
+  const updateTrainingPreferences = useCallback((preferences: Partial<TrainingSessionPreferences>) => {
     try {
-      const saveError = saveTrainingSessionPreferences(window.localStorage, preferences);
+      const saveError = saveTrainingSessionPreferences(window.localStorage, { ...loadedPreferences.preferences, ...preferences });
       setPreferenceWriteError(saveError);
       if (!saveError) window.dispatchEvent(new Event(TRAINING_PREFERENCES_EVENT));
       return saveError === null;
@@ -660,7 +664,7 @@ export function FlightDashboard() {
       setPreferenceWriteError(saveError instanceof Error ? saveError.message : "无法保存本机界面偏好");
       return false;
     }
-  }, []);
+  }, [loadedPreferences.preferences]);
 
   const updateSingleKeyShortcuts = useCallback((enabled: boolean) => {
     try {
@@ -891,6 +895,7 @@ export function FlightDashboard() {
         frameRate: Math.max(1, Math.min(60, captureFrameRate ?? 30)),
         athleteCode,
         getTelemetry: () => recordingTelemetryRef.current,
+        getOverlayAppearance: () => recordingOverlayAppearanceRef.current,
         getLinkState: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).linkState,
         getConnection: () => telemetryWorkspaceStore.getSnapshot(activeRecordingPilotChannelId).connection,
         onError: (recordingError) => {
@@ -1028,6 +1033,23 @@ export function FlightDashboard() {
     defaultPair: defaultStickOverlayPair,
   }), [defaultStickOverlayPair, leftStickStorageKey, overlayPairStorageKey, rightStickStorageKey]);
   const { pairLayout: stickOverlayPair, storePairLayout: storeStickOverlayPair } = useStickOverlayPairLayout(overlayPairStorageOptions);
+  useEffect(() => {
+    const stage = activeVideoStageRef.current;
+    if (!stage) return;
+    const updateRecordingAppearance = () => {
+      const bounds = stage.getBoundingClientRect();
+      // Keep the last visible geometry when the live workspace is hidden during recording.
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      recordingOverlayAppearanceRef.current = {
+        pair: stickOverlayPair, stageWidth: bounds.width, stageHeight: bounds.height,
+        opacity: stickOverlayOpacity, mode: stickOverlayMode,
+      };
+    };
+    updateRecordingAppearance();
+    const observer = new ResizeObserver(updateRecordingAppearance);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [stickOverlayPair, stickOverlayOpacity, stickOverlayMode, activeViewport?.id, hasPilots, videoWorkspace.activePilotChannelId, workspaceView]);
   const updateStickOverlayPair = useCallback((pair: StickOverlayPairLayout, persist: boolean) => {
     storeStickOverlayPair(pair, persist);
     if (persist) setOverlayLayoutNotice(pair.locked ? "布局已保存 · 已锁定" : "布局已保存");
@@ -1598,7 +1620,7 @@ export function FlightDashboard() {
               ) : null}
               <details className="overlay-options"><summary>摇杆叠层</summary><div className="overlay-options-body">
               <button
-                className={`mini-button ${showStickOverlays ? "mini-button--active" : ""}`}
+                className={`mini-button overlay-visibility-toggle ${showStickOverlays ? "mini-button--active" : ""}`}
                 type="button"
                 aria-pressed={showStickOverlays}
                 onClick={() => updateTrainingPreferences({ autoExport, recordPilotVideo, showStickOverlays: !showStickOverlays, stickOverlayMode })}
@@ -1639,10 +1661,22 @@ export function FlightDashboard() {
                     onClick={() => {
                       const wasDefault = stickOverlayPairIsDefault(stickOverlayPair, defaultStickOverlayPair);
                       storeStickOverlayPair(defaultStickOverlayPair, true);
+                      updateTrainingPreferences({ stickOverlayOpacity: 1 });
                       setOverlayLayoutNotice("已恢复默认布局");
                       analytics.trackOverlayLayoutReset(wasDefault);
                     }}
                   >重置叠层</button>
+                  <StickOverlayControls
+                    pair={stickOverlayPair}
+                    opacity={stickOverlayOpacity}
+                    disabled={!hasPilots}
+                    onSizeChange={(member, size) => {
+                      const bounds = activeVideoStageRef.current?.getBoundingClientRect();
+                      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+                      updateStickOverlayPair(resizeStickOverlayPairLayout(stickOverlayPair, member, size - stickOverlayPair[member].size, bounds.width, bounds.height), true);
+                    }}
+                    onOpacityChange={(opacity) => updateTrainingPreferences({ stickOverlayOpacity: opacity })}
+                  />
                 </>
               ) : null}
               </div></details>
@@ -1744,6 +1778,7 @@ export function FlightDashboard() {
                 return (
                   <div
                     key={viewport.id}
+                    ref={isActive ? activeVideoStageRef : undefined}
                     className={`video-viewport ${runtime.state === "live" ? "is-live" : ""} ${isActive ? "is-active" : ""}`}
                     data-source-id={sourceConfig.id}
                     data-pilot-channel-id={viewport.pilotChannelId}
@@ -1829,6 +1864,7 @@ export function FlightDashboard() {
                               y={telemetry.throttleStickPercent * 2 - 100}
                               tone="orange"
                               mode={stickOverlayMode}
+                              opacity={stickOverlayOpacity}
                               trail={leftStickTrail}
                               peak={stickMotion.leftPeak}
                               onPairChange={updateStickOverlayPair}
@@ -1846,6 +1882,7 @@ export function FlightDashboard() {
                               y={telemetry.pitchStickPercent}
                               tone="blue"
                               mode={stickOverlayMode}
+                              opacity={stickOverlayOpacity}
                               trail={rightStickTrail}
                               peak={stickMotion.rightPeak}
                               onPairChange={updateStickOverlayPair}

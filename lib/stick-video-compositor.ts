@@ -1,6 +1,16 @@
 import { formatStickAxisValue } from "./stick-display";
 import { clamp, type ConnectionState, type FlightTelemetry, type LinkState } from "./telemetry";
 import { videoCropPixelRect, type VideoCropRect } from "./video-workspace";
+import type { StickOverlayPairLayout } from "./stick-overlay-layout";
+import type { StickOverlayPreferenceMode } from "./training-session-preferences";
+
+export interface StickOverlayAppearance {
+  pair: StickOverlayPairLayout;
+  stageWidth: number;
+  stageHeight: number;
+  opacity: number;
+  mode: StickOverlayPreferenceMode;
+}
 
 export interface StickVideoCompositorOptions {
   sourceStream: MediaStream;
@@ -9,6 +19,7 @@ export interface StickVideoCompositorOptions {
   getTelemetry: () => FlightTelemetry;
   getLinkState?: () => LinkState;
   getConnection?: () => ConnectionState;
+  getOverlayAppearance?: () => StickOverlayAppearance | undefined;
   athleteCode: string;
   onError?: (error: Error) => void;
   signal?: AbortSignal;
@@ -51,6 +62,7 @@ export function drawStickVideoOverlay(
     linkState = "unknown",
     connection,
     athleteCode,
+    appearance,
   }: {
     width: number;
     height: number;
@@ -58,6 +70,7 @@ export function drawStickVideoOverlay(
     linkState?: LinkState;
     connection?: ConnectionState;
     athleteCode: string;
+    appearance?: StickOverlayAppearance;
   },
 ) {
   const scale = Math.min(1, width / 400, height / 240);
@@ -127,8 +140,68 @@ export function drawStickVideoOverlay(
     }
   };
 
-  drawStick(margin, "YAW", "THR", telemetry.yawStickPercent, telemetry.throttleStickPercent * 2 - 100, "#f3b08c");
-  drawStick(width - margin - panelWidth, "ROLL", "PITCH", telemetry.rollStickPercent, telemetry.pitchStickPercent, "#b5d7e3");
+  if (appearance && appearance.stageWidth > 0 && appearance.stageHeight > 0) {
+    const drawConfiguredStick = (member: "left" | "right", xLabel: string, yLabel: string, x: number, y: number, color: string) => {
+      const layout = appearance.pair[member];
+      // Preserve the width-relative size and dock spacing even when coach view is taller than the video.
+      const ratio = Math.min(width / appearance.stageWidth, height / layout.size);
+      const size = layout.size * ratio;
+      const left = clamp(layout.xPercent / 100 * width, 0, Math.max(0, width - size));
+      const top = clamp(layout.yPercent / 100 * height, 0, Math.max(0, height - size));
+      const compact = layout.size < 132 || appearance.mode === "simple";
+      const gridSide = Math.max(1, size - (compact ? 34 : 54) * ratio);
+      const gridX = left + (size - gridSide) / 2;
+      const gridY = top + (compact ? 22 : 28) * ratio;
+      context.globalAlpha = appearance.opacity;
+      context.fillStyle = "#17222b";
+      context.fillRect(left, top, size, size);
+      context.fillStyle = "#c4d1d7";
+      context.textAlign = "left";
+      context.font = `600 ${Math.max(1, (compact ? 7 : 9) * ratio)}px ui-monospace, monospace`;
+      context.fillText(`${xLabel} / ${yLabel}`, left + 5 * ratio, top + (compact ? 10 : 14) * ratio, size - 10 * ratio);
+      context.fillStyle = "#121c24";
+      context.fillRect(gridX, gridY, gridSide, gridSide);
+      context.strokeStyle = "#65727a";
+      context.lineWidth = Math.max(0.5, ratio);
+      context.strokeRect(gridX, gridY, gridSide, gridSide);
+      context.beginPath();
+      context.moveTo(gridX + gridSide / 2, gridY);
+      context.lineTo(gridX + gridSide / 2, gridY + gridSide);
+      context.moveTo(gridX, gridY + gridSide / 2);
+      context.lineTo(gridX + gridSide, gridY + gridSide / 2);
+      context.stroke();
+      context.fillStyle = "#c4d1d7";
+      context.font = `500 ${Math.max(1, (layout.size < 100 ? 5 : 7) * ratio)}px ui-monospace, monospace`;
+      context.textAlign = "center";
+      context.fillText("+1000", gridX + gridSide / 2, gridY + 5 * ratio);
+      context.fillText("−1000", gridX + gridSide / 2, gridY + gridSide - 5 * ratio);
+      context.textAlign = "left";
+      context.fillText("−1000", gridX + 2 * ratio, gridY + gridSide / 2 - 6 * ratio);
+      context.fillText("0", gridX + gridSide / 2 + 4 * ratio, gridY + gridSide / 2 + 6 * ratio);
+      context.textAlign = "right";
+      context.fillText("+1000", gridX + gridSide - 2 * ratio, gridY + gridSide / 2 - 6 * ratio);
+      if (!compact) {
+        context.font = `600 ${8 * ratio}px ui-monospace, monospace`;
+        context.textAlign = "left";
+        context.fillText(`${xLabel} ${hasSample ? formatStickAxisValue(x) : "—"}`, left + 7 * ratio, top + size - 10 * ratio, size / 2 - 7 * ratio);
+        context.textAlign = "right";
+        context.fillText(`${yLabel} ${hasSample ? formatStickAxisValue(y) : "—"}`, left + size - 7 * ratio, top + size - 10 * ratio, size / 2 - 7 * ratio);
+      }
+      if (hasSample) {
+        context.fillStyle = color;
+        context.beginPath();
+        context.arc(gridX + (clamp(x, -100, 100) + 100) / 200 * gridSide, gridY + (100 - clamp(y, -100, 100)) / 200 * gridSide, (compact ? 3.5 : 4) * ratio, 0, Math.PI * 2);
+        context.fill();
+        context.strokeStyle = "#ffffff";
+        context.stroke();
+      }
+    };
+    drawConfiguredStick("left", "YAW", "THR", telemetry.yawStickPercent, telemetry.throttleStickPercent * 2 - 100, "#d9a27e");
+    drawConfiguredStick("right", "ROLL", "PITCH", telemetry.rollStickPercent, telemetry.pitchStickPercent, "#90afbc");
+  } else {
+    drawStick(margin, "YAW", "THR", telemetry.yawStickPercent, telemetry.throttleStickPercent * 2 - 100, "#f3b08c");
+    drawStick(width - margin - panelWidth, "ROLL", "PITCH", telemetry.rollStickPercent, telemetry.pitchStickPercent, "#b5d7e3");
+  }
   context.restore();
 }
 
@@ -139,6 +212,7 @@ export async function startStickVideoCompositor({
   getTelemetry,
   getLinkState,
   getConnection,
+  getOverlayAppearance,
   athleteCode,
   onError,
   signal,
@@ -245,7 +319,7 @@ export async function startStickVideoCompositor({
       context.fillStyle = "#000000";
       context.fillRect(0, 0, width, height);
       context.drawImage(video, rect.x, rect.y, rect.width, rect.height, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-      drawStickVideoOverlay(context, { width, height, telemetry: getTelemetry(), linkState: getLinkState?.(), connection: getConnection?.(), athleteCode });
+      drawStickVideoOverlay(context, { width, height, telemetry: getTelemetry(), linkState: getLinkState?.(), connection: getConnection?.(), athleteCode, appearance: getOverlayAppearance?.() });
     };
     draw();
     outputStream = canvas.captureStream(frameRate);

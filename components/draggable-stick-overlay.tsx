@@ -35,6 +35,7 @@ interface DraggableStickOverlayProps {
   y: number;
   tone: "blue" | "orange";
   mode: StickOverlayMode;
+  opacity?: number;
   trail: StickPosition[];
   peak: StickPosition | null;
   onPairChange: (pair: StickOverlayPairLayout, persist: boolean) => void;
@@ -191,6 +192,7 @@ export function DraggableStickOverlay({
   y,
   tone,
   mode,
+  opacity = 1,
   trail,
   peak,
   onPairChange,
@@ -251,7 +253,7 @@ export function DraggableStickOverlay({
     const deltaY = event.clientY - interaction.startClientY;
     const nextPair = interaction.mode === "move"
       ? moveStickOverlayPairLayout(interaction.startPair, member, deltaX, deltaY, interaction.areaWidth, interaction.areaHeight)
-      : resizeStickOverlayPairLayout(interaction.startPair, member, Math.max(deltaX, deltaY), interaction.areaWidth, interaction.areaHeight);
+      : resizeStickOverlayPairLayout(interaction.startPair, member, Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : deltaY, interaction.areaWidth, interaction.areaHeight);
     interaction.latestPair = nextPair;
     onPairChange(nextPair, false);
     event.preventDefault();
@@ -292,8 +294,8 @@ export function DraggableStickOverlay({
   return (
     <section
       ref={overlayRef}
-      className={`video-stick-overlay video-stick-overlay--${tone} video-stick-overlay--${mode}${pairLayout.docked ? ` video-stick-overlay--docked-${member}` : ""}${pairLayout.locked ? " video-stick-overlay--locked" : ""}`}
-      style={{ left: `${layout.xPercent}%`, top: `${layout.yPercent}%`, width: layout.size, height: layout.size }}
+      className={`video-stick-overlay video-stick-overlay--${tone} video-stick-overlay--${mode}${layout.size < 132 ? " video-stick-overlay--compact" : ""}${pairLayout.docked ? ` video-stick-overlay--docked-${member}` : ""}${pairLayout.locked ? " video-stick-overlay--locked" : ""}`}
+      style={{ left: `${layout.xPercent}%`, top: `${layout.yPercent}%`, width: layout.size, height: layout.size, opacity }}
       aria-label={`${label}视频叠层`}
     >
       <button
