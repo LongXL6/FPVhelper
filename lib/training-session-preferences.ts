@@ -5,6 +5,7 @@ export interface TrainingSessionPreferences {
   recordPilotVideo: boolean;
   showStickOverlays: boolean;
   stickOverlayMode: StickOverlayPreferenceMode;
+  stickOverlayOpacity: number;
 }
 
 interface PreferenceStorage {
@@ -18,6 +19,7 @@ export const DEFAULT_TRAINING_SESSION_PREFERENCES: TrainingSessionPreferences = 
   recordPilotVideo: true,
   showStickOverlays: true,
   stickOverlayMode: "trail",
+  stickOverlayOpacity: 1,
 };
 
 function preferenceErrorMessage(error: unknown) {
@@ -53,6 +55,9 @@ export function loadTrainingSessionPreferences(storage: PreferenceStorage): {
           : DEFAULT_TRAINING_SESSION_PREFERENCES.recordPilotVideo,
         showStickOverlays: parsed.showStickOverlays,
         stickOverlayMode: parsed.stickOverlayMode,
+        stickOverlayOpacity: typeof parsed.stickOverlayOpacity === "number" && Number.isFinite(parsed.stickOverlayOpacity)
+          ? Math.max(0.25, Math.min(1, parsed.stickOverlayOpacity))
+          : DEFAULT_TRAINING_SESSION_PREFERENCES.stickOverlayOpacity,
       },
       error: null,
     };

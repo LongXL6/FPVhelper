@@ -16,8 +16,8 @@ export interface StickOverlayPairLayout {
 }
 
 const OVERLAY_PADDING = 8;
-const MIN_OVERLAY_SIZE = 132;
-const MAX_OVERLAY_SIZE = 260;
+export const MIN_OVERLAY_SIZE = 72;
+export const MAX_OVERLAY_SIZE = 260;
 const OVERLAY_SNAP_DISTANCE = 24;
 
 interface PixelLayout {
@@ -176,13 +176,14 @@ export function constrainStickOverlayPairLayout(
   areaWidth: number,
   areaHeight: number,
 ) {
+  if (areaWidth <= 0 || areaHeight <= 0) return pair;
   if (pair.docked) return constrainDockedStickOverlayPair(pair, areaWidth, areaHeight);
-  return {
+  return keepPairMembersSeparate({
     left: constrainStickOverlayLayout(pair.left, areaWidth, areaHeight),
     right: constrainStickOverlayLayout(pair.right, areaWidth, areaHeight),
     docked: false,
     locked: false,
-  };
+  }, "right", areaWidth, areaHeight);
 }
 
 export function moveStickOverlayPairLayout(
